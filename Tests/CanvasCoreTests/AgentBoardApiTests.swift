@@ -345,15 +345,22 @@ final class AgentBoardApiTests {
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
         let failed = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","final":"The fee math is","error":"Anthropic stream error (overloaded_error)"}"#)
         #expect(failed["ok"] == .bool(true))
-        #expect(state()?["state"] == "idle" && state()?["message"] == "Anthropic stream error (overloaded_error)", "not done: the user reads why")
+        #expect(state() == .object(["state": "idle", "seen": .bool(false), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)"]), "not done: the user reads why")
         let read = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
         #expect(read["result"]?["text"] == "The fee math is" && read["result"]?["cutOff"] == "Anthropic stream error (overloaded_error)")
         #expect(try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","error":"x"}"#)["error"]?["code"] == "invalid_params")
+        // Reports that start no turn leave it, the user seeing the tile too: an agent relaunched
+        // after the error (agent.restart) reports a plain `idle`, an aider an `unknown`.
+        board.markSeen(tile)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)"]))
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .unknown, message: nil, seq: nil, source: nil)
+        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)", "via": "notifications"]))
 
         // The next turn finishes: done, and its answer is whole.
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
         try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil, final: "Fixed.")
-        #expect(state()?["state"] == "done" && state()?["message"] == nil)
+        #expect(state() == .object(["state": "done", "seen": .bool(false)]))
         let whole = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
         #expect(whole["result"]?["text"] == "Fixed." && whole["result"]?["cutOff"] == nil)
 

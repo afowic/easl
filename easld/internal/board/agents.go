@@ -70,9 +70,11 @@ type Report struct {
 }
 
 // ReportLifecycle applies an agent's lifecycle report (Board.reportLifecycle): the staleness rule
-// by seq per tile and source, pending approvals by call, final answers and turn errors. A report
-// of another agent kind, or of no protocol where it took messages, ends the agent session its
-// messages were queued for (endAgentSession).
+// by seq per tile and source, pending approvals by call, final answers and turn errors. A turn
+// that ended on an error stays shown (lifecycle `error`) through reports that start no turn and
+// through agent.restart (RestartedAgent), until a turn starts (working). A report of another
+// agent kind, or of no protocol where it took messages, ends the agent session its messages
+// were queued for (endAgentSession).
 func (b *Board) ReportLifecycle(r Report) error {
 	terminal, err := b.Object(r.Tile)
 	if err != nil {
@@ -141,20 +143,34 @@ func (b *Board) ReportLifecycle(r Report) error {
 	}
 	// A turn that died on an error isn't done: the user reads why in its message. A done the user
 	// hasn't seen stays through a report that starts no turn: an idle, or the unknown of an agent
-	// without an integration as it starts (bin/aider, relaunched by agent.restart).
+	// without an integration as it starts (bin/aider, relaunched by agent.restart). So does a turn
+	// that died on an error (the lifecycle's error): the agent agent.restart relaunched has none to
+	// report, and its plain idle mustn't make the tile look healthy.
 	unread := failed == "" && !b.seenSinceWorking[r.Tile]
 	wasDone := LifecycleState(terminal) == "done"
+	was := lifecycleOf(terminal)
+	stillFailed := ""
+	if failed == "" && (state == "idle" || state == "unknown") {
+		stillFailed, _ = was["error"].(string)
+	}
 	effective := state
-	if unread && (state == "idle" && wasWorking(terminal) || state == "unknown" && wasDone) {
+	if stillFailed != "" {
+		effective = "idle"
+	} else if unread && (state == "idle" && wasWorking(terminal) || state == "unknown" && wasDone) {
 		effective = "done"
 	}
 	lifecycle := map[string]any{"state": effective, "seen": b.seenSinceWorking[r.Tile]}
 	if message != nil {
 		lifecycle["message"] = *message
-	} else if was := lifecycleOf(terminal); effective == "done" && wasDone && was["message"] != nil {
+	} else if (effective == "done" && wasDone || stillFailed != "") && was["message"] != nil {
 		// A report that starts no turn (a relaunched agent reporting in) leaves the answer
-		// waiting as it was, its message too.
+		// waiting, or the error the last turn ended on, as it was, its message too.
 		lifecycle["message"] = was["message"]
+	}
+	if state == "idle" && failed != "" {
+		lifecycle["error"] = failed
+	} else if stillFailed != "" {
+		lifecycle["error"] = stillFailed
 	}
 	if state == "unknown" {
 		lifecycle["via"] = NotifyingVia
@@ -361,10 +377,12 @@ func (b *Board) AgentRestartEnded(tile string) {
 // (unseenDone, the needs-you badge): that answer is still theirs to read, so the tile stays done
 // through the relaunch, also through the relaunched agent's reports that start no turn
 // (ReportLifecycle), until the user sees it or the relaunched agent starts a turn (working), as
-// without a restart. A release the killed agent sent as it exited was held (AgentRestartBegan)
-// and is replaced by this. Waits on approvals the killed agent had end. Recorded once the old
-// session is gone and its agent session ended (EndAgentSession), before the relaunch starts, so
-// what the relaunched agent reports stays.
+// without a restart. A turn that ended on an error (failedTurn) stays the same way, seen or not:
+// it says why the agent stopped, which a relaunch doesn't change, and the relaunched agent has no
+// error to report again. A release the killed agent sent as it exited was held
+// (AgentRestartBegan) and is replaced by this. Waits on approvals the killed agent had end.
+// Recorded once the old session is gone and its agent session ended (EndAgentSession), before
+// the relaunch starts, so what the relaunched agent reports stays.
 func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 	terminal, err := b.Object(tile)
 	if err != nil {
@@ -378,7 +396,7 @@ func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 		words[i] = w
 	}
 	var kept any
-	if shown := terminal.Props["lifecycle"]; unseenDone(shown) && !b.seenSinceWorking[tile] {
+	if shown := terminal.Props["lifecycle"]; unseenDone(shown) && !b.seenSinceWorking[tile] || failedTurn(shown) {
 		kept = model.Clone(shown)
 	}
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"command": words, "lifecycle": kept, "agent": agent}, tile, ""); err != nil {
@@ -393,6 +411,14 @@ func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 func unseenDone(lifecycle any) bool {
 	l, _ := lifecycle.(map[string]any)
 	return l["state"] == "done" && l["seen"] != true
+}
+
+// failedTurn: a terminal lifecycle that is a turn that ended on an error (agent.report error),
+// with no turn started since: idle with that error (Board.isFailedTurn).
+func failedTurn(lifecycle any) bool {
+	l, _ := lifecycle.(map[string]any)
+	_, failed := l["error"].(string)
+	return failed
 }
 
 // AwaitsRelaunchedAgent: agent.restart relaunched the agent in `tile` and no agent has reported

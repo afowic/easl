@@ -1,7 +1,7 @@
 {
   "scenario": "agent-control-owned",
-  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports, but for a done the user hasn't seen, which stays until the relaunched agent starts a turn; the killed agent's late release leaves that record, and only a release after the relaunched agent reported clears it. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
-  "recordedOn": "easld --own-terminals on main 7a1898c + done-unseen-restart 0579209, with zmxtest's zmx (the app restarts through its own tiles and answers session.* unsupported)",
+  "description": "Agent control on an easld that owns its terminals (--own-terminals; recorded against easld with a zmx that runs no session, as owned-terminals is: the app's restart relaunches through its own tiles): agent.list says whether each owned terminal's session runs (live), and agent.restart goes through with no client attached. easld ends the session, the messages queued for the killed agent bounce, and the relaunch starts resumed with the recorded model and thinking level (or fresh, with args); the tile runs the relaunch's command from then on, its agent loses the killed process's draft and pid, and its lifecycle is unknown until the new agent reports, but for a done the user hasn't seen and a turn that ended on an error (lifecycle error, which agent.list shows), which stay until the relaunched agent starts a turn; the killed agent's late release leaves that record, and only a release after the relaunched agent reported clears it. The refusals are a client's restart's; a hosted terminal's restart is its Mac's.",
+  "recordedOn": "easld --own-terminals on main 8467a9a + fix/restart-keeps-turn-error, with zmxtest's zmx (the app restarts through its own tiles and answers session.* unsupported)",
   "steps": [
     {
       "step": "board.open",
@@ -1535,6 +1535,466 @@
               "name": "worker"
             },
             "rev": "<rev:13>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "seen": false,
+              "state": "working"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.report_session",
+      "method": "agent.report_session",
+      "request": {
+        "kind": "omp",
+        "model": "anthropic/claude-opus-4-5",
+        "sessionId": "s-2",
+        "thinking": "high",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r29",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-2",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:14>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "error": "400 invalid_request_error: compaction block must be sent first",
+        "kind": "omp",
+        "protocol": 1,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r30",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-2",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high",
+                "--plan",
+                "p.md"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "error": "400 invalid_request_error: compaction block must be sent first",
+                "message": "400 invalid_request_error: compaction block must be sent first",
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:15>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "error": "400 invalid_request_error: compaction block must be sent first",
+              "message": "400 invalid_request_error: compaction block must be sent first",
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.restart",
+      "method": "agent.restart",
+      "request": {
+        "mode": "resume",
+        "target": "worker"
+      },
+      "response": {
+        "id": "r31",
+        "ok": true,
+        "result": {
+          "agent": {
+            "address": "worker@agent-control-owned",
+            "board": "<board>",
+            "focused": false,
+            "kind": "omp",
+            "lifecycle": {
+              "error": "400 invalid_request_error: compaction block must be sent first",
+              "message": "400 invalid_request_error: compaction block must be sent first",
+              "seen": false,
+              "state": "idle"
+            },
+            "model": "anthropic/claude-opus-4-5",
+            "name": "worker",
+            "open": true,
+            "protocol": 1,
+            "root": "<root>",
+            "sessionId": "s-2",
+            "thinking": "high",
+            "tile": "<obj:1>"
+          },
+          "command": [
+            "omp",
+            "--plan",
+            "p.md",
+            "--model=anthropic/claude-opus-4-5",
+            "--thinking=high",
+            "--resume=s-2"
+          ]
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-2",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--plan",
+                "p.md",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "error": "400 invalid_request_error: compaction block must be sent first",
+                "message": "400 invalid_request_error: compaction block must be sent first",
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:16>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "error": "400 invalid_request_error: compaction block must be sent first",
+              "message": "400 invalid_request_error: compaction block must be sent first",
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "protocol": 1,
+        "state": "idle",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r32",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-2",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--plan",
+                "p.md",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "error": "400 invalid_request_error: compaction block must be sent first",
+                "message": "400 invalid_request_error: compaction block must be sent first",
+                "seen": false,
+                "state": "idle"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:17>",
+            "type": "terminal",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "lifecycle": {
+              "error": "400 invalid_request_error: compaction block must be sent first",
+              "message": "400 invalid_request_error: compaction block must be sent first",
+              "seen": false,
+              "state": "idle"
+            },
+            "tile": "<obj:1>"
+          },
+          "event": "agent.lifecycle"
+        }
+      ]
+    },
+    {
+      "step": "agent.list",
+      "method": "agent.list",
+      "request": {},
+      "response": {
+        "id": "r33",
+        "ok": true,
+        "result": {
+          "agents": [
+            {
+              "address": "worker@agent-control-owned",
+              "board": "<board>",
+              "draft": false,
+              "focused": false,
+              "kind": "omp",
+              "lifecycle": {
+                "error": "400 invalid_request_error: compaction block must be sent first",
+                "message": "400 invalid_request_error: compaction block must be sent first",
+                "seen": false,
+                "state": "idle"
+              },
+              "live": true,
+              "model": "anthropic/claude-opus-4-5",
+              "name": "worker",
+              "open": true,
+              "protocol": 1,
+              "root": "<root>",
+              "sessionId": "s-2",
+              "thinking": "high",
+              "tile": "<obj:1>"
+            },
+            {
+              "address": "away@agent-control-owned",
+              "board": "<board>",
+              "focused": false,
+              "kind": "unknown",
+              "lifecycle": {
+                "state": "unknown"
+              },
+              "name": "away",
+              "open": true,
+              "root": "<root>",
+              "tile": "<obj:2>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "agent.report",
+      "method": "agent.report",
+      "request": {
+        "draft": false,
+        "kind": "omp",
+        "protocol": 1,
+        "state": "working",
+        "tile": "<obj:1>"
+      },
+      "response": {
+        "id": "r34",
+        "ok": true,
+        "result": {}
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 400,
+              "w": 600,
+              "x": 50000,
+              "y": 50000
+            },
+            "id": "<obj:1>",
+            "props": {
+              "agent": {
+                "draft": false,
+                "kind": "omp",
+                "model": "anthropic/claude-opus-4-5",
+                "protocol": 1,
+                "sessionId": "s-2",
+                "thinking": "high"
+              },
+              "command": [
+                "omp",
+                "--plan",
+                "p.md",
+                "--model=anthropic/claude-opus-4-5",
+                "--thinking=high"
+              ],
+              "cwd": "<root>",
+              "lifecycle": {
+                "seen": false,
+                "state": "working"
+              },
+              "name": "worker"
+            },
+            "rev": "<rev:18>",
             "type": "terminal",
             "updatedAt": "<time:number>",
             "updatedBy": {

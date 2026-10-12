@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "7c890fa79774f715"
+const SchemaHash = "45453de05d8d0532"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -286,6 +286,8 @@ type Lifecycle struct {
 	State   string  `json:"state"`
 	Message *string `json:"message,omitempty"`
 	Seen    *bool   `json:"seen,omitempty"`
+	// with `idle`: the agent's last turn ended on this error instead of finishing (agent.report `error`), and no turn has started since; `message` says it too unless that report gave its own. It stays through reports that start no turn (`idle` without an error, `unknown`) and through agent.restart, so a relaunched agent's first `idle` doesn't hide it; the next turn (`working`) clears it, and the user seeing the tile doesn't. Absent for a turn that finished
+	Error *string `json:"error,omitempty"`
 	// a `working` or `blocked` the app restored from before it last closed, which the agent hasn't confirmed since (no report, live or spooled, yet): what it was, maybe not what it is now. `agent.prompt` refuses a restored `working` (read the screen first) unless `force`
 	Restored *bool `json:"restored,omitempty"`
 	// an agent without a lifecycle integration: its terminal notifications (OSC 9/777, a bell) set `done` (`idle` while the user looks), Return typed into it or `agent.prompt` sets `unknown` until the next one; never `working` or `blocked`

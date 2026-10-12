@@ -438,6 +438,63 @@ final class AgentControlTests {
         }
     }
 
+    /// A turn that ended on an error stays through a restart, either mode, seen or not, and
+    /// through the relaunched agent's reports that start no turn: agent.list and agent.wait say
+    /// so (lifecycle `error`). The relaunched agent starting a turn ends it, as without a
+    /// restart. A lead whose omp died on an API 400 sat idle for three days looking healthy: the
+    /// hourly restart's relaunched omp, with no error of its own, reported a plain `idle` (#102).
+    @Test func aTurnThatEndedOnAnErrorStaysThroughARestartUntilANewTurn() async throws {
+        let tile = terminal(name: "worker", command: ["omp"])
+        let rested = terminal(name: "rested", command: ["omp"])
+        for each in [tile, rested] {
+            _ = try await call("agent.report_session", ["tile": .string(each), "kind": "omp", "sessionId": .string("s-\(each)"), "model": "anthropic/claude-opus-4-5", "thinking": "high"])
+        }
+        var seq = 0
+        func report(_ tile: ObjectID, _ state: String, _ extra: [String: JSONValue] = [:]) async throws {
+            seq += 1
+            try await self.report(tile, state, seq: seq, extra.merging(["draft": .bool(false), "protocol": .number(1)]) { _, new in new })
+        }
+        func lifecycle(_ tile: ObjectID) -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
+        let error = "400 invalid_request_error: compaction block must be sent first"
+        let failed: JSONValue = .object(["state": "idle", "seen": .bool(false), "message": .string(error), "error": .string(error)])
+        for mode in ["resume", "fresh"] {
+            for seen in [false, true] {
+                let run = "\(mode)\(seen ? ", seen" : "")"
+                try await report(tile, "working")
+                try await report(tile, "idle", ["error": .string(error)])
+                #expect(lifecycle(tile) == failed, "\(run): \(String(describing: lifecycle(tile)))")
+                if seen { board.markSeen(tile) }
+
+                let reply = try await call("agent.restart", ["target": "worker", "mode": .string(mode)])
+                #expect(reply["ok"] == .bool(true), "\(run): \(reply)")
+                #expect(reply["result"]?["agent"]?["lifecycle"] == failed, "\(run): \(reply)")
+                #expect(lifecycle(tile) == failed, "\(run): \(String(describing: lifecycle(tile)))")
+                #expect(try await listed()[tile]?["lifecycle"] == failed, "\(run): agent.list")
+
+                // The relaunched agent reports in, waiting for a prompt, with no error to report.
+                try await report(tile, "idle")
+                let relaunched: JSONValue = .object(["state": "idle", "seen": .bool(seen), "message": .string(error), "error": .string(error)])
+                #expect(lifecycle(tile) == relaunched, "\(run): \(String(describing: lifecycle(tile)))")
+                #expect(try await listed()[tile]?["lifecycle"] == relaunched, "\(run): agent.list")
+                #expect(try await call("agent.wait", ["target": "worker"])["result"]?["agent"]?["lifecycle"] == relaunched, "\(run): agent.wait")
+                #expect(board.turnErrors[tile] == error, "\(run)")
+
+                // Its first turn ends it.
+                try await report(tile, "working")
+                #expect(lifecycle(tile) == .object(["state": "working", "seen": .bool(false)]), "\(run): \(String(describing: lifecycle(tile)))")
+                #expect(board.turnErrors[tile] == nil, "\(run)")
+                try await report(tile, "idle")
+
+                // An idle agent whose last turn didn't fail restarts to no lifecycle, as before.
+                try await report(rested, "idle")
+                #expect(try await call("agent.restart", ["target": "rested", "mode": .string(mode)])["ok"] == .bool(true), "\(run)")
+                #expect(lifecycle(rested) == nil, "\(run): \(String(describing: lifecycle(rested)))")
+                try await report(rested, "idle")
+                #expect(lifecycle(rested) == .object(["state": "idle", "seen": .bool(false)]), "\(run): \(String(describing: lifecycle(rested)))")
+            }
+        }
+    }
+
     @Test func aRelaunchedAgentsUnknownKeepsTheUnseenAnswer() async throws {
         let tile = terminal(name: "worker", command: ["aider"])
         #expect(board.terminalNotified(tile, message: "Tests pass.", bell: false, program: "aider", watched: false) == .lifecycle)
