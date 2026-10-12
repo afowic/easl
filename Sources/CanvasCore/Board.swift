@@ -1121,9 +1121,12 @@ public final class Board {
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
     /// until the next turn starts. `error`: with `idle`, the turn ended on this error (omp: an
     /// API error such as `overloaded_error`, an abort): the tile goes `idle`, never `done`, with
-    /// the error as its message, and the answer is known to be cut off (`turnErrors`). `unknown`:
-    /// an agent without a lifecycle integration runs here (`bin/aider` says so as aider starts);
-    /// its terminal notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
+    /// the error as its message and as the lifecycle's `error`, and the answer is known to be cut
+    /// off (`turnErrors`). That lifecycle stays through reports that start no turn (an `idle`
+    /// without an error, an `unknown`) and through agent.restart (`restartedAgent`), until a turn
+    /// starts (`working`); the user seeing the tile leaves it. `unknown`: an agent without a
+    /// lifecycle integration runs here (`bin/aider` says so as aider starts); its terminal
+    /// notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
     /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
     /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0. A report
     /// of another agent kind, or of no protocol where it took messages, ends the agent session its
@@ -1180,17 +1183,21 @@ public final class Board {
         // A turn that died on an error isn't done: the user reads why in its message. A `done` the
         // user hasn't seen stays through a report that starts no turn: an `idle`, or the `unknown`
         // of an agent without an integration as it starts (`bin/aider`, relaunched by agent.restart).
+        // So does a turn that died on an error (the lifecycle's `error`): the agent agent.restart
+        // relaunched has none to report, and its plain `idle` mustn't make the tile look healthy.
         let unread = failed == nil && !seenSinceWorking.contains(tile)
         let wasDone = terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue
-        let effective: LifecycleState = unread && (state == .idle && wasWorking(terminal) || state == .unknown && wasDone) ? .done : state
+        let stillFailed = failed == nil && (state == .idle || state == .unknown) ? terminal.props["lifecycle"]?["error"]?.string : nil
+        let effective: LifecycleState = stillFailed != nil ? .idle : unread && (state == .idle && wasWorking(terminal) || state == .unknown && wasDone) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message {
             lifecycle["message"] = .string(message)
-        } else if effective == .done, wasDone {
+        } else if effective == .done && wasDone || stillFailed != nil {
             // A report that starts no turn (a relaunched agent reporting in) leaves the answer
-            // waiting as it was, its message too.
+            // waiting, or the error the last turn ended on, as it was, its message too.
             lifecycle["message"] = terminal.props["lifecycle"]?["message"]
         }
+        if let failure = (state == .idle ? failed : nil) ?? stillFailed { lifecycle["error"] = .string(failure) }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let before = terminal.props["agent"]
         let reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
@@ -1325,12 +1332,15 @@ public final class Board {
     /// that answer is still theirs to read, so the tile stays `done` through the relaunch, also
     /// through the relaunched agent's reports that start no turn (`reportLifecycle`), until the
     /// user sees it or the relaunched agent starts a turn (`working`), as without a restart. A
-    /// release the killed agent sent as it exited was held (`agentRestartBegan`) and is replaced
-    /// by this. Waits on approvals the killed agent had end, and the composer's prompts it never
-    /// drained return their mentions to the tray, as when an agent exits. Recorded once the old
-    /// session is confirmed gone and its agent session ended (`endAgentSession`), before the
-    /// relaunch starts (ApiRouter.restart), so what the relaunched agent reports stays; a death
-    /// of the killed agent's integration seen meanwhile (`agentExited`) isn't the relaunched one's.
+    /// turn that ended on an error (`isFailedTurn`) stays the same way, seen or not: it says why
+    /// the agent stopped, which a relaunch doesn't change, and the relaunched agent has no error
+    /// to report again. A release the killed agent sent as it exited was held
+    /// (`agentRestartBegan`) and is replaced by this. Waits on approvals the killed agent had
+    /// end, and the composer's prompts it never drained return their mentions to the tray, as
+    /// when an agent exits. Recorded once the old session is confirmed gone and its agent session
+    /// ended (`endAgentSession`), before the relaunch starts (ApiRouter.restart), so what the
+    /// relaunched agent reports stays; a death of the killed agent's integration seen meanwhile
+    /// (`agentExited`) isn't the relaunched one's.
     public func restartedAgent(tile: ObjectID, command: [String], agent: JSONValue) throws {
         let terminal = try object(tile)
         pendingApprovals[tile] = nil
@@ -1338,7 +1348,7 @@ public final class Board {
         relaunchedAgents.insert(tile)
         restartingAgents[tile] = nil
         let shown = terminal.props["lifecycle"]
-        let lifecycle = shown.flatMap { Self.isUnseenDone($0) && !seenSinceWorking.contains(tile) ? $0 : nil } ?? .null
+        let lifecycle = shown.flatMap { Self.isUnseenDone($0) && !seenSinceWorking.contains(tile) || Self.isFailedTurn($0) ? $0 : nil } ?? .null
         try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": lifecycle, "agent": agent]), caller: tile)
         dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
@@ -1348,6 +1358,12 @@ public final class Board {
     /// (the needs-you list's `done`).
     static func isUnseenDone(_ lifecycle: JSONValue) -> Bool {
         lifecycle["state"]?.string == LifecycleState.done.rawValue && lifecycle["seen"]?.bool != true
+    }
+
+    /// A terminal `lifecycle` that is a turn that ended on an error (agent.report `error`), with
+    /// no turn started since: `idle` with that `error`.
+    static func isFailedTurn(_ lifecycle: JSONValue) -> Bool {
+        lifecycle["error"]?.string != nil
     }
 
     /// agent.restart relaunched the agent in `tile` and no agent has reported there since

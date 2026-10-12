@@ -388,6 +388,70 @@ func TestARestartKeepsAnUnseenAnswerThroughoutTheKilledAgentsRelease(t *testing.
 	}
 }
 
+// A turn that ended on an error stays through a restart, seen or not, and through the relaunched
+// agent's reports that start no turn (an idle without an error, an unknown): the relaunched agent
+// has no error to report again (#102). A turn starting ends it, with the turn error.
+func TestARestartKeepsATurnThatEndedOnAnErrorUntilANewTurn(t *testing.T) {
+	b := New("brd", "/r")
+	term := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")
+	report := func(state string, failure *string) {
+		t.Helper()
+		if err := b.ReportLifecycle(Report{Tile: term.ID, Kind: "omp", State: state, Error: failure}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restart := func() {
+		t.Helper()
+		b.AgentRestartBegan(term.ID)
+		if err := b.RestartedAgent(term.ID, []string{"omp"}, map[string]any{"kind": "omp"}); err != nil {
+			t.Fatal(err)
+		}
+		b.AgentRestartEnded(term.ID)
+	}
+	failure := "400 invalid_request_error: compaction block must be sent first"
+	for _, seen := range []bool{false, true} {
+		report("working", nil)
+		report("idle", &failure)
+		failed := map[string]any{"state": "idle", "seen": false, "message": failure, "error": failure}
+		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, failed) {
+			t.Errorf("seen %v: the failed turn %v, want %v", seen, lc, failed)
+		}
+		if seen {
+			b.seenSinceWorking[term.ID] = true
+		}
+		restart()
+		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, failed) {
+			t.Errorf("seen %v: restarted to %v, want %v", seen, lc, failed)
+		}
+		report("idle", nil)
+		relaunched := map[string]any{"state": "idle", "seen": seen, "message": failure, "error": failure}
+		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, relaunched) {
+			t.Errorf("seen %v: the relaunched agent's idle left %v, want %v", seen, lc, relaunched)
+		}
+		report("unknown", nil)
+		relaunched["via"] = NotifyingVia
+		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, relaunched) {
+			t.Errorf("seen %v: an unknown left %v, want %v", seen, lc, relaunched)
+		}
+		if got := b.turnErrors[term.ID]; got != failure {
+			t.Errorf("seen %v: turn error %q", seen, got)
+		}
+		report("working", nil)
+		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, map[string]any{"state": "working", "seen": false}) {
+			t.Errorf("seen %v: a new turn left %v", seen, lc)
+		}
+		if got, ok := b.turnErrors[term.ID]; ok {
+			t.Errorf("seen %v: a new turn kept the turn error %q", seen, got)
+		}
+	}
+	report("idle", nil)
+	b.seenSinceWorking[term.ID] = true
+	restart()
+	if lc := lifecycle(b, term.ID); lc != nil {
+		t.Errorf("a seen finished turn restarted to %v", lc)
+	}
+}
+
 func TestAttentionFromEarlierTurnsClearsOnTheNextMarker(t *testing.T) {
 	b := New("brd", "/r")
 	term := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")

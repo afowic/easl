@@ -199,6 +199,53 @@ func TestAnUnseenAnswerStaysThroughAnOwnedRestartUntilANewTurn(t *testing.T) {
 	}
 }
 
+// A turn that ended on an error stays through an owned restart, either mode, and through the
+// relaunched agent's reports that start no turn: agent.list and agent.wait say so (lifecycle
+// error). Its first turn ends it, as without a restart (#102: the relaunched omp's plain idle
+// hid a lead's API 400 for three days).
+func TestATurnThatEndedOnAnErrorStaysThroughAnOwnedRestartUntilANewTurn(t *testing.T) {
+	f, _ := owning(t)
+	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"omp"}})
+	f.result("agent.report_session", map[string]any{"tile": term, "kind": "omp", "sessionId": "s1", "model": "anthropic/claude-opus-4-5", "thinking": "high"})
+	report := func(state string, failure any) {
+		t.Helper()
+		params := map[string]any{"tile": term, "kind": "omp", "state": state, "protocol": 1.0, "draft": false}
+		if failure != nil {
+			params["error"] = failure
+		}
+		f.result("agent.report", params)
+	}
+	failure := "400 invalid_request_error: compaction block must be sent first"
+	failed := map[string]any{"state": "idle", "seen": false, "message": failure, "error": failure}
+	for _, mode := range []string{"resume", "fresh"} {
+		report("working", nil)
+		report("idle", failure)
+		got := f.result("agent.restart", map[string]any{"target": "worker", "mode": mode})
+		if lc := got["agent"].(map[string]any)["lifecycle"]; !reflect.DeepEqual(lc, failed) {
+			t.Errorf("%s: restarted to %v, want %v", mode, lc, failed)
+		}
+		if lc := f.listed(term)["lifecycle"]; !reflect.DeepEqual(lc, failed) {
+			t.Errorf("%s: agent.list says %v, want %v", mode, lc, failed)
+		}
+		waiting := &conn{}
+		if reply := f.on(waiting, "agent.wait", map[string]any{"target": term}); reply != nil {
+			t.Errorf("%s: agent.wait answered before the relaunched agent reported: %v", mode, reply)
+		}
+		report("idle", nil)
+		if lc := f.listed(term)["lifecycle"]; !reflect.DeepEqual(lc, failed) {
+			t.Errorf("%s: after the relaunched agent's idle agent.list says %v, want %v", mode, lc, failed)
+		}
+		if sent := waiting.messages(); len(sent) != 1 || sent[0]["ok"] != true || !reflect.DeepEqual(sent[0]["result"].(map[string]any)["agent"].(map[string]any)["lifecycle"], failed) {
+			t.Errorf("%s: agent.wait once the relaunched agent reported: %v", mode, sent)
+		}
+		report("working", nil)
+		if lc := f.listed(term)["lifecycle"]; !reflect.DeepEqual(lc, map[string]any{"state": "working", "seen": false}) {
+			t.Errorf("%s: after its first turn started %v", mode, lc)
+		}
+		report("idle", nil)
+	}
+}
+
 func TestARelaunchedAgentsUnknownKeepsTheUnseenAnswer(t *testing.T) {
 	f, _ := owning(t)
 	term := f.agentTerminal("", map[string]any{"name": "worker", "command": []any{"aider"}})

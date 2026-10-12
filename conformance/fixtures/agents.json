@@ -1,7 +1,7 @@
 {
   "scenario": "agents",
   "description": "Agent lifecycle on terminal tiles: reports with seq and source (stale ones ignored), blocked tool calls, final answers and reading them back (agent.read final: the answer, cut off by an error, none yet, still in its turn, with lines or since), sessions, release, agent.list, agent.wait (answered, already there, timeout), lifecycle events.",
-  "recordedOn": "easl agent/control (rebased on bd72485), dev instance",
+  "recordedOn": "easl agent/control (rebased on bd72485), dev instance; the lifecycle's error after a failed turn added by hand on fix/restart-keeps-turn-error (CanvasCore's AgentBoardApiTests checks the app's)",
   "steps": [
     {
       "step": "board.open",
@@ -1512,6 +1512,7 @@
               ],
               "cwd": "<root>",
               "lifecycle": {
+                "error": "overloaded_error",
                 "message": "overloaded_error",
                 "seen": false,
                 "state": "idle"
@@ -1532,6 +1533,7 @@
           "board": "<board>",
           "data": {
             "lifecycle": {
+              "error": "overloaded_error",
               "message": "overloaded_error",
               "seen": false,
               "state": "idle"
@@ -1692,6 +1694,7 @@
               ],
               "cwd": "<root>",
               "lifecycle": {
+                "error": "aborted",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"
@@ -1712,6 +1715,7 @@
           "board": "<board>",
           "data": {
             "lifecycle": {
+              "error": "aborted",
               "message": "aborted",
               "seen": false,
               "state": "idle"
@@ -1749,6 +1753,7 @@
             "focused": false,
             "kind": "codex",
             "lifecycle": {
+              "error": "aborted",
               "message": "aborted",
               "seen": false,
               "state": "idle"
@@ -1803,6 +1808,7 @@
               "focused": false,
               "kind": "codex",
               "lifecycle": {
+                "error": "aborted",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"
@@ -2024,6 +2030,7 @@
               "focused": false,
               "kind": "codex",
               "lifecycle": {
+                "error": "aborted",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"
