@@ -160,8 +160,13 @@ enum DevInput {
             window.contentView!.convert(NSPoint(x: number(x), y: content.bounds.height - number(y)), to: nil)
         }
         func mouse(_ type: NSEvent.EventType, _ at: NSPoint, clicks: Int = 1) {
-            let event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+            var event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+            // NSEvent can't name an other-button's number; its CGEvent can.
+            if [.otherMouseDown, .otherMouseDragged, .otherMouseUp].contains(type), let cg = event.cgEvent {
+                cg.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+                event = NSEvent(cgEvent: cg) ?? event
+            }
             NSApp.postEvent(event, atStart: false)
         }
         switch fields["kind"] {
@@ -241,15 +246,16 @@ enum DevInput {
         case "drag":
             let start = point("x", "y")
             let end = point("toX", "toY")
-            mouse(.leftMouseDown, start)
+            let middle = fields["middle"] != nil
+            mouse(middle ? .otherMouseDown : .leftMouseDown, start)
             for step in 1...8 {
                 let t = CGFloat(step) / 8
-                mouse(.leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t))
+                mouse(middle ? .otherMouseDragged : .leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t))
             }
             // `--hold`: the button stays down (a shot of the gesture mid-drag); `release` ends it.
-            if fields["hold"] == nil { mouse(.leftMouseUp, end) }
+            if fields["hold"] == nil { mouse(middle ? .otherMouseUp : .leftMouseUp, end) }
         case "release":
-            mouse(.leftMouseUp, point("x", "y"))
+            mouse(fields["middle"] != nil ? .otherMouseUp : .leftMouseUp, point("x", "y"))
         case "flags":
             // Holding (or releasing) modifiers with the pointer at x,y: drives hover outlines.
             pointer = point("x", "y")

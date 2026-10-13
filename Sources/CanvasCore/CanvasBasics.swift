@@ -41,7 +41,7 @@ public enum CanvasBasics {
         ]),
         Section(title: "Reading a board", items: [
             Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%."),
-            Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways."),
+            Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included."),
             Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
             Item(term: "Captions", text: "the line under a code tile's header says why those lines matter. The tile keeps them as code moves; \"⚠︎ stale\" in its header means they're gone."),
             Item(term: "⌥⌘-arrows", text: "move between tiles: ⌥⌘↑ ⌥⌘↓ ⌥⌘← ⌥⌘→ go to the nearest tile that way, and a terminal takes the keyboard. ⌥⌘→ and ⌥⌘← step along the board's next-step arrows when the selected tile has one (\"Last step\" ends the walk). A tile not in view is centered."),
@@ -93,7 +93,7 @@ public enum CanvasBasics {
             Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the board says its ⌘ key."),
             Item(term: "⌃ stays the terminal's", text: "in a terminal ⌃C interrupts and ⌃D ends input; copy the selection with ⌘C and paste with ⌘V."),
             Item(term: "⌥ is Alt", text: "⌥ (Option) is the Alt key. For Alt as Meta in the shell (Alt-B, Alt-F), set macos-option-as-alt = true in your Ghostty config."),
-            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the board or a tile for its menu."),
+            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways, a middle-button drag pans; right-click the board or a tile for its menu."),
             Item(term: "⌥⌘-arrows", text: "move between tiles like a tiling window manager; a terminal you land on takes the keyboard, and ⌘Esc leaves it."),
         ]),
     ]

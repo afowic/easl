@@ -102,8 +102,8 @@ Real mouse input can't reach an unviewed Space, and posting system events needs 
 
 ```sh
 scripts/dev.sh input click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
-scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …] [--hold]   # --hold keeps the button down: shoot mid-drag, then
-scripts/dev.sh input release <x> <y>                # end the held drag
+scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …] [--hold] [--middle]   # --hold keeps the button down: shoot mid-drag, then
+scripts/dev.sh input release <x> <y> [--middle]     # end the held drag; --middle: with the middle button
 scripts/dev.sh input rightclick <x> <y>             # opens the context menu on screen
 scripts/dev.sh input menu <x> <y> "Content Zoom/150%"   # performs that context-menu item without opening the menu (over code: "Find References", "Outline"; "//" is a slash in a title: "Review Changes/Branch vs origin//main")
 scripts/dev.sh input mainmenu "Edit/Send Mentions To/codex"   # performs that menu-bar item (menus AppKit fills as they open are filled first)

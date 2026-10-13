@@ -19,7 +19,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 ## Reading a board
 
 - Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
-  With a mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways.
+  With a mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included.
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
   A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).
 - **⌥⌘-arrows** (↑ ↓ ← →) move between tiles: to the nearest tile that way, and a terminal landed on takes the keyboard.
@@ -98,5 +98,5 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   A Ctrl shortcut pressed on the board shows a notice naming its ⌘ key, once per key per session.
 - ⌃ stays the terminal's: ⌃C interrupts, ⌃D ends input; ⌘C copies the selection, ⌘V pastes.
 - ⌥ (Option) is Alt; for Alt as Meta in the shell, set `macos-option-as-alt = true` in the user's Ghostty config.
-- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the board or a tile for its menu.
+- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways, a middle-button drag pans; right-click the board or a tile for its menu.
 - ⌥⌘-arrows move between tiles like a tiling window manager; ⌘Esc leaves a terminal.

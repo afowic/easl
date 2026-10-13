@@ -1323,29 +1323,94 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
 /// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
-/// is on it, over a tile too; plain scrolling stays with the tile under the pointer.
+/// is on it, over a tile too; plain scrolling stays with the tile under the pointer. A middle-button
+/// drag pans it from anywhere on it the same way.
 final class CanvasWindow: NSWindow {
+    /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
+    private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
+
+    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        NotificationCenter.default.addObserver(self, selector: #selector(cancelMiddlePan), name: NSApplication.didResignActiveNotification, object: nil)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let controller = windowController as? CanvasWindowController, controller.handleKeyEquivalent(event) { return true }
         return super.performKeyEquivalent(with: event)
     }
 
-    /// Typing reaches the focused tile through here (`CanvasWindowController.keyTyped`), and a
-    /// ⌘-scroll anywhere on the canvas zooms it (`zoomsCanvas`).
+    /// Typing reaches the focused tile through here (`CanvasWindowController.keyTyped`), a
+    /// ⌘-scroll anywhere on the canvas zooms it (`zoomsCanvas`), and a middle-button drag pans it
+    /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, zoomsCanvas(event, at: event.locationInWindow) { return }
+        if middleDragPans(event) { return }
         super.sendEvent(event)
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        cancelMiddlePan()
+    }
+
+    /// The canvas, when `point` (window coordinates) is on it, over a tile too.
+    private func canvas(at point: NSPoint) -> CanvasView? {
+        guard let canvas = (windowController as? CanvasWindowController)?.canvas, let content = contentView,
+              content.hitTest(content.superview?.convert(point, from: nil) ?? point)?.isDescendant(of: canvas) == true else { return nil }
+        return canvas
     }
 
     /// A ⌘-scroll at `point` (window coordinates) over the canvas goes to the canvas
     /// (`CanvasWheel`), which zooms. The modifiers first: every other scroll event skips the hit test.
     func zoomsCanvas(_ event: NSEvent, at point: NSPoint) -> Bool {
         guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              let canvas = (windowController as? CanvasWindowController)?.canvas, let content = contentView,
-              content.hitTest(content.superview?.convert(point, from: nil) ?? point)?.isDescendant(of: canvas) == true else { return false }
+              let canvas = canvas(at: point) else { return false }
         canvas.scrollWheel(with: event)
         return true
+    }
+
+    /// Middle-button presses, drags and releases (`CanvasDragPan`): true when the event was taken.
+    /// A press on the canvas is held back until the pointer moves (a pan) or the button comes up
+    /// first (a click, so the press and then the release go on to what's under it).
+    private func middleDragPans(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .otherMouseDown where event.buttonNumber == 2:
+            cancelMiddlePan()
+            guard !HyperMonitor.isHyper(event.modifierFlags), canvas(at: event.locationInWindow) != nil else { return false }
+            middlePan = (CanvasDragPan(at: event.locationInWindow), event)
+            return true
+        case .otherMouseDragged where event.buttonNumber == 2:
+            guard var gesture = middlePan else { return false }
+            let wasPanning = gesture.pan.panning
+            let delta = gesture.pan.move(to: event.locationInWindow)
+            middlePan = gesture
+            guard let delta, let canvas = (windowController as? CanvasWindowController)?.canvas else { return true }
+            if !wasPanning { NSCursor.closedHand.push() }
+            canvas.pan(by: delta)
+            return true
+        case .otherMouseUp where event.buttonNumber == 2:
+            guard let ended = middlePan else { return false }
+            middlePan = nil
+            if ended.pan.panning {
+                NSCursor.pop()
+                return true
+            }
+
+            // A middle click that never moved: what's under it gets the press after all, then this release.
+            super.sendEvent(ended.press)
+            return false
+        default:
+            return false
+        }
+    }
+
+    /// Drops a middle-button press or pan whose release won't reach this window (the app or window
+    /// stopped taking input, another press began), and the hand cursor it showed.
+    @objc private func cancelMiddlePan() {
+        guard let ended = middlePan else { return }
+        middlePan = nil
+        if ended.pan.panning { NSCursor.pop() }
     }
 }
 

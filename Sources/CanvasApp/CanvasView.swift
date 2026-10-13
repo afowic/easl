@@ -1717,13 +1717,19 @@ final class CanvasView: NSScrollView {
         case .system:
             super.scrollWheel(with: event)
         case .pan(let dx, let dy):
-            let origin = contentView.bounds.origin
-            scroll(to: NSPoint(x: origin.x - dx / magnification, y: origin.y - dy / magnification))
+            pan(by: CGSize(width: dx, height: dy))
         case .zoom(let factor):
             // A window-less event (input replay) carries its screen location.
             let point = event.window == nil ? window?.convertPoint(fromScreen: event.locationInWindow) ?? event.locationInWindow : event.locationInWindow
             zoom(by: factor, around: contentView.convert(point, from: nil))
         }
+    }
+
+    /// Moves the content by `delta` screen points (positive y: down): a wheel notch, a middle-button
+    /// drag step (`CanvasWindow`).
+    func pan(by delta: CGSize) {
+        let origin = contentView.bounds.origin
+        scroll(to: NSPoint(x: origin.x - delta.width / magnification, y: origin.y - delta.height / magnification))
     }
 
     /// The zoom times `factor` (within the limits), keeping the document point `anchor` where it

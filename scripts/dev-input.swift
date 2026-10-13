@@ -5,8 +5,9 @@
 //   dev-input <pid> rightclick <x> <y>
 //   dev-input <pid> menu <x> <y> "<item>/<submenu item>"  perform a context-menu item without opening the menu
 //   dev-input <pid> mainmenu "<menu>/<item>"          perform a menu-bar item (e.g. "Edit/Send Mentions To/codex")
-//   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …] [--hold]   --hold: no mouse-up (shoot mid-drag)
-//   dev-input <pid> release <x> <y>                  the mouse-up ending a held drag
+//   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …] [--hold] [--middle]   --hold: no mouse-up (shoot mid-drag);
+//                                                    --middle: with the middle button
+//   dev-input <pid> release <x> <y> [--middle]       the mouse-up ending a held drag
 //   dev-input <pid> flags <x> <y> [--mods …]         hold modifiers with the pointer at x,y (hover); no --mods releases
 //   dev-input <pid> move <x> <y>                     move the pointer (tracking-area hover, e.g. code navigation)
 //   dev-input <pid> text "<string>"                  insert text into the first responder
@@ -47,6 +48,8 @@ let gesture = args.contains("--gesture")
 args.removeAll { $0 == "--gesture" }
 let lines = args.contains("--lines")
 args.removeAll { $0 == "--lines" }
+let middle = args.contains("--middle")
+args.removeAll { $0 == "--middle" }
 guard args.count >= 2 else {
     FileHandle.standardError.write(Data("usage: dev-input <pid> <kind> …  (see header of scripts/dev-input.swift)\n".utf8))
     exit(2)
@@ -99,6 +102,7 @@ default:
 if let mods { info["mods"] = mods }
 if let clicks { info["clicks"] = clicks }
 if hold { info["hold"] = "1" }
+if middle { info["middle"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }
 if let interval { info["interval"] = interval }
 if gesture { info["gesture"] = "1" }
