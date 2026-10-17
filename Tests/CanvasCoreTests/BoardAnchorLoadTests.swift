@@ -387,6 +387,8 @@ final class BoardAnchorLoadTests {
         let loaded = await BoardRegistry(store: fixture.store).open(root: fixture.repo.root)
         #expect(loaded.isAnchorScrubPending(note.id))
         let session = NoteEditSession(try loaded.object(note.id))
+        let moved = try loaded.update(note.id, rev: loaded.object(note.id).rev, frame: Frame(x: 40, y: 50, w: 400, h: 300))
+        session.observe(moved)
         loaded.recordRefSha(note.id, ref: "main", sha: sha)
         try fixture.store.saveChecked(loaded)
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))

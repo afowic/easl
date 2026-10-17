@@ -370,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let composer = (try? Data(contentsOf: AppPaths.composer(of: id))).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()
                 return (viewport, composer)
             }
+            await MainTurns.next()
             guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
             controller = controllers[id] ?? CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
         }
