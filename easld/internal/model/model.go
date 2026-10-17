@@ -101,6 +101,7 @@ const (
 	HTML     ObjectType = "html"
 	Changes  ObjectType = "changes"
 	Image    ObjectType = "image"
+	Video    ObjectType = "video"
 	Diagram  ObjectType = "diagram"
 	Question ObjectType = "question"
 	Shape    ObjectType = "shape"
@@ -108,7 +109,7 @@ const (
 	Group    ObjectType = "group"
 )
 
-var ObjectTypes = []ObjectType{Terminal, Browser, Code, Note, HTML, Changes, Image, Diagram, Question, Shape, Arrow, Group}
+var ObjectTypes = []ObjectType{Terminal, Browser, Code, Note, HTML, Changes, Image, Video, Diagram, Question, Shape, Arrow, Group}
 
 func ParseObjectType(s string) (ObjectType, bool) {
 	for _, t := range ObjectTypes {
@@ -134,6 +135,7 @@ func (t ObjectType) KnownProps() []string {
 		HTML:     {"html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"},
 		Changes:  {"root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"},
 		Image:    {"path", "caption", "title"},
+		Video:    {"path", "poster", "loop", "muted", "autoplay", "startTime", "title"},
 		Diagram:  {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"},
 		Question: {"question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "zoom"},
 		Shape:    {"kind", "text", "points", "color", "fill", "textSize"},
@@ -190,7 +192,7 @@ func DefaultSize(t ObjectType) (w, h float64) {
 		return 640, 506
 	case Changes:
 		return 820, 620
-	case Image:
+	case Image, Video:
 		return 640, 506
 	case Diagram:
 		return 760, 480

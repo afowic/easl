@@ -795,9 +795,12 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 			}
 			props["viewed"] = out
 		}
-	case model.Image:
+	case model.Image, model.Video:
 		if path, ok := props["path"].(string); ok {
 			props["path"] = r.worktreePath(path, what)
+		}
+		if poster, ok := props["poster"].(string); ok {
+			props["poster"] = r.worktreePath(poster, what)
 		}
 	case model.Diagram:
 		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it

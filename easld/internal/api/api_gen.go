@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "3bb2cea5d256c062"
+const SchemaHash = "74896136bf84cd05"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -575,6 +575,20 @@ type ImageProps struct {
 	Key   *ObjectKey `json:"key,omitempty"`
 }
 
+type VideoProps struct {
+	// video file on the board's host, board-relative or an allowed absolute path
+	Path string `json:"path"`
+	// optional poster image on the board's host
+	Poster   *string `json:"poster,omitempty"`
+	Loop     *bool   `json:"loop,omitempty"`
+	Muted    *bool   `json:"muted,omitempty"`
+	Autoplay *bool   `json:"autoplay,omitempty"`
+	// initial playback position in seconds
+	StartTime *float64   `json:"startTime,omitempty"`
+	Title     *string    `json:"title,omitempty"`
+	Key       *ObjectKey `json:"key,omitempty"`
+}
+
 type DiagramPropsGraphNodesExcerpt struct {
 	Line *int    `json:"line,omitempty"`
 	Text *string `json:"text,omitempty"`
@@ -784,6 +798,7 @@ const (
 	ObjectTypeHtml     ObjectType = "html"
 	ObjectTypeChanges  ObjectType = "changes"
 	ObjectTypeImage    ObjectType = "image"
+	ObjectTypeVideo    ObjectType = "video"
 	ObjectTypeDiagram  ObjectType = "diagram"
 	ObjectTypeQuestion ObjectType = "question"
 	ObjectTypeShape    ObjectType = "shape"
@@ -803,7 +818,7 @@ type CanvasObject struct {
 	UpdatedBy Actor   `json:"updatedBy,omitempty"`
 	CreatedAt string  `json:"createdAt"`
 	UpdatedAt string  `json:"updatedAt"`
-	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
+	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
 	Props map[string]any `json:"props"`
 }
 

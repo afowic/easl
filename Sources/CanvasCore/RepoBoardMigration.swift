@@ -678,8 +678,9 @@ struct Rerooter {
                     props["viewed"] = .object(Dictionary(viewed.map { (inPlace($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))
                 }
             }
-        case .image:
+        case .image, .video:
             if let path = props["path"]?.string { props["path"] = .string(worktreePath(path, what: what)) }
+            if let poster = props["poster"]?.string { props["poster"] = .string(worktreePath(poster, what: what)) }
         case .diagram:
             // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
             // it expanded, as the repository board's next build writes them (`moved`), so that

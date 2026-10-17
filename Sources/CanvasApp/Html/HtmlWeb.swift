@@ -29,21 +29,19 @@ enum HtmlRuleLists {
     }
 }
 
-/// Serves `canvas-kit://html/<tileId>` (the tile's html behind the kit head), `/kit/…` from
-/// resources/kit, and images: `<img src="out/chart.png">` (board-relative, resolved against the
-/// page URL) or an absolute path inside the board root or the temp directory
-/// (`LocalImage.pageFile`). Everything else is 404, including other tiles' pages.
 @MainActor
 final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
-    /// The tile whose page this serves; a pooled measure page (`HtmlMeasurePool`) serves one
-    /// tile per measure, and none while it waits.
-    weak var tile: HtmlTile?
+    weak var tile: HtmlTile? {
+        didSet {
+            if oldValue !== tile {
+                for read in reads.values { read.cancel() }
+                reads.removeAll()
+            }
+        }
+    }
     private static let kitRoot = AppPaths.asset("kit")
-    /// Kit files never change while the app runs; mapped reads keep repeat loads cheap.
     private static var kitCache: [String: Data] = [:]
-    /// Image requests still being read; a task WebKit stopped meanwhile gets no reply.
-    private var reading: Set<ObjectIdentifier> = []
-    private var hostReads: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var reads: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     init(tile: HtmlTile?) {
         self.tile = tile
@@ -53,60 +51,113 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let url = task.request.url, url.host == HtmlKit.host, let tile else {
             return task.didFailWithError(URLError(.fileDoesNotExist))
         }
+        guard !tile.isRemote || tile.files != nil else {
+            return task.didFailWithError(URLError(.cannotConnectToHost))
+        }
         if url.path == HtmlKit.pageURL(tile: tile.objectID).path {
+            if webView === tile.webView { tile.resetAssetWatches() }
             respond(task, url: url, data: Data(tile.document.utf8), type: "text/html", cache: "no-store")
-        } else if let kitRoot = Self.kitRoot, let file = HtmlKit.kitFile(requestPath: url.path, kitRoot: kitRoot),
-                  let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
+            return
+        }
+        if let kitRoot = Self.kitRoot, let file = HtmlKit.kitFile(requestPath: url.path, kitRoot: kitRoot),
+           let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
             Self.kitCache[file.path] = data
             respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "max-age=31536000, immutable")
-        } else if tile.isRemote {
-            guard let files = tile.files,
-                  let request = LocalImage.hostPageFile(requestPath: url.path, source: tile.hostImageSource, temps: files.temps) else {
-                return notFound(task, url: url)
-            }
-            let key = ObjectIdentifier(task)
-            hostReads[key] = Task { @MainActor [weak self] in
-                let file = try? await files.read(request)
-                guard let self, self.hostReads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
-                if let file {
-                    self.respond(task, url: url, data: file.data, type: file.mimeType, cache: "no-store")
+            return
+        }
+        let method = task.request.httpMethod ?? "GET"
+        guard method == "GET" || method == "HEAD" else {
+            return respond(task, url: url, data: Data(), type: "text/plain", cache: "no-store", status: 405)
+        }
+        let key = ObjectIdentifier(task)
+        let files = tile.files
+        let source = tile.isRemote ? tile.hostImageSource : .directory(tile.boardRoot.path)
+        let assetPath = url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" }))
+        var request = HostFileRequest(source: source, policy: .boardAsset(assetPath), bytes: false)
+        let live = webView === tile.webView
+        reads[key] = Task { @MainActor [weak self, weak tile] in
+            guard let self, let tile else { return }
+            var began = false
+            do {
+                let metadata: HostFile
+                do {
+                    metadata = try await Self.read(request, files: files)
+                } catch {
+                    guard let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
+                                                                 temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
+                    var imageRequest = fallback
+                    imageRequest.bytes = false
+                    metadata = try await Self.read(imageRequest, files: files)
+                    request = imageRequest
+                }
+                guard self.reads[key] != nil, !Task.isCancelled else { return }
+                if live { tile.observeAsset(url.path, request: request, baseline: .version(metadata.version)) }
+                let selection: MediaByteRange
+                do {
+                    selection = try MediaByteRange(header: task.request.value(forHTTPHeaderField: "Range"), size: metadata.size)
+                } catch {
+                    self.head(task, url: url, type: metadata.mimeType, status: 416,
+                              headers: ["Content-Range": "bytes */\(metadata.size)", "Content-Length": "0", "Accept-Ranges": "bytes"])
+                    task.didFinish()
+                    self.reads.removeValue(forKey: key)
+                    return
+                }
+                self.head(task, url: url, type: metadata.mimeType, status: selection.partial ? 206 : 200,
+                          headers: selection.headers(size: metadata.size))
+                began = true
+                if method != "HEAD" {
+                    var offset = selection.bytes.lowerBound
+                    request.bytes = true
+                    while offset < selection.bytes.upperBound {
+                        try Task.checkCancellation()
+                        request.range = HostFileRange(offset: offset, length: Int(min(1_048_576, selection.bytes.upperBound - offset)))
+                        let chunk = try await Self.read(request, files: files)
+                        guard self.reads[key] != nil, !Task.isCancelled else { return }
+                        guard chunk.version == metadata.version, chunk.size == metadata.size,
+                              chunk.offset == offset, !chunk.data.isEmpty else { throw URLError(.resourceUnavailable) }
+                        task.didReceive(chunk.data)
+                        offset += Int64(chunk.data.count)
+                    }
+                }
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                task.didFinish()
+            } catch {
+                guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                if live {
+                    tile.observeAsset(url.path, request: request,
+                                      baseline: .failure(error as? HostFileError ?? .unavailable(String(describing: error))))
+                }
+                if began {
+                    task.didFailWithError(error)
                 } else {
-                    self.notFound(task, url: url)
+                    self.respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
                 }
             }
-        } else if let file = LocalImage.pageFile(requestPath: url.path, root: tile.boardRoot) {
-            let key = ObjectIdentifier(task)
-            reading.insert(key)
-            Task { @MainActor [weak self] in
-                let data = await offPool { try? Data(contentsOf: file) }
-                guard let self, self.reading.remove(key) != nil else { return }
-                if let data {
-                    self.respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "no-store")
-                } else {
-                    self.notFound(task, url: url)
-                }
-            }
-        } else {
-            notFound(task, url: url)
         }
     }
 
-    private func notFound(_ task: any WKURLSchemeTask, url: URL) {
-        respond(task, url: url, data: Data("not found".utf8), type: "text/plain", cache: "no-store", status: 404)
+    private static func read(_ request: HostFileRequest, files: HostFiles?) async throws -> HostFile {
+        if let files { return try await files.read(request) }
+        return try await HostFiles.readLocal(request)
     }
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
-        reading.remove(ObjectIdentifier(task))
-        hostReads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+        reads.removeValue(forKey: ObjectIdentifier(task))?.cancel()
+    }
+
+    private func head(_ task: any WKURLSchemeTask, url: URL, type: String, status: Int, headers: [String: String]) {
+        var headers = headers
+        headers["Content-Type"] = type
+        headers["Cache-Control"] = "no-store"
+        if let policy = tile?.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
+        task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
     }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String, status: Int = 200) {
-        guard let tile else { return task.didFailWithError(URLError(.cancelled)) }
         var headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]
-        // A framed SVG is its own active document and does not inherit the page's meta CSP.
-        if let policy = tile.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
+        if let policy = tile?.contentSecurityPolicy { headers["Content-Security-Policy"] = policy }
         task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
-        task.didReceive(data)
+        if !data.isEmpty { task.didReceive(data) }
         task.didFinish()
     }
 }

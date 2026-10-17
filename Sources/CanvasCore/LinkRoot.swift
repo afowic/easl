@@ -96,6 +96,11 @@ extension Board {
             guard let path = fields["path"]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~") else { break }
             if type == .code, merged["ref"]?.string?.isEmpty == false || merged["pinnedCommit"]?.string?.isEmpty == false { break }
             fields["path"] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
+        case .video:
+            for key in ["path", "poster"] {
+                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~") else { continue }
+                fields[key] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
+            }
         case .changes, .note, .html:
             guard existing == nil, fields["root"]?.string?.isEmpty != false else { break }
             if type == .changes, fields["ref"]?.string?.isEmpty == false || fields["head"]?.string?.isEmpty == false { break }

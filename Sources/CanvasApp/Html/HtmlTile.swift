@@ -38,6 +38,47 @@ final class HtmlTile: NSView, TileContent {
     private var queuedHover: NSPoint?
     /// Bounds the native work a page can have outstanding; cancelled when the web view goes away.
     private let work = HtmlWorkQueue()
+    private var assetWatches: [String: HostFileWatch] = [:]
+    private var assetReload: DispatchWorkItem?
+    private var assetsStale = false
+
+    func resetAssetWatches() {
+        for watch in assetWatches.values { watch.cancel() }
+        assetWatches.removeAll()
+        assetReload?.cancel()
+        assetReload = nil
+    }
+
+    func observeAsset(_ path: String, request: HostFileRequest, baseline: HostFileObservation) {
+        guard live, window != nil else { return }
+        assetWatches[path]?.cancel()
+        var metadata = request
+        metadata.bytes = false
+        metadata.range = nil
+        let probeRequest = metadata
+        let files = files
+        assetWatches[path] = HostFileWatch(baseline: baseline, probe: {
+            do {
+                let file = if let files { try await files.read(probeRequest) } else { try await HostFiles.readLocal(probeRequest) }
+                return HostFileObservation.version(file.version)
+            } catch is CancellationError {
+                return nil
+            } catch {
+                return .failure(error as? HostFileError ?? .unavailable(String(describing: error)))
+            }
+        }, changed: { [weak self] _ in
+            guard let self, self.live, self.window != nil else { return }
+            self.assetReload?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.live, self.window != nil else { return }
+                    self.webView?.load(URLRequest(url: self.pageURL))
+                }
+            }
+            self.assetReload = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+        })
+    }
     /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`), or one
     /// that already showed the lines (`existing`); the canvas shows it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
@@ -117,6 +158,7 @@ final class HtmlTile: NSView, TileContent {
     static func configuration(rules: WKContentRuleList?, scheme: HtmlSchemeHandler, channel: HtmlChannelHandler) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        configuration.mediaTypesRequiringUserActionForPlayback = []
         if let rules { configuration.userContentController.add(rules) }
         configuration.setURLSchemeHandler(scheme, forURLScheme: HtmlKit.scheme)
         configuration.userContentController.addScriptMessageHandler(channel, contentWorld: .page, name: "canvas")
@@ -146,6 +188,7 @@ final class HtmlTile: NSView, TileContent {
 
     private func detach() {
         unpark()
+        resetAssetWatches()
         snapshotTask?.cancel()
         snapshotTask = nil
         pageShown = false
@@ -281,6 +324,11 @@ final class HtmlTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         guard live != self.live else { return }
         self.live = live
+        if !live {
+            assetsStale = !assetWatches.isEmpty
+            resetAssetWatches()
+            Task { [weak web = webView] in _ = try? await web?.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(v => v.pause())") }
+        }
         if live, let web = webView {
             // Back before its release: the page is still loaded. It may have re-rendered while
             // hidden (a `state` change), which parked pages don't capture: refresh the snapshot
@@ -288,6 +336,10 @@ final class HtmlTile: NSView, TileContent {
             unpark()
             web.isHidden = false
             Metrics.shared.record("html.reuse")
+            if assetsStale {
+                assetsStale = false
+                web.load(URLRequest(url: pageURL))
+            }
             WebStage.afterNextPresentationUpdate(web) { [weak self] in
                 guard let self, self.live, self.webView === web else { return }
                 self.scheduleSnapshot()
@@ -298,6 +350,17 @@ final class HtmlTile: NSView, TileContent {
             park()
         } else {
             detach()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            assetsStale = !assetWatches.isEmpty || assetsStale
+            resetAssetWatches()
+        } else if live, assetsStale, let web = webView {
+            assetsStale = false
+            web.load(URLRequest(url: pageURL))
         }
     }
 
@@ -577,7 +640,7 @@ final class HtmlTile: NSView, TileContent {
         } else if networkChanged {
             detach()
             build()
-        } else if object.props["html"] != previous.props["html"] {
+        } else if ["html", "root", "ref", "refSha"].contains(where: { object.props[$0] != previous.props[$0] }) {
             Metrics.shared.record("html.reload")
             work.cancelAll()
             web.load(URLRequest(url: pageURL))

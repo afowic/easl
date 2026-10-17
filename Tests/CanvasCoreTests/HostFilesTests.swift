@@ -112,11 +112,13 @@ struct HostFilesTests {
         let files = try fixture.reader()
         let result = try await files.read(fixture.request(name))
         #expect(result.data == bytes)
+        #expect(result.size == 6 && result.offset == 0)
         let path = try #require(result.path)
         #expect(URL(fileURLWithPath: path).resolvingSymlinksInPath() == fixture.root.appendingPathComponent(name).resolvingSymlinksInPath())
         #expect(result.commit == nil)
         let checked = try await files.read(fixture.request(name, bytes: false))
         #expect(checked.path == result.path && checked.data.isEmpty)
+        #expect(checked.size == 6 && checked.offset == 0)
         #expect(checked.version == result.version)
     }
 
