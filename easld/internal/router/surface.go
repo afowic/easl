@@ -25,6 +25,7 @@ const (
 	maxSurfaceInteger = 1 << 53
 	maxSurfaceFiles   = 32
 	maxSurfaceBytes   = 8 << 20
+	maxSurfacePayload = 24 << 20
 )
 
 func (r *Router) surfaceCall(req any, c Conn) (any, bool) {
@@ -120,6 +121,10 @@ func (r *Router) observeSurfaces(b *board.Board, e model.Event) {
 }
 
 func checkSurface(method string, p map[string]any) error {
+	budget := maxSurfacePayload
+	if !surfaceFits(p, &budget) {
+		return invalid("surface payload exceeds the 24 MiB encoded limit")
+	}
 	switch method {
 	case "surface.stream":
 		id, err := surfaceString(p, "id")
@@ -275,4 +280,42 @@ func surfaceFiles(p map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func surfaceFits(value any, remaining *int) bool {
+	switch v := value.(type) {
+	case string:
+		*remaining -= 2 + len(v)
+		if *remaining < 0 {
+			return false
+		}
+		for i := range len(v) {
+			switch {
+			case v[i] < 0x20:
+				*remaining -= 5
+			case v[i] == '"' || v[i] == '\\' || v[i] == '/':
+				*remaining -= 1
+			}
+			if *remaining < 0 {
+				return false
+			}
+		}
+	case map[string]any:
+		*remaining -= 2 + 2*len(v)
+		for key, item := range v {
+			if !surfaceFits(key, remaining) || !surfaceFits(item, remaining) {
+				return false
+			}
+		}
+	case []any:
+		*remaining -= 2 + len(v)
+		for _, item := range v {
+			if !surfaceFits(item, remaining) {
+				return false
+			}
+		}
+	default:
+		*remaining -= 32
+	}
+	return *remaining >= 0
 }
