@@ -258,6 +258,17 @@ final class BoardAnchorLoadTests {
         #expect(settled.objects.first { $0.id == fixture.allowed.id }?.frame == frame)
         #expect(settled.objects.first { $0.id == fixture.edited.id }?.props["markdown"] == .string(authored))
         #expect(!String(decoding: try BoardStore.encoder.encode(settled), as: UTF8.self).contains("LEAKED_"))
+        #expect(loaded.undo())
+        #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(fixture.accepted))
+        #expect(loaded.undo())
+        #expect(try loaded.object(fixture.allowed.id).frame == fixture.allowed.frame)
+        #expect(try loaded.object(fixture.allowed.id).props["caption"] == nil)
+        #expect(try loaded.object(fixture.allowed.id).props["markdown"] == .string(fixture.accepted))
+        #expect(loaded.redo())
+        #expect(try loaded.object(fixture.allowed.id).frame == frame)
+        #expect(try loaded.object(fixture.allowed.id).props["markdown"] == .string(fixture.accepted))
+        #expect(loaded.redo())
+        #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(authored))
     }
 
     @Test(.timeLimit(.minutes(1))) func closingAndReopeningDuringGitScrubCannotResurrectOrOverwriteObjects() async throws {
@@ -361,6 +372,37 @@ final class BoardAnchorLoadTests {
         try await holds.finish()
         await fromMain.waitForAnchorScrub()
         #expect(try fromMain.object(fixture.allowed.id).props["markdown"] == .string(fixture.accepted))
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aRefShaRefreshDuringScrubKeepsRecoverableAnchors() async throws {
+        let fixture = try await gitFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.repo.root) }
+        let sha = try await fixture.repo.git("rev-parse", "HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
+        let markdown = "```txt file=a.txt#L1 anchor=KEEP_REF\n```\n"
+        let note = fixture.board.create(type: .note, props: .object(["ref": "main", "markdown": .string(markdown)]))
+        try persist(fixture.board.snapshot, in: fixture.store)
+        let holds = GitLoadHolds()
+        defer { holds.release() }
+        try await holds.occupy(in: directory)
+        let loaded = await BoardRegistry(store: fixture.store).open(root: fixture.repo.root)
+        #expect(loaded.isAnchorScrubPending(note.id))
+        let session = NoteEditSession(try loaded.object(note.id))
+        loaded.recordRefSha(note.id, ref: "main", sha: sha)
+        try fixture.store.saveChecked(loaded)
+        #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))
+        try await holds.finish()
+        await loaded.waitForAnchorScrub()
+        #expect(try loaded.object(note.id).props["markdown"] == .string(markdown))
+        loaded.recordRefSha(note.id, ref: "main", sha: sha)
+        fixture.store.flush([loaded])
+        #expect(try loaded.object(note.id).props["refSha"] == .string(sha))
+        #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))
+        session.observe(try loaded.object(note.id))
+        #expect(!session.conflicted)
+        let typed = "Typed while the board was checking anchors."
+        #expect(try session.commit(typed, confirmed: false, on: loaded) == .saved)
+        try fixture.store.saveChecked(loaded)
+        #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(typed))
     }
 
     struct GitFixture {
