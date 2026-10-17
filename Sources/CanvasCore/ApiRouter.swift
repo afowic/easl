@@ -121,7 +121,7 @@ public final class BoardRegistry {
         if changed { broadcast(open ? "board.opened" : "board.closed", data: .object([:]), board: board.id) }
     }
 
-    func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
+    public func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
 
     public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) throws {
         guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }

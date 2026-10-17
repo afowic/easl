@@ -42,20 +42,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// A repository board opened from one of its worktrees (`Board.opened(from:)`): the
     /// subtitle names that worktree and its branch, and the view goes to the worktree's region
     /// when it has one. Opened from the main checkout, the subtitle is the board root again.
-    func showWorktree(openedAt directory: URL) async {
-        let working = board.workingWorktree
-        let visit = await offPool {
-            let worktree = GitWorktree.containing(directory.standardizedFileURL.path)
-            return (worktree: worktree, branch: worktree?.branch, path: worktree.map { GitWorktree.normalized($0.toplevel) }, workingBranch: working?.branch)
-        }
-        guard !board.isClosed else { return }
-        if let working {
-            window?.subtitle = "\(working.toplevel) · \(visit.workingBranch ?? "detached HEAD")"
+    func showWorktree(_ visit: WorktreeVisit?) {
+        if let visit, !visit.worktree.isMain {
+            window?.subtitle = "\(visit.worktree.toplevel) · \(visit.branch ?? "detached HEAD")"
         } else {
             window?.subtitle = board.root.path
         }
-        guard let worktree = visit.worktree, worktree.commonDir == board.repo?.commonDir, !worktree.isMain,
-              let path = visit.path, let region = board.repo?.region(branch: visit.branch, path: path, objects: board.objects) else { return }
+        guard let visit, visit.worktree.commonDir == board.repo?.commonDir,
+              !visit.worktree.isMain, let region = board.region(for: visit) else { return }
         // On the next turn, once the window has laid the canvas out and after the board's own
         // opening view (`CanvasView.placeOpeningView`): the worktree's region wins over the saved view.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }

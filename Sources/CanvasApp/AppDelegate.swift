@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var releasingCloses = false
     private var terminationSignal: DispatchSourceSignal?
     private var pasteMaintenance: TerminalPaste.Maintenance?
+    private var localRestore: Task<Void, Never>?
     private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         guard let self,
@@ -95,13 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
         notifier.onOpen = { [weak self] board, tile in
             Task { @MainActor in
+                await self?.localRestore?.value
                 guard let self, var controller = self.controllers[board] else { return }
                 if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
                     let reopened = await self.open(root: controller.board.root, select: false)
                     guard let open = self.controllers[reopened.id] else { return }
                     controller = open
                 }
-                guard let window = controller.window, self.bringForward(window) else { return }
+                guard !self.terminating, let window = controller.window, self.bringForward(window) else { return }
                 if !CanvasApplication.neverActivate {
                     NSApp.activate(ignoringOtherApps: true)
                 }
@@ -212,8 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), on: host, lines: lines, columns: columns, screen: screen) }
         }
         let router = router
-        let server = SocketServer(path: AppPaths.apiSocket) { request, connection in
-            await router.handle(request, connection: connection)
+        let server = SocketServer(path: AppPaths.apiSocket) { [weak self] request, connection in
+            await self?.localRestore?.value
+            return await router.handle(request, connection: connection)
         }
         do {
             try server.start()
@@ -228,8 +231,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await tile.perform(command, driver: driver)
         }
         let cmux = cmux
-        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { request, connection in
-            await cmux.handle(request, connection: connection)
+        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { [weak self] request, connection in
+            await self?.localRestore?.value
+            return await cmux.handle(request, connection: connection)
         }
         do {
             try cmuxServer.start()
@@ -242,7 +246,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(showHeldTabs), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didDeminiaturizeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
-        Task { @MainActor in
+        localRestore = Task { @MainActor in
+            defer {
+                localRestore = nil
+                saveOpenBoards()
+            }
             let saved = await Self.savedOpenBoards()
             let initialRoot = Self.initialRoot()
             let getStarted = await offPool {
@@ -330,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard !terminating else { return false }
+        guard !terminating, localRestore == nil else { return false }
         guard !flag else { return true }
         if let retained = remoteControllers.first(where: { !$0.value.isBoardOpen }) {
             _ = shownRemote(retained.key, select: true)
@@ -350,6 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func open(root: URL, select: Bool = true) async -> Board {
         let board = await registry.open(root: root)
         guard !terminating, !board.isClosed else { return board }
+        let visit = await offPool { GitWorktree.containing(root.standardizedFileURL.path).map(WorktreeVisit.init) }
+        guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
         let controller: CanvasWindowController
         if let existing = controllers[board.id] {
             controller = existing
@@ -360,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let composer = (try? Data(contentsOf: AppPaths.composer(of: id))).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()
                 return (viewport, composer)
             }
-            guard !terminating, !board.isClosed else { return board }
+            guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
             controller = controllers[id] ?? CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
         }
         if let window = controller.window { cancelHeldManualClose(window) }
@@ -373,8 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let board else { return }
             try await router.composerPrompt(text, to: terminal, on: board, mentions: mentions, answer: answer)
         }
-        await controller.showWorktree(openedAt: root)
-        guard !terminating, !board.isClosed else { return board }
+        controller.showWorktree(visit)
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }
@@ -1065,7 +1074,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
     private func saveOpenBoards(closing: NSWindow? = nil) {
-        guard !terminating else { return }
+        guard !terminating, localRestore == nil else { return }
         let open = controllers.values.filter { controller in
             guard let window = controller.window else { return false }
             return (controller.isBoardOpen || window === closing) && !isHoldingClose(window)

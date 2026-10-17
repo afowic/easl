@@ -153,6 +153,22 @@ public final class UndoHistory {
         return .object(props)
     }
 
+    func rewriteObjects(_ transform: (CanvasObject) -> CanvasObject) {
+        func rewrite(_ changes: inout [Change]) {
+            for index in changes.indices {
+                switch changes[index] {
+                case .created(let object): changes[index] = .created(transform(object))
+                case .updated(let before, let after): changes[index] = .updated(before: transform(before), after: transform(after))
+                case .deleted(let object): changes[index] = .deleted(transform(object))
+                case .effect, .unstaged: break
+                }
+            }
+        }
+        for index in undoSteps.indices { rewrite(&undoSteps[index].changes) }
+        for index in redoSteps.indices { rewrite(&redoSteps[index].changes) }
+        rewrite(&open)
+    }
+
     /// `target`'s content applied to `current`, keeping current's bookkeeping props.
     static func restoring(_ target: CanvasObject, onto current: CanvasObject) -> CanvasObject {
         var object = current

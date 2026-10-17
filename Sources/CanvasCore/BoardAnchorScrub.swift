@@ -25,6 +25,7 @@ enum BoardAnchorScrub {
         var stored: [String: JSONValue]
         /// Its carriers as published.
         var published: [String: JSONValue]
+        var resolution: (ref: String, sha: String)?
     }
 
     /// A stored board with its anchors checked as far as they go without git.
@@ -159,6 +160,13 @@ enum BoardAnchorScrub {
         return .object(fields)
     }
 
+    static func restoring(_ object: CanvasObject, held: Held, carriers: [String: JSONValue]) -> CanvasObject {
+        guard Self.carriers(of: object.props) == held.published else { return object }
+        var restored = object
+        restored.props = replacingCarriers(of: object.props, with: carriers)
+        return restored
+    }
+
     /// The fence a code tile's anchor is read from, as `reading` reads it.
     private static func codeFence(_ path: String, props: JSONValue, reading: LinkReading) -> NoteFence {
         var fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 })
@@ -231,10 +239,18 @@ extension Board {
     func settleAnchors(_ checked: [ObjectID: [String: JSONValue]]) {
         let held = heldAnchors
         heldAnchors = [:]
+        history.rewriteObjects { object in
+            guard let hold = held[object.id], let carriers = checked[object.id] else { return object }
+            return BoardAnchorScrub.restoring(object, held: hold, carriers: carriers)
+        }
         for (id, carriers) in checked.sorted(by: { $0.key < $1.key }) {
             guard let live = objects[id], let published = held[id]?.published, BoardAnchorScrub.carriers(of: live.props) == published else { continue }
             let patch = BoardAnchorScrub.carrierKeys.map { ($0, carriers[$0] ?? .null) }
             commitBookkeeping(live, props: .object(Dictionary(uniqueKeysWithValues: patch)), persisting: false)
+        }
+        for (id, hold) in held {
+            guard let resolution = hold.resolution else { continue }
+            recordRefSha(id, ref: resolution.ref, sha: resolution.sha)
         }
     }
 }

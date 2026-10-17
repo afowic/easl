@@ -393,7 +393,6 @@ final class BoardAnchorLoadTests {
         try await holds.finish()
         await loaded.waitForAnchorScrub()
         #expect(try loaded.object(note.id).props["markdown"] == .string(markdown))
-        loaded.recordRefSha(note.id, ref: "main", sha: sha)
         fixture.store.flush([loaded])
         #expect(try loaded.object(note.id).props["refSha"] == .string(sha))
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))

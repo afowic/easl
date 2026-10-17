@@ -180,7 +180,12 @@ extension Board {
 
     /// Writes `props.refSha` while the object still anchors to `ref`.
     public func recordRefSha(_ id: ObjectID, ref: String, sha: String) {
-        guard let before = objects[id], RefSource.ref(of: before.props) == ref, before.props["refSha"]?.string != sha else { return }
+        guard let before = objects[id], RefSource.ref(of: before.props) == ref else { return }
+        if heldAnchors[id] != nil {
+            heldAnchors[id]?.resolution = (ref, sha)
+            return
+        }
+        guard before.props["refSha"]?.string != sha else { return }
         commitBookkeeping(before, props: .object(["refSha": .string(sha)]))
     }
 }
