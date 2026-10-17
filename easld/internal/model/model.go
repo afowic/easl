@@ -137,7 +137,7 @@ func (t ObjectType) KnownProps() []string {
 		Image:    {"path", "caption", "title"},
 		Video:    {"path", "poster", "loop", "muted", "autoplay", "startTime", "title"},
 		Diagram:  {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"},
-		Question: {"question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "zoom"},
+		Question: {"question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "keep", "archiveAfter", "zoom"},
 		Shape:    {"kind", "text", "points", "color", "fill", "textSize"},
 		Arrow:    {"from", "to", "relation", "label", "color", "route"},
 		Group:    {"members", "title", "color", "padding", "flow"},
