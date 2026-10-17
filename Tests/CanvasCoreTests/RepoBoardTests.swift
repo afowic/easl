@@ -46,6 +46,19 @@ struct RepoBoardTests {
 
     func real(_ path: String) -> String { GitDiffEngine.realPath(URL(fileURLWithPath: path)).path }
 
+    func openThroughSocket(_ root: URL, router: ApiRouter) async throws -> JSONValue {
+        let socket = dir.appendingPathComponent("open.sock").path
+        let server = SocketServer(path: socket) { request, connection in await router.handle(request, connection: connection) }
+        try server.start()
+        defer { server.stop() }
+        let client = try LineClient(path: socket)
+        let request: JSONValue = .object(["id": "open", "method": "board.open", "params": .object(["root": .string(root.path)])])
+        client.send(String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+        let reply = try await client.next()
+        try #require(reply["ok"] == .bool(true), "\(reply)")
+        return try #require(reply["result"])
+    }
+
     @Test func twoBranchBoardsMergeIntoOneRepositoryBoardWithTheirArrowsAndARegionForTheBranch() async throws {
         let (repo, worktree) = try await fixture()
         // The main checkout's board was opened at a subdirectory: its paths are relative to it.
@@ -570,7 +583,7 @@ struct RepoBoardTests {
         for _ in 0..<3 {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
             let router = ApiRouter(registry: registry)
-            let opened = try router.dispatch("board.open", .object(["root": .string(worktree.path)]))
+            let opened = try await openThroughSocket(worktree, router: router)
             let id = try #require(opened["board"]?.string)
             let board = try #require(registry.boards[id])
             let group = try #require(board.objects.values.first { $0.props["key"] == .string("worktree:wt-feature") })
@@ -623,7 +636,7 @@ struct RepoBoardTests {
         for _ in 0..<3 {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
             let router = ApiRouter(registry: registry)
-            let opened = try router.dispatch("board.open", .object(["root": .string(worktree.path)]))
+            let opened = try await openThroughSocket(worktree, router: router)
             #expect(opened["worktree"]?["region"] == .string(region.id))
             let listed = try #require(try router.dispatch("board.list", .object([:]))["boards"]?.array?.first { $0["board"] == .string(board.id) })
             let rows = try #require(listed["worktrees"]?.array).filter { $0["path"] == .string(path) }
