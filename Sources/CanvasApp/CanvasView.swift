@@ -227,10 +227,10 @@ final class CanvasView: NSScrollView {
         var lasso: Bool
     }
 
-    init(board: Board, remote: RemoteSource? = nil) {
+    init(board: Board, viewport: SavedViewport.Recorder?, remote: RemoteSource? = nil) {
         self.board = board
         self.remote = remote
-        viewportRecorder = remote == nil ? SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: board.id))) : nil
+        viewportRecorder = viewport
         super.init(frame: .zero)
         documentView = document
         document.canvas = self

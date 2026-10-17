@@ -12,10 +12,10 @@ final class QuestionTests {
     let server: SocketServer
     let board: Board
 
-    init() throws {
+    init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
         registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
-        board = registry.open(root: dir.appendingPathComponent("root"))
+        board = await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
         server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
@@ -299,7 +299,7 @@ final class QuestionTests {
         try await repo.commit("init")
         let worktree = URL(fileURLWithPath: repo.root.path + "-wt/fees")
         try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
-        let repoBoard = registry.open(root: repo.root)
+        let repoBoard = await registry.open(root: repo.root)
         let agent = repoBoard.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path), "command": .array([])])).id
         let home = repoBoard.create(type: .terminal, props: .object(["cwd": .string(repo.root.path), "command": .array([])])).id
         func ask(_ context: JSONValue, caller: ObjectID) async throws -> CanvasObject {

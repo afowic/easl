@@ -118,17 +118,20 @@ public struct LinkReading: Sendable {
 
     /// Resolves persisted link props without a live board or any bookkeeping writes.
     public static func resolve(props: JSONValue, boardRoot: URL) async -> LinkReading {
-        guard let ref = RefSource.ref(of: props) else {
-            let value = props["root"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-            let root = value.map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : boardRoot.appendingPathComponent($0) } ?? boardRoot
-            return LinkReading(root: root.standardizedFileURL)
-        }
+        guard let ref = RefSource.ref(of: props) else { return unreferenced(props: props, boardRoot: boardRoot) }
         do {
             let source = try await RefSource.resolve(ref: ref, lastKnownSha: props["refSha"]?.string, boardRoot: boardRoot)
             return LinkReading(root: source.root, ref: source)
         } catch {
             return LinkReading(root: boardRoot, failure: (ref, RefSource.describe(error, ref: ref)))
         }
+    }
+
+    /// `resolve` for props without a `ref`: their link root, which needs no git.
+    static func unreferenced(props: JSONValue, boardRoot: URL) -> LinkReading {
+        let value = props["root"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+        let root = value.map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : boardRoot.appendingPathComponent($0) } ?? boardRoot
+        return LinkReading(root: root.standardizedFileURL)
     }
 
     /// The commit files without their own are read at; nil for the working tree.

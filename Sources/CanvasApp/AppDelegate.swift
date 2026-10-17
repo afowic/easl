@@ -94,17 +94,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
         notifier.onOpen = { [weak self] board, tile in
-            guard let self, var controller = self.controllers[board] else { return }
-            if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
-                let reopened = self.open(root: controller.board.root, select: false)
-                guard let open = self.controllers[reopened.id] else { return }
-                controller = open
+            Task { @MainActor in
+                guard let self, var controller = self.controllers[board] else { return }
+                if !controller.isBoardOpen || controller.window.map(self.isHoldingClose) == true {
+                    let reopened = await self.open(root: controller.board.root, select: false)
+                    guard let open = self.controllers[reopened.id] else { return }
+                    controller = open
+                }
+                guard let window = controller.window, self.bringForward(window) else { return }
+                if !CanvasApplication.neverActivate {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                controller.canvas.focus(tile: tile)
             }
-            guard let window = controller.window, self.bringForward(window) else { return }
-            if !CanvasApplication.neverActivate {
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            controller.canvas.focus(tile: tile)
         }
         notifier.install()
         router.submitToTerminal = { [weak self] board, tile, text in
@@ -188,7 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
         router.showOpenedLink = { [weak self] board, opened, source in self?.controllers[board.id]?.canvas.showOpenedLink(opened, openedFrom: source) }
         router.openBoard = { [weak self, registry] root, select in
-            self?.open(root: root, select: select) ?? registry.open(root: root)
+            if let self { return await self.open(root: root, select: select) }
+            return await registry.open(root: root)
         }
         router.closeBoard = { [weak self] board, endSessions in
             guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
@@ -235,44 +238,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("easl: cannot listen on \(AppPaths.cmuxSocket): \(error)")
         }
         hyper.install()
-        let saved = Self.savedOpenBoards()
-        // Decided before any board opens, so a new home's first board doesn't count as a board
-        // an existing user had.
-        let getStarted = GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
-        // Boards are per repository now: legacy per-branch boards fold into theirs, once, before
-        // any opens (docs/design/repo-boards.md).
-        let migration = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()])
-        if let report = migration, !report.repos.isEmpty || !report.unresolved.isEmpty {
-            let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
-            NSLog("easl: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
-        }
-        // Before boards open, so their pages load with the extensions' content scripts.
         BrowserExtensions.start()
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(showHeldTabs), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didDeminiaturizeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(showHeldTabs), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
-        let initial = open(root: Self.initialRoot())
-        // The other boards that were open as tabs come back behind the initial one (one tab per
-        // board: two saved worktrees of one repository are one board).
-        var reopened: Set<BoardID> = [initial.id]
-        for root in saved where BoardStore.isDirectory(root.path) && reopened.insert(BoardStore.boardID(for: root)).inserted {
-            open(root: root, select: false)
-        }
-        // After the window's first layout, so the practice note lands in view.
-        if getStarted, let controller = controllers[initial.id] {
-            DispatchQueue.main.async { controller.showGetStarted() }
-        }
-        if let migration {
-            for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
-        }
-        // The reopen list's remote boards attach again with no window shown (background attach).
-        if backgroundAttach { attachInBackground() }
-        // After the windows open, so a failed update's reason has a window for its sheet: the
-        // last update's leftovers, then a check a minute from now and daily (`Updater`).
-        Updater.shared.start()
-        // Testing on a shared machine: EASL_NO_ACTIVATE=1 keeps the app from taking focus.
-        if !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
-            NSApp.activate(ignoringOtherApps: true)
+        Task { @MainActor in
+            let saved = await Self.savedOpenBoards()
+            let initialRoot = Self.initialRoot()
+            let getStarted = await offPool {
+                GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
+            }
+            let migration = await registry.store.migrateToRepoBoards(knownRoots: saved + [initialRoot])
+            guard !terminating else { return }
+            if let report = migration, !report.repos.isEmpty || !report.unresolved.isEmpty {
+                let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
+                NSLog("easl: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
+            }
+            let initial = await open(root: initialRoot)
+            for root in saved {
+                guard !terminating else { return }
+                guard await offPool({ BoardStore.isDirectory(root.path) }) else { continue }
+                let id = await offPool { BoardStore.boardID(for: root) }
+                guard controllers[id] == nil else { continue }
+                await open(root: root, select: false)
+            }
+            guard !terminating else { return }
+            if getStarted, let controller = controllers[initial.id] {
+                DispatchQueue.main.async { controller.showGetStarted() }
+            }
+            if let migration {
+                for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
+            }
+            if backgroundAttach { attachInBackground() }
+            Updater.shared.start()
+            if !CanvasApplication.neverActivate, controllers[initial.id]?.window?.isOnActiveSpace == true {
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 
@@ -334,7 +335,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let retained = remoteControllers.first(where: { !$0.value.isBoardOpen }) {
             _ = shownRemote(retained.key, select: true)
         } else {
-            open(root: Self.savedOpenBoards().first ?? keyController?.board.root ?? Self.initialRoot())
+            Task { @MainActor in
+                let saved = await Self.savedOpenBoards()
+                await open(root: saved.first ?? keyController?.board.root ?? Self.initialRoot())
+            }
         }
         return false
     }
@@ -343,9 +347,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the first). `select` brings its tab forward; the API's `board.open` leaves the user's
     /// current tab showing unless asked.
     @discardableResult
-    func open(root: URL, select: Bool = true) -> Board {
-        let board = registry.open(root: root)
-        let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
+    func open(root: URL, select: Bool = true) async -> Board {
+        let board = await registry.open(root: root)
+        guard !terminating, !board.isClosed else { return board }
+        let controller: CanvasWindowController
+        if let existing = controllers[board.id] {
+            controller = existing
+        } else {
+            let id = board.id
+            let client = await offPool {
+                let viewport = SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: id)))
+                let composer = (try? Data(contentsOf: AppPaths.composer(of: id))).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()
+                return (viewport, composer)
+            }
+            guard !terminating, !board.isClosed else { return board }
+            controller = controllers[id] ?? CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
+        }
         if let window = controller.window { cancelHeldManualClose(window) }
         controller.isBoardOpen = true
         controllers[board.id] = controller
@@ -356,7 +373,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let board else { return }
             try await router.composerPrompt(text, to: terminal, on: board, mentions: mentions, answer: answer)
         }
-        controller.showWorktree(openedAt: root)
+        await controller.showWorktree(openedAt: root)
+        guard !terminating, !board.isClosed else { return board }
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }
@@ -746,7 +764,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let loading: RemoteLoad = Task { @MainActor in
             try self.checkRemoteOpen()
-            let recents = RemoteHost.Recents.load(AppPaths.remoteHosts)
+            let recents = await offPool { RemoteHost.Recents.load(AppPaths.remoteHosts) }
             // The picker lists the tailnet's Macs when Tailscale answers, else only the hosts opened before.
             let peers = (try? await Tailnet.peers()) ?? []
             try self.checkRemoteOpen()
@@ -870,7 +888,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A remote board's window, under `key` in `remoteControllers`; not shown. `open` false: a
     /// window closed from the start, which background attach keeps attached.
     private func makeRemoteController(host: RemoteHost, mirror: BoardMirror, board loaded: Board, key: String, open: Bool) -> CanvasWindowController {
-        let controller = CanvasWindowController(board: loaded, registry: registry, remote: RemoteSource(host: host, mirror: mirror))
+        let controller = CanvasWindowController(board: loaded, registry: registry, viewport: nil, composerState: ComposerState(), remote: RemoteSource(host: host, mirror: mirror))
         // Before it is in `remoteControllers`: a closed window must never host a new tab (`tabHost`).
         controller.isBoardOpen = open
         remoteControllers[key] = controller
@@ -910,10 +928,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Attaches every reopen-list board that has no window here, with its window closed and never
     /// shown (background attach). Each one's host is discovered again.
     private func attachInBackground() {
-        for entry in reopenList.load() {
-            let key = Self.remoteKey(entry.sshTarget, entry.board)
-            guard remoteControllers[key] == nil, remoteLoads[.host(entry.sshTarget, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
-            backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
+        let store = reopenList
+        Task { @MainActor in
+            let entries = await offPool { store.load() }
+            guard backgroundAttach, !terminating else { return }
+            for entry in entries {
+                let key = Self.remoteKey(entry.sshTarget, entry.board)
+                guard remoteControllers[key] == nil, remoteLoads[.host(entry.sshTarget, entry.board)] == nil, backgroundLoads[key] == nil else { continue }
+                backgroundLoads[key] = Task { await self.attachInBackground(entry, key: key) }
+            }
         }
     }
 
@@ -1049,9 +1072,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try data.write(to: AppPaths.openBoards, options: .atomic)
     }
 
-    private static func savedOpenBoards() -> [URL] {
-        guard let data = try? Data(contentsOf: AppPaths.openBoards), let roots = try? JSONDecoder().decode([String].self, from: data) else { return [] }
-        return roots.map { URL(fileURLWithPath: $0) }
+    private static func savedOpenBoards() async -> [URL] {
+        await offPool {
+            guard let data = try? Data(contentsOf: AppPaths.openBoards), let roots = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+            return roots.map { URL(fileURLWithPath: $0) }
+        }
     }
 
     /// The requested root, else home (launched from Finder or `open` without a root).
@@ -1186,7 +1211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.directoryURL = keyController?.board.root
         let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.open(root: url)
+            Task { @MainActor in await self?.open(root: url) }
         }
         if let window = keyController?.window {
             panel.beginSheetModal(for: window, completionHandler: chosen)

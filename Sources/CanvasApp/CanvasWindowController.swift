@@ -42,28 +42,34 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// A repository board opened from one of its worktrees (`Board.opened(from:)`): the
     /// subtitle names that worktree and its branch, and the view goes to the worktree's region
     /// when it has one. Opened from the main checkout, the subtitle is the board root again.
-    func showWorktree(openedAt directory: URL) {
-        if let worktree = board.workingWorktree {
-            window?.subtitle = "\(worktree.toplevel) · \(worktree.branch ?? "detached HEAD")"
+    func showWorktree(openedAt directory: URL) async {
+        let working = board.workingWorktree
+        let visit = await offPool {
+            let worktree = GitWorktree.containing(directory.standardizedFileURL.path)
+            return (worktree: worktree, branch: worktree?.branch, path: worktree.map { GitWorktree.normalized($0.toplevel) }, workingBranch: working?.branch)
+        }
+        guard !board.isClosed else { return }
+        if let working {
+            window?.subtitle = "\(working.toplevel) · \(visit.workingBranch ?? "detached HEAD")"
         } else {
             window?.subtitle = board.root.path
         }
-        guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
-              !worktree.isMain, let region = board.region(for: worktree) else { return }
+        guard let worktree = visit.worktree, worktree.commonDir == board.repo?.commonDir, !worktree.isMain,
+              let path = visit.path, let region = board.repo?.region(branch: visit.branch, path: path, objects: board.objects) else { return }
         // On the next turn, once the window has laid the canvas out and after the board's own
         // opening view (`CanvasView.placeOpeningView`): the worktree's region wins over the saved view.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
     /// `remote`: the window mirrors a board another easl hosts; nothing about it is written here.
-    init(board: Board, registry: BoardRegistry, remote: RemoteSource? = nil) {
+    init(board: Board, registry: BoardRegistry, viewport: SavedViewport.Recorder?, composerState: ComposerState, remote: RemoteSource? = nil) {
         self.board = board
         self.registry = registry
         self.remote = remote
-        canvas = CanvasView(board: board, remote: remote)
+        canvas = CanvasView(board: board, viewport: viewport, remote: remote)
         let bar = ComposerBar(frame: .zero)
         tray = bar
-        composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil)
+        composer = ComposerController(board: board, bar: bar, file: remote == nil ? AppPaths.composer(of: board.id) : nil, state: composerState)
         let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = remote?.title(of: board) ?? board.root.lastPathComponent
         window.subtitle = remote.map { "\(board.root.path) on \($0.host.name)" } ?? board.root.path

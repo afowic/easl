@@ -66,7 +66,7 @@ struct RepoBoardTests {
         let before = main.snapshot.objects + feature.snapshot.objects
 
         let store = BoardStore(directory: boards)
-        let report = try #require(store.migrateToRepoBoards())
+        let report = try #require(await store.migrateToRepoBoards())
         let id = BoardStore.repoID(commonDir: try #require(GitWorktree.containing(repo.root.path)).commonDir)
         #expect(report.repos.map(\.board) == [id])
         #expect(report.repos.first?.legacy.map(\.status) == ["merged", "merged"])
@@ -76,7 +76,7 @@ struct RepoBoardTests {
         #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("pre-repo-migration/\(feature.id).json").path))
 
         let registry = BoardRegistry(store: store)
-        let board = registry.open(root: worktree)
+        let board = await registry.open(root: worktree)
         #expect(board.id == id)
         #expect(real(board.root.path) == real(repo.root.path), "rooted at the main checkout, whichever worktree opens it")
         #expect(Set(board.objects.keys).isSuperset(of: before.map(\.id)), "every object keeps its id")
@@ -147,11 +147,11 @@ struct RepoBoardTests {
             board.create(type: .note, props: .object(["markdown": .string("feature")]))
         }
         let store = BoardStore(directory: boards)
-        let first = try #require(store.migrateToRepoBoards())
+        let first = try #require(await store.migrateToRepoBoards())
         let id = try #require(first.repos.first?.board)
         let merged = try stored(id)
 
-        #expect(BoardStore(directory: boards).migrateToRepoBoards() == nil, "a store migrates once")
+        #expect(await BoardStore(directory: boards).migrateToRepoBoards() == nil, "a store migrates once")
         // A legacy file back in the store (a run interrupted after writing the repository board)
         // is only backed up again.
         try FileManager.default.copyItem(at: boards.appendingPathComponent("pre-repo-migration/\(feature.id).json"),
@@ -170,11 +170,11 @@ struct RepoBoardTests {
             board.create(type: .group, props: .object(["members": .array([.string(note.id)]), "key": .string("REL-1")]))
         }
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: boards.appendingPathComponent("\(main.id).json").path)
-        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let report = try #require(await BoardStore(directory: boards).migrateToRepoBoards())
         let renames = try #require(report.repos.first?.keyRenames)
         let mainGroup = try #require(main.snapshot.objects.first).id
         #expect(renames == [.init(object: mainGroup, board: main.id, from: "REL-1", to: "REL-1@main")])
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
         #expect(try board.holder(ofKey: "REL-1")?.id == feature.snapshot.objects.first { $0.type == .group }?.id)
         #expect(try board.holder(ofKey: "REL-1@main")?.id == mainGroup)
     }
@@ -186,11 +186,11 @@ struct RepoBoardTests {
             board.create(type: .code, props: .object(["path": .string("src/a.txt")]))
             board.create(type: .note, props: .object(["markdown": .string("detached")]))
         }
-        let report = BoardStore(directory: boards).migrateToRepoBoards()
+        let report = await BoardStore(directory: boards).migrateToRepoBoards()
         let legacy = try #require(report?.repos.first?.legacy.first)
         #expect(legacy.board == detached.id)
         #expect(legacy.anchor == "worktree")
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
         let code = try #require(board.objects.values.first { $0.type == .code })
         #expect(code.props["path"] == .string(worktree.appendingPathComponent("src/a.txt").path))
         #expect(code.props["ref"] == nil)
@@ -207,13 +207,13 @@ struct RepoBoardTests {
         }
         try await repo.git("worktree", "remove", "--force", worktree.path)
 
-        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let report = try #require(await BoardStore(directory: boards).migrateToRepoBoards())
         let legacy = try #require(report.repos.first?.legacy.first { $0.board == gone.id })
         #expect(legacy.branch == "feature")
         #expect(legacy.worktreeLive == false)
         #expect(legacy.unanchored == ["\(gone.snapshot.objects.first { $0.type == .image }!.id) image: \(worktree.appendingPathComponent("shot.png").path)"],
                 "the image has no branch to read instead")
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
         let code = try #require(board.objects.values.first { $0.type == .code })
         #expect(code.props["path"] == .string("src/a.txt"))
         #expect(code.props["ref"] == .string("feature"))
@@ -226,17 +226,17 @@ struct RepoBoardTests {
         let plain = dir.appendingPathComponent("plain")
         try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
         let store = BoardStore(directory: boards)
-        let board = store.load(root: plain)
+        let board = await store.load(root: plain)
         board.create(type: .note, props: .object(["markdown": .string("kept")]))
         store.save(board)
         let file = boards.appendingPathComponent("\(board.id).json")
         let bytes = try Data(contentsOf: file)
 
-        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let report = try #require(await BoardStore(directory: boards).migrateToRepoBoards())
         #expect(report.nonGit == [board.id])
         #expect(report.repos.isEmpty)
         #expect(try Data(contentsOf: file) == bytes)
-        #expect(BoardRegistry(store: BoardStore(directory: boards)).open(root: plain).id == board.id)
+        #expect(await BoardRegistry(store: BoardStore(directory: boards)).open(root: plain).id == board.id)
     }
 
     /// Before its first commit git named no branch, so the old store keyed the board by path.
@@ -247,26 +247,26 @@ struct RepoBoardTests {
         let note = old.create(type: .note, props: .object(["markdown": .string("before the first commit")]))
         store.save(old)
 
-        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let report = try #require(await BoardStore(directory: boards).migrateToRepoBoards())
         #expect(report.nonGit.isEmpty)
         #expect(report.repos.first?.legacy.map(\.anchor) == ["main"])
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
         #expect(board.id != old.id)
         #expect(board.objects[note.id]?.frame == note.frame, "placed as it was: it is the main checkout's board")
     }
 
     /// A plain folder's board (keyed by its path) with a note and a code tile, saved; a launch
     /// migrates the store, leaving it alone as a board outside git.
-    func folderBoard() throws -> (folder: URL, board: Board) {
+    func folderBoard() async throws -> (folder: URL, board: Board) {
         let folder = dir.appendingPathComponent("tiktok")
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("src"), withIntermediateDirectories: true)
         let store = BoardStore(directory: boards)
-        let board = store.load(root: folder)
+        let board = await store.load(root: folder)
         board.create(type: .note, props: .object(["markdown": .string("made before git init")]), frame: Frame(x: 40, y: 60, w: 300, h: 200))
         board.create(type: .code, props: .object(["path": .string("src/a.txt")]), frame: Frame(x: 400, y: -80, w: 500, h: 300))
         store.save(board)
         #expect(board.id == BoardStore.pathID(folder))
-        #expect(try #require(store.migrateToRepoBoards()).nonGit == [board.id])
+        #expect(try #require(await store.migrateToRepoBoards()).nonGit == [board.id])
         return (folder, board)
     }
 
@@ -301,45 +301,45 @@ struct RepoBoardTests {
     /// easl#79: `~/dev/tiktok` had a board, then `git init`; relaunched, easl opened an empty
     /// repository board instead of it.
     @Test func aFoldersBoardIsKeptWhenTheFolderBecomesARepository() async throws {
-        let (folder, old) = try folderBoard()
+        let (folder, old) = try await folderBoard()
         let commonDir = try await makeRepository(folder)
 
         let store = BoardStore(directory: boards)
-        #expect(store.migrateToRepoBoards() == nil, "the store migrated at an earlier launch")
-        let board = BoardRegistry(store: store).open(root: folder)
+        #expect(await store.migrateToRepoBoards() == nil, "the store migrated at an earlier launch")
+        let board = await BoardRegistry(store: store).open(root: folder)
         try expectAdopted(old, by: board, commonDir: commonDir)
 
         // The next launch finds nothing more to merge.
         let runs = try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count
-        let again = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder)
+        let again = await BoardRegistry(store: BoardStore(directory: boards)).open(root: folder)
         #expect(again.objects.count == old.objects.count && again.repo?.merged == [old.id])
         #expect(try RepoBoardMigration.decoder.decode(RepoBoardMigration.Ledger.self, from: Data(contentsOf: RepoBoardMigration.ledgerURL(boards))).runs.count == runs)
     }
 
     /// easl 0.2.3 saved the empty repository board it opened in place of the folder's board.
     @Test func aFoldersBoardMergesIntoTheEmptyRepositoryBoardALaunchSavedInstead() async throws {
-        let (folder, old) = try folderBoard()
+        let (folder, old) = try await folderBoard()
         let commonDir = try await makeRepository(folder)
         let empty = Board(id: BoardStore.repoID(commonDir: commonDir), root: folder)
         empty.repo = RepoRecord(commonDir: commonDir)
         BoardStore(directory: boards).save(empty)
 
         let store = BoardStore(directory: boards)
-        #expect(store.migrateToRepoBoards() == nil)
-        try expectAdopted(old, by: BoardRegistry(store: store).open(root: folder), commonDir: commonDir)
+        #expect(await store.migrateToRepoBoards() == nil)
+        try expectAdopted(old, by: await BoardRegistry(store: store).open(root: folder), commonDir: commonDir)
     }
 
     /// The folder's board is open when the folder becomes a repository and is opened again: it
     /// stays as it is (its next save would bring its file back), and the next launch merges it.
     @Test func aFoldersBoardOpenWhenItsRepositoryBoardLoadsWaitsForTheNextLaunch() async throws {
-        let (folder, old) = try folderBoard()
+        let (folder, old) = try await folderBoard()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
-        #expect(registry.open(root: folder).id == old.id)
+        #expect(await registry.open(root: folder).id == old.id)
         let commonDir = try await makeRepository(folder)
-        #expect(registry.open(root: folder).objects.isEmpty)
+        #expect(await registry.open(root: folder).objects.isEmpty)
         #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
 
-        try expectAdopted(old, by: BoardRegistry(store: BoardStore(directory: boards)).open(root: folder), commonDir: commonDir)
+        try expectAdopted(old, by: await BoardRegistry(store: BoardStore(directory: boards)).open(root: folder), commonDir: commonDir)
     }
 
     /// `folder`'s repository board, already holding `old`'s objects (so `old` conflicts), saved.
@@ -359,11 +359,11 @@ struct RepoBoardTests {
     /// A folder board whose objects the repository board already holds stays as it is (a
     /// conflict): reported by the launch that first finds it, not by every launch after.
     @Test func aFoldersBoardThatConflictsIsReportedOnceNotAtEveryLaunch() async throws {
-        let (folder, old) = try folderBoard()
+        let (folder, old) = try await folderBoard()
         let copy = try await conflictingRepositoryBoard(folder, old)
         let before = try ledgerRuns()
 
-        for _ in 1...3 { _ = BoardRegistry(store: BoardStore(directory: boards)).open(root: folder) }
+        for _ in 1...3 { _ = await BoardRegistry(store: BoardStore(directory: boards)).open(root: folder) }
         #expect(try ledgerRuns() == before + 1)
         #expect(RepoBoardMigration.pending(in: boards).unresolved == [old.id], "left in the store")
         #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(old.id).json").path))
@@ -373,25 +373,25 @@ struct RepoBoardTests {
     /// Two repositories' conflicting folder boards: each repository's load leaves both in the
     /// store, so launches that open both add nothing after the first.
     @Test func twoRepositoriesConflictingFolderBoardsAreReportedOnce() async throws {
-        let (first, firstOld) = try folderBoard()
+        let (first, firstOld) = try await folderBoard()
         let second = dir.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: second.appendingPathComponent("src"), withIntermediateDirectories: true)
         let store = BoardStore(directory: boards)
-        let secondOld = store.load(root: second)
+        let secondOld = await store.load(root: second)
         secondOld.create(type: .note, props: .object(["markdown": .string("the other folder")]))
         store.save(secondOld)
         _ = try await conflictingRepositoryBoard(first, firstOld)
         _ = try await conflictingRepositoryBoard(second, secondOld)
 
-        func launch() {
+        func launch() async {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
-            registry.open(root: first)
-            registry.open(root: second)
+            await registry.open(root: first)
+            await registry.open(root: second)
         }
-        launch()
+        await launch()
         let runs = try ledgerRuns()
-        launch()
-        launch()
+        await launch()
+        await launch()
         #expect(try ledgerRuns() == runs)
         #expect(RepoBoardMigration.pending(in: boards).unresolved == [firstOld.id, secondOld.id].sorted())
     }
@@ -403,14 +403,14 @@ struct RepoBoardTests {
         try FileManager.default.createDirectory(at: app.appendingPathComponent("src"), withIntermediateDirectories: true)
         try "a\n".write(to: app.appendingPathComponent("src/a.txt"), atomically: true, encoding: .utf8)
         let store = BoardStore(directory: boards)
-        let old = store.load(root: app)
+        let old = await store.load(root: app)
         try build(old)
         store.save(old)
-        #expect(store.migrateToRepoBoards()?.nonGit == [old.id])
+        #expect(await store.migrateToRepoBoards()?.nonGit == [old.id])
         for arguments in [["init", "-q", "--template=", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]] {
             try await TempRepo.run(arguments, in: project)
         }
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: project)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: project)
         #expect(board.repo?.merged == [old.id])
         return board
     }
@@ -452,7 +452,7 @@ struct RepoBoardTests {
         store.save(old)
         for _ in 0..<3 {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
-            let board = registry.open(root: worktree)
+            let board = await registry.open(root: worktree)
             #expect(board.repo?.merged == [old.id])
             #expect(board.snapshot.relaunchedAgents == [ours.id, theirs.id].sorted())
             for tile in [ours.id, theirs.id] {
@@ -545,7 +545,7 @@ struct RepoBoardTests {
         let arrow = old.create(type: .arrow, props: .object(["from": .object(["object": .string(diagram.id), "node": .string(path + "#run")]),
                                                             "to": .object(["object": .string(diagram.id), "node": .string(external + "#helper")])]))
         BoardStore(directory: boards).save(old)
-        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: source)
+        let board = await BoardRegistry(store: BoardStore(directory: boards)).open(root: source)
         #expect(real(board.root.path) == real(repo.root.path))
         #expect(board.repo?.merged == [old.id])
         #expect(board.objects[diagram.id]?.props == diagramProps(expected, external: external))
@@ -644,14 +644,14 @@ struct RepoBoardTests {
     @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
-        let board = registry.open(root: worktree)
+        let board = await registry.open(root: worktree)
         #expect(board.workingRoot.path == worktree.path, "opened from the worktree, New Terminal starts there")
         let there = board.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path)]))
         #expect(there.props["worktree"] == .string(worktree.path))
         #expect(there.props["branch"] == .string("feature"))
         let home = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path)]))
         #expect(home.props["branch"] == .string("main"))
-        #expect(registry.open(root: repo.root) === board)
+        #expect(await registry.open(root: repo.root) === board)
         #expect(board.workingRoot.path == board.root.path)
     }
 
@@ -675,7 +675,7 @@ struct RepoBoardTests {
         let (repo, worktree) = try await fixture()
         let other = dir.appendingPathComponent("wt-other")
         try await repo.git("worktree", "add", "-q", "-b", "other", other.path)
-        let board = BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
         let codex = try agent("codex", in: worktree.appendingPathComponent("src"), on: board)
         let claude = try agent("claude", in: other, on: board)
         #expect(board.objects[codex]?.props["worktree"] == .string(GitWorktree.normalized(worktree.path)))
@@ -699,7 +699,7 @@ struct RepoBoardTests {
 
     @Test func reviewChangesAndReviewBranchReviewTheWorktreeOfTheTerminalTheyGoBy() async throws {
         let (repo, worktree) = try await fixture()
-        let board = BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
+        let board = await BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
         let codex = try agent("codex", in: worktree, on: board)
         let shell = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path)])).id
         #expect(board.reviewRoot(terminal: codex).map(GitWorktree.normalized) == GitWorktree.normalized(worktree.path))
