@@ -146,7 +146,11 @@ final class NoteTile: NSView, TileContent {
         let changed = object.props["markdown"] != self.object.props["markdown"]
         let rerooted = object.props["root"] != self.object.props["root"] || object.props["ref"] != self.object.props["ref"]
         self.object = object
-        if rerooted { reading = nil }
+        if rerooted {
+            reading = nil
+            excerpts = [:]
+            captured = [:]
+        }
         if let session {
             session.observe(object)
             if session.conflicted { showConflict() }
@@ -154,8 +158,6 @@ final class NoteTile: NSView, TileContent {
         }
         guard changed else {
             if rerooted {
-                excerpts = [:]
-                captured = [:]
                 resolve()
             }
             return
