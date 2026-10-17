@@ -323,7 +323,9 @@ private final class Files: @unchecked Sendable {
         }
         // The root may have moved (renamed checkout); the board follows its identity.
         snapshot.root = root.path
-        let prepared = BoardAnchorScrub.prepare(snapshot)
+        let archived = snapshot.archiveDueQuestions(now: Date())
+        var prepared = BoardAnchorScrub.prepare(snapshot)
+        prepared.changed = prepared.changed || archived
         if prepared.changed, prepared.held.isEmpty, let data = try? BoardStore.encoder.encode(prepared.stored) {
             _ = try? write(data, id: id, unlessWrittenSince: read)
         }
