@@ -72,7 +72,7 @@ public enum HtmlKit {
         switch url.pathExtension.lowercased() {
         case "js", "mjs": "text/javascript"
         case "css": "text/css"
-        case "html": "text/html"
+        case "html", "htm": "text/html"
         case "json": "application/json"
         case "csv": "text/csv"
         case "txt": "text/plain"
@@ -83,6 +83,7 @@ public enum HtmlKit {
         case "m4a": "audio/mp4"
         case "wav": "audio/wav"
         case "ogg": "audio/ogg"
+        case "wasm": "application/wasm"
         case "svg": "image/svg+xml"
         case "png": "image/png"
         case "jpg", "jpeg": "image/jpeg"
@@ -162,7 +163,7 @@ public enum HtmlKit {
             let host = String(parts[0])
             let port = parts.count == 2 ? String(parts[1]) : "*"
             for name in wildcard ? [host, "*." + host] : [host] {
-                sources += ["http", "https", "ws", "wss"].map { "\($0)://\(name):\(port)" }
+                sources += ["ws", "wss"].map { "\($0)://\(name):\(port)" }
             }
         }
         let allowed = sources.joined(separator: " ")

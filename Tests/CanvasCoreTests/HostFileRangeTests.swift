@@ -82,7 +82,7 @@ struct HostFileRangeTests {
             .object(["offset": 0, "length": .number(1.5)]),
             .object(["offset": "0", "length": 1]),
             .object(["offset": .bool(false), "length": 1]),
-            .object(["offset": .number(9_223_372_036_854_775_807), "length": 1]),
+            .object(["offset": .number(9_007_199_254_740_992), "length": 1]),
             .object(["offset": 11, "length": 1]),
             .object(["length": 1]), .array([]), .string("0-1")
         ]
@@ -260,6 +260,34 @@ struct HostFileRangeTests {
         #expect(URL(fileURLWithPath: file.root).resolvingSymlinksInPath() == worktree.appendingPathComponent("pkg").resolvingSymlinksInPath())
     }
 
+    @Test(arguments: [false, true])
+    func absoluteAssetsUseRegisteredCounterpartAreas(local: Bool) async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        let repo = try await TempRepo()
+        defer { try? FileManager.default.removeItem(at: repo.root) }
+        try await repo.write("pkg/movie.mp4", "original")
+        try await repo.commit("media")
+        let worktree = fixture.directory.appendingPathComponent("feature")
+        try await repo.git("worktree", "add", "-q", "-b", "media-area", worktree.path)
+        let counterpart = worktree.appendingPathComponent("pkg")
+        let movie = counterpart.appendingPathComponent("movie.mp4")
+        try Data("feature movie".utf8).write(to: movie)
+        let source = HostFileRequest.Source.directory(repo.url("pkg").path)
+        let result = try await read(HostFileRequest(source: source, policy: .boardAsset(movie.path), range: HostFileRange(offset: 0, length: 7)), files: files, local: local)
+        #expect(result.data == Data("feature".utf8))
+        #expect(result.size == 13)
+        let outside = worktree.appendingPathComponent("outside.mp4")
+        try Data("outside".utf8).write(to: outside)
+        let escape = counterpart.appendingPathComponent("escape.mp4")
+        try FileManager.default.createSymbolicLink(at: escape, withDestinationURL: outside)
+        for path in [outside.path, escape.path] {
+            await #expect(throws: HostFileError.refused) {
+                try await read(HostFileRequest(source: source, policy: .boardAsset(path), range: HostFileRange(offset: 0, length: 4)), files: files, local: local)
+            }
+        }
+    }
+
     @Test func localPageImagesKeepTheirUnboundedLegacyReadWhileBoardImagesStayBounded() async throws {
         let fixture = try HostFileFixture()
         let data = Data(repeating: 65, count: 4 * 1024 * 1024 + 1)
@@ -273,5 +301,40 @@ struct HostFileRangeTests {
                 try await HostFiles.readLocal(HostFileRequest(source: source, policy: .boardImage("large.png"), bytes: bytes))
             }
         }
+    }
+
+    @Test(arguments: [false, true])
+    func batchedObservationsKeepFailuresAndDetectOnlyChangedFiles(local: Bool) async throws {
+        let fixture = try HostFileFixture()
+        let files = try fixture.reader()
+        try fixture.write("a.js", Data("first".utf8))
+        try fixture.write("b.json", Data("{}".utf8))
+        try sparseAsset(fixture)
+        let outside = fixture.temp.appendingPathComponent("outside.txt")
+        try Data("outside".utf8).write(to: outside)
+        let source = HostFileRequest.Source.directory(fixture.root.path)
+        let requests = ["a.js", "b.json", "movie.mp4", "missing.css", outside.path].map {
+            HostFileRequest(source: source, policy: .boardAsset($0))
+        }
+        func observe() async throws -> [HostFileObservation] {
+            if local { return try await HostFiles.observeLocal(requests) }
+            return try await files.observe(requests)
+        }
+        let first = try await observe()
+        try #require(first.count == 5)
+        #expect(first[3] == .failure(.notFound(commit: nil)))
+        #expect(first[4] == .failure(.refused))
+        if case .version(let version) = first[2] {
+            #expect(version.path == fixture.root.resolvingSymlinksInPath().appendingPathComponent("movie.mp4").path)
+        } else {
+            Issue.record("large asset metadata must be observable without a content read")
+        }
+        try fixture.write("a.js", Data("second".utf8))
+        let second = try await observe()
+        try #require(second.count == 5)
+        #expect(second[0] != first[0])
+        #expect(Array(second.dropFirst()) == Array(first.dropFirst()))
+        let content = try await read(requests[0], files: files, local: local)
+        #expect(content.data == Data("second".utf8))
     }
 }

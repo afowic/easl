@@ -67,10 +67,7 @@ public enum ObjectMeasure {
             size = ChangesMetrics.fit(set, maxWidth: natural, viewed: props["viewed"])
         case .video:
             if let problem = LocalVideo.problem(props) { throw Failure.invalidParams(problem) }
-            guard let file = LocalVideo.authorizedURL(path: props["path"]!.string!, root: root) else {
-                throw Failure.invalidParams("video path refused")
-            }
-            let pixels = try await LocalVideo.naturalSize(of: file)
+            let pixels = try await LocalVideo.naturalSize(path: props["path"]!.string!, root: root)
             let picture = LocalImage.fitted(pixels, maxWidth: natural ?? LocalImage.defaultMaxWidth)
             size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height)
         case .image:

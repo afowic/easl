@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/url"
 	"os"
+	"strings"
 )
 
 func VideoProblem(props map[string]any) string {
@@ -36,6 +38,13 @@ func VideoProblem(props map[string]any) string {
 }
 
 func VideoNaturalSize(path, root string) (float64, float64, error) {
+	if strings.HasPrefix(path, "file:") {
+		value, err := url.Parse(path)
+		if err != nil || value.Opaque != "" || (value.Host != "" && value.Host != "localhost") {
+			return 0, 0, &Failure{"invalid_params", "video path refused"}
+		}
+		path = value.Path
+	}
 	source, err := authorizeNoteFile(path, nil, root, boardAreas(root))
 	if err != nil {
 		return 0, 0, &Failure{"invalid_params", "video path refused"}
@@ -107,6 +116,11 @@ func videoBoxes(file io.ReaderAt, start, end int64, depth int, budget *int) ([]v
 			if err != nil {
 				return nil, err
 			}
+			for _, child := range children {
+				if child.video && child.w > 0 && child.h > 0 {
+					return []videoTrack{child}, nil
+				}
+			}
 			if string(header[4:8]) != "mdia" {
 				tracks = append(tracks, children...)
 			} else {
@@ -151,6 +165,9 @@ func videoBoxes(file io.ReaderAt, start, end int64, depth int, budget *int) ([]v
 			h := float64(binary.BigEndian.Uint32(data[dimensions+4:dimensions+8])) / 65536
 			current.w = math.Abs(fixed(matrix))*w + math.Abs(fixed(matrix+12))*h
 			current.h = math.Abs(fixed(matrix+4))*w + math.Abs(fixed(matrix+16))*h
+		}
+		if current.video && current.w > 0 && current.h > 0 {
+			return []videoTrack{current}, nil
 		}
 		offset = next
 	}

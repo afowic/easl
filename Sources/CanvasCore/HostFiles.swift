@@ -143,7 +143,7 @@ public struct HostFiles: Sendable {
 
     public func read(_ request: HostFileRequest) async throws -> HostFile {
         try request.range?.validate()
-        let output = try await execute(Self.program, request: payload(request), what: "host file reader")
+        let output = try await execute(Self.program, request: JSONEncoder().encode(payload(request)), what: "host file reader")
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(output.utf8)) else {
             throw HostFileError.unavailable("invalid host file reply")
         }
@@ -164,7 +164,61 @@ public struct HostFiles: Sendable {
         return file
     }
 
+    public func observe(_ requests: [HostFileRequest]) async throws -> [HostFileObservation] {
+        var observations: [HostFileObservation] = []
+        for start in stride(from: 0, to: requests.count, by: 256) {
+            let batch = try requests[start..<min(start + 256, requests.count)].map { request in
+                var metadata = request
+                metadata.bytes = false
+                metadata.range = nil
+                return try payload(metadata)
+            }
+            let input = try JSONEncoder().encode(JSONValue.object(["requests": .array(batch)]))
+            let output = try await execute(Self.program, request: input, what: "host file observations")
+            guard let replies = try? JSONDecoder().decode([Reply].self, from: Data(output.utf8)), replies.count == batch.count else {
+                throw HostFileError.unavailable("invalid host file observations")
+            }
+            observations.append(contentsOf: try replies.map { reply in
+                guard reply.ok else {
+                    return .failure(HostFileError(code: reply.code, message: reply.message, commit: reply.commit, limit: reply.limit))
+                }
+                guard let root = reply.root else { throw HostFileError.unavailable("invalid host file observation") }
+                return .version(HostFileVersion(root: root, path: reply.path, commit: reply.commit, stamp: reply.stamp))
+            })
+        }
+        return observations
+    }
+
+    public static func observeLocal(_ requests: [HostFileRequest]) async throws -> [HostFileObservation] {
+        try Task.checkCancellation()
+        let observations = await offPool {
+            requests.map { request -> HostFileObservation in
+                var metadata = request
+                metadata.bytes = false
+                metadata.range = nil
+                do { return .version(try HostLocalFile(metadata).read().version) }
+                catch { return .failure(error as? HostFileError ?? .unavailable(String(describing: error))) }
+            }
+        }
+        try Task.checkCancellation()
+        return observations
+    }
+
     func execute(_ program: HostProgram, request: Data, timeout: TimeInterval = 20, what: String) async throws -> String {
+        let command = invocation(program, request: request)
+        let result = try await session {
+            try await RemoteHost.run(command.executable, command.arguments, input: command.input, timeout: timeout)
+        }
+        try Task.checkCancellation()
+        guard result.status == 0 else {
+            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
+        }
+        return result.output
+    }
+
+    /// Runs `body` in one of the master's file sessions, the bound every host program's ssh
+    /// client shares, given back on every exit.
+    func session<T: Sendable>(_ body: () async throws -> T) async throws -> T {
         do {
             if let master {
                 try await master.ready()
@@ -175,19 +229,19 @@ public struct HostFiles: Sendable {
         } catch {
             throw HostFileError.unavailable((error as? LocalizedError)?.errorDescription ?? String(describing: error))
         }
-        let result: (status: Int32, output: String, errors: String)
         do {
-            result = try await RemoteHost.run(route.executable, route.ssh(Self.command), input: program.frame + request, timeout: timeout)
+            let value = try await body()
+            if let master { await master.endFileSession() }
+            return value
         } catch {
             if let master { await master.endFileSession() }
             throw error
         }
-        if let master { await master.endFileSession() }
-        try Task.checkCancellation()
-        guard result.status == 0 else {
-            throw HostFileError.unavailable(RemoteHost.lastLine(result.errors) ?? "\(what) exited with status \(result.status)")
-        }
-        return result.output
+    }
+
+    /// How `program` runs on the host: the short launcher's ssh command and its stdin frame.
+    func invocation(_ program: HostProgram, request: Data) -> (executable: String, arguments: [String], input: Data) {
+        (route.executable, route.ssh(Self.command), program.frame + request)
     }
 
     func channel(_ script: String, _ arguments: [String]) async throws -> (executable: String, arguments: [String]) {
@@ -231,7 +285,7 @@ public struct HostFiles: Sendable {
         return source
     }
 
-    private func payload(_ request: HostFileRequest) throws -> Data {
+    private func payload(_ request: HostFileRequest) throws -> JSONValue {
         let source = try sourcePayload(request.source)
         let policy: JSONValue
         switch request.policy {
@@ -250,8 +304,7 @@ public struct HostFiles: Sendable {
             guard range.offset <= 9_007_199_254_740_991 else { throw HostFileError.refused }
             fields["range"] = .object(["offset": .number(Double(range.offset)), "length": .number(Double(range.length))])
         }
-        let value = JSONValue.object(fields)
-        return try JSONEncoder().encode(value)
+        return .object(fields)
     }
 
     private static let launcher = #"""
@@ -461,10 +514,18 @@ public struct HostFiles: Sendable {
     """#
 
     private static let program = HostProgram(prelude + #"""
+    let pendingReads = null;
+    function readRequest(req) {
     const source = req.source, policy = req.policy;
     function readRegular(p, root, roots, limit) {
-      return { root, ...readFiles([{ path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage',
-                                    range: req.range, totalSize: true }])[0] };
+      const request = { path: p, roots, bytes: req.bytes, limit, metadataLimit: policy.kind === 'boardImage',
+                        range: req.range, totalSize: true };
+      if (pendingReads) {
+        const pending = pendingReads.length;
+        pendingReads.push(request);
+        return { root, pending };
+      }
+      return { root, ...readFiles([request])[0] };
     }
     function read() {
       if (req.range != null && (typeof req.range !== 'object' || Array.isArray(req.range) ||
@@ -496,6 +557,14 @@ public struct HostFiles: Sendable {
         } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');
         if (input.includes('\0')) fail('refused');
         const requested = path.resolve(root, input);
+        if (policy.kind === 'boardAsset' && !commit && !inside(root, requested)) {
+          const candidate = resolved(requested);
+          const area = boardAreas(root).find(a => (inside(a.lex, requested) || inside(a.real, requested)) && inside(a.real, candidate));
+          if (!area) fail('refused');
+          const p = real(candidate);
+          if (!p) fail('not_found');
+          return readRegular(p, root, [area.real], \#(SourceExcerpt.maxFileBytes));
+        }
         if (requested === root || !inside(root, requested)) fail('refused');
         if (commit) {
           const rel = path.relative(root, requested);
@@ -531,6 +600,20 @@ public struct HostFiles: Sendable {
     let reply;
     try { reply = read(); }
     catch (e) { reply = { ok: false, code: e.code || 'unreadable', message: e.message, commit: e.commit, limit: e.limit }; }
-    process.stdout.write(JSON.stringify(reply));
+    return reply;
+    }
+    let result;
+    if (Object.hasOwn(req, 'requests')) {
+      if (!Array.isArray(req.requests) || req.requests.length > 256) result = { ok: false, code: 'refused' };
+      else {
+        pendingReads = [];
+        const prepared = req.requests.map(request => readRequest({ ...request, bytes: false, range: null }));
+        let reads;
+        try { reads = readFiles(pendingReads); }
+        catch (e) { reads = pendingReads.map(() => ({ ok: false, code: e.code || 'unreadable', message: e.message })); }
+        result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
+      }
+    } else result = readRequest(req);
+    process.stdout.write(JSON.stringify(result));
     """#)
 }

@@ -24,7 +24,6 @@ final class VideoTile: NSView, TileContent {
                 .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
         }
         func asset(_ path: String) -> String {
-            let path = URL(string: path).flatMap { $0.isFileURL ? $0.path : nil } ?? path
             var url = URLComponents()
             url.scheme = HtmlKit.scheme
             url.host = HtmlKit.host
@@ -41,7 +40,6 @@ final class VideoTile: NSView, TileContent {
         <script>const video=document.querySelector('video');video.addEventListener('loadedmetadata',()=>{video.currentTime=\(start)},{once:true});</script>
         """
         var page = object
-        page.type = .html
         page.props = .object(["html": .string(html)])
         return page
     }

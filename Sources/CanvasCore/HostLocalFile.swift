@@ -48,9 +48,17 @@ struct HostLocalFile: Sendable {
             }
             guard !inputPath.contains("\0") else { throw HostFileError.refused }
             let requested = Board.hostPath(inputPath, under: root)
-            guard requested != root, BoardAreas.Area.inside(root, requested) else { throw HostFileError.refused }
-            let candidate = BoardAreas.resolved(requested)
-            guard candidate != base, BoardAreas.Area.inside(base, candidate) else { throw HostFileError.refused }
+            let candidate: String
+            if case .boardAsset = request.policy, !BoardAreas.Area.inside(root, requested) {
+                guard let allowed = BoardAreas(boardRoot: URL(fileURLWithPath: root)).resolve(live: requested) else {
+                    throw HostFileError.refused
+                }
+                candidate = allowed
+            } else {
+                guard requested != root, BoardAreas.Area.inside(root, requested) else { throw HostFileError.refused }
+                candidate = BoardAreas.resolved(requested)
+                guard candidate != base, BoardAreas.Area.inside(base, candidate) else { throw HostFileError.refused }
+            }
             path = candidate
             limit = SourceExcerpt.maxFileBytes
             if case .boardImage = request.policy { metadataLimit = true }
