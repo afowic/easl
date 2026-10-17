@@ -372,8 +372,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return (viewport, composer)
             }
             guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
-            controller = controllers[id] ?? CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
+            controller = controllers[id] ?? DevPerf.time("board.window") {
+                CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
+            }
         }
+        let newWindow = controllers[board.id] == nil
         if let window = controller.window { cancelHeldManualClose(window) }
         controller.isBoardOpen = true
         controllers[board.id] = controller
@@ -389,14 +392,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }
         let noActivate = CanvasApplication.neverActivate
-        if !isShown(window), let host = tabHost(excluding: window) {
-            addTab(window, to: host)
-        } else if !isShown(window) {
-            if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
+        let shown = !newWindow && isShown(window)
+        if !shown, let host = tabHost(excluding: window) {
+            DevPerf.time("board.tab") { addTab(window, to: host) }
+        } else if !shown {
+            DevPerf.time("board.show") {
+                if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
+            }
             return board
         }
         guard select else { return board }
-        bringForward(window)
+        DevPerf.time("board.select") { bringForward(window) }
         return board
     }
 
