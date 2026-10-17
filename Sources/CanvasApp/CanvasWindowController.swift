@@ -86,6 +86,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "net.waldin.easl.board"
+        window.isExcludedFromWindowsMenu = true
         super.init(window: window)
         window.delegate = self
         // The titlebar's Update button, shown while a newer easl is on offer (`Updater`).
@@ -586,7 +587,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// attachment ends or stays as the app delegate decides (`RemoteClose`).
     var onClose: (() -> Void)?
     var apiCloseInProgress = false
-    var isBoardOpen = true
+    var isBoardOpen = false
     /// A remote board's close as the user asked for it, taken before AppKit changes the window's
     /// tab group (`CanvasWindow.close`); nil while the window isn't closing.
     var closing: RemoteClose?

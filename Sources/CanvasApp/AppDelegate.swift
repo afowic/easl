@@ -14,6 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self?.content(of: tile, on: board) as? BrowserTile
     }
     private var controllers: [BoardID: CanvasWindowController] = [:]
+    private struct OpeningWindow {
+        let shown: Task<Void, Never>
+        var select: Bool
+        var visit: WorktreeVisit?
+        var controller: CanvasWindowController?
+    }
+    private var openingWindows: [ObjectIdentifier: OpeningWindow] = [:]
     /// The boards in the order they were first opened, which orders windows that aren't tabs of
     /// one another (`openBoardsInOrder`): a board's id, or a remote board's `remoteKey`.
     private var openedOrder: [String] = []
@@ -83,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pasteMaintenance = TerminalPaste.Maintenance(baseDirectories: [AppPaths.support, FileManager.default.temporaryDirectory])
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
-            self?.controllers[board.id]?.apply(event)
+            self?.window(drawing: board)?.apply(event)
             self?.notifier.observe(event, on: board)
         }
         // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session (a
@@ -360,25 +367,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let board = await registry.open(root: root)
         guard !terminating, !board.isClosed else { return board }
         let visit = await offPool { GitWorktree.containing(root.standardizedFileURL.path).map(WorktreeVisit.init) }
-        guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
-        let controller: CanvasWindowController
+        guard canShowWindow(of: board) else { return board }
         if let existing = controllers[board.id] {
-            controller = existing
+            present(existing, visit: visit, select: select)
         } else {
-            let id = board.id
-            let client = await offPool {
-                let viewport = SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: id)))
-                let composer = (try? Data(contentsOf: AppPaths.composer(of: id))).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()
-                return (viewport, composer)
-            }
-            guard !terminating, !board.isClosed, registry.windowIsOpen(board.id) else { return board }
-            controller = controllers[id] ?? DevPerf.time("board.window") {
-                CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
-            }
+            await openingWindow(of: board, visit: visit, select: select).value
         }
+        return board
+    }
+
+    private func canShowWindow(of board: Board) -> Bool {
+        !terminating && !board.isClosed && registry.boards[board.id] === board && registry.windowIsOpen(board.id)
+    }
+
+    private func window(drawing board: Board) -> CanvasWindowController? {
+        if let controller = controllers[board.id], controller.board === board { return controller }
+        return openingWindows[ObjectIdentifier(board)]?.controller
+    }
+
+    private func openingWindow(of board: Board, visit: WorktreeVisit?, select: Bool) -> Task<Void, Never> {
+        let key = ObjectIdentifier(board)
+        if var opening = openingWindows[key] {
+            opening.select = opening.select || select
+            opening.visit = visit
+            openingWindows[key] = opening
+            return opening.shown
+        }
+        let shown = Task { await self.buildWindow(of: board) }
+        openingWindows[key] = OpeningWindow(shown: shown, select: select, visit: visit)
+        return shown
+    }
+
+    private func buildWindow(of board: Board) async {
+        let key = ObjectIdentifier(board), id = board.id
+        defer { openingWindows[key] = nil }
+        guard canShowWindow(of: board) else { return }
+        let client = await offPool {
+            let viewport = SavedViewport.Recorder(store: SavedViewport.Store(url: AppPaths.viewport(of: id)))
+            let composer = (try? Data(contentsOf: AppPaths.composer(of: id))).flatMap { try? JSONDecoder().decode(ComposerState.self, from: $0) } ?? ComposerState()
+            return (viewport, composer)
+        }
+        guard canShowWindow(of: board) else { return }
+        await MainTurns.next()
+        guard canShowWindow(of: board) else { return }
+        let controller = DevPerf.time("board.window") {
+            CanvasWindowController(board: board, registry: registry, viewport: client.0, composerState: client.1)
+        }
+        openingWindows[key]?.controller = controller
+        await MainTurns.next()
+        showBuiltWindow(controller)
+    }
+
+    private func showBuiltWindow(_ controller: CanvasWindowController) {
+        let board = controller.board
+        guard canShowWindow(of: board), let opening = openingWindows[ObjectIdentifier(board)] else {
+            return retire(controller, savingFrame: false)
+        }
+        controller.canvas.scheduleOpeningView()
+        present(controller, visit: opening.visit, select: opening.select)
+    }
+
+    private func present(_ controller: CanvasWindowController, visit: WorktreeVisit?, select: Bool) {
+        let board = controller.board
         let newWindow = controllers[board.id] == nil
         if let window = controller.window { cancelHeldManualClose(window) }
         controller.isBoardOpen = true
+        controller.window?.isExcludedFromWindowsMenu = false
         controllers[board.id] = controller
         if !openedOrder.contains(board.id) { openedOrder.append(board.id) }
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
@@ -389,7 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         controller.showWorktree(visit)
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
-        guard let window = controller.window else { return board }
+        guard let window = controller.window else { return }
         defer { saveOpenBoards() }
         let noActivate = CanvasApplication.neverActivate
         let shown = !newWindow && isShown(window)
@@ -399,11 +453,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DevPerf.time("board.show") {
                 if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
             }
-            return board
+            return
         }
-        guard select else { return board }
-        DevPerf.time("board.select") { bringForward(window) }
-        return board
+        guard select else { return }
+        DevPerf.time("board.select") { _ = bringForward(window) }
     }
 
     private enum CloseTarget {
@@ -419,7 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closeTarget(_ id: BoardID) throws -> CloseTarget {
-        if let board = registry.board(id: id) { return .local(board, controllers[board.id]) }
+        if let board = registry.board(id: id) { return .local(board, window(drawing: board)) }
         let matches = remoteControllers.filter { $0.value.board.id == id }
         guard matches.count <= 1 else {
             let easls = matches.values.compactMap { $0.remote.map { "\($0.host.sshTarget) \($0.host.socketPath)" } }.sorted().joined(separator: ", ")
@@ -519,19 +572,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             remoteControllers.removeValue(forKey: key)
             openedOrder.removeAll { $0 == key }
         }
-        if let controller = target.controller { retire(controller) }
+        if let controller = target.controller {
+            let privateWindow = openingWindows[ObjectIdentifier(controller.board)]?.controller === controller
+            retire(controller, savingFrame: !privateWindow)
+        }
         return result
     }
 
     /// Ends a board's window for good (`board.close`, a closed remote board detached).
-    private func retire(_ controller: CanvasWindowController) {
+    private func retire(_ controller: CanvasWindowController, savingFrame: Bool = true) {
         controller.onClose = nil
         controller.isBoardOpen = false
         controller.discard()
         guard let window = controller.window else { return }
         let name = window.frameAutosaveName
         if !name.isEmpty {
-            window.saveFrame(usingName: name)
+            if savingFrame { window.saveFrame(usingName: name) }
             window.setFrameAutosaveName("")
         }
         window.isExcludedFromWindowsMenu = true
@@ -905,28 +961,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mirror.close()
             throw error
         }
-        let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: key, open: true)
-        if !openedOrder.contains(key) { openedOrder.append(key) }
-        show(controller, select: select)
-        controller.serveHost()
-        rememberReopen(controller)
+        return try await attachRemoteWindow(host: host, mirror: mirror, board: loaded, key: key, as: .shown(select: select))
+    }
+
+    private enum RemoteWindow {
+        case shown(select: Bool)
+        case attached
+    }
+
+    private func attachRemoteWindow(host: RemoteHost, mirror: BoardMirror, board loaded: Board, key: String, as use: RemoteWindow) async throws -> CanvasWindowController {
+        func stillWanted() throws {
+            try checkRemoteOpen()
+            guard remoteControllers[key] == nil else { throw CancellationError() }
+            if case .attached = use, remoteLoads[.host(key, loaded.id)] != nil { throw CancellationError() }
+        }
+        do {
+            try stillWanted()
+            await MainTurns.next()
+            try stillWanted()
+        } catch {
+            mirror.close()
+            throw error
+        }
+        let controller = DevPerf.time("board.window") {
+            CanvasWindowController(board: loaded, registry: registry, viewport: nil, composerState: ComposerState(), remote: RemoteSource(host: host, mirror: mirror))
+        }
+        loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+        await MainTurns.next()
+        do {
+            try stillWanted()
+        } catch {
+            loaded.onEvent = nil
+            retire(controller, savingFrame: false)
+            throw error
+        }
+        registerRemoteWindow(controller, key: key, as: use)
         return controller
     }
 
-    /// A remote board's window, under `key` in `remoteControllers`; not shown. `open` false: a
-    /// window closed from the start, which background attach keeps attached.
-    private func makeRemoteController(host: RemoteHost, mirror: BoardMirror, board loaded: Board, key: String, open: Bool) -> CanvasWindowController {
-        let controller = CanvasWindowController(board: loaded, registry: registry, viewport: nil, composerState: ComposerState(), remote: RemoteSource(host: host, mirror: mirror))
-        // Before it is in `remoteControllers`: a closed window must never host a new tab (`tabHost`).
-        controller.isBoardOpen = open
+    private func registerRemoteWindow(_ controller: CanvasWindowController, key: String, as use: RemoteWindow) {
         remoteControllers[key] = controller
-        loaded.onEvent = { [weak controller] event in controller?.apply(event) }
+        controller.canvas.scheduleOpeningView()
         controller.onNextNeedsYou = { [weak self] from in self?.goToNextNeedsYou(from: from) }
         controller.onClose = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.remoteWindowClosed(controller, key: key)
         }
-        return controller
+        switch use {
+        case .shown(let select):
+            controller.isBoardOpen = true
+            controller.window?.isExcludedFromWindowsMenu = false
+            if !openedOrder.contains(key) { openedOrder.append(key) }
+            show(controller, select: select)
+            controller.serveHost()
+            rememberReopen(controller)
+        case .attached:
+            controller.window?.contentView?.layoutSubtreeIfNeeded()
+            controller.serveHost()
+        }
     }
 
     /// A remote board's window closed by hand (`RemoteClose`, taken when the close was asked for):
@@ -988,17 +1080,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 mirror.close()
                 throw error
             }
-            guard !Task.isCancelled, !terminating else { return mirror.close() }
-            // An entry saved before easl recorded homes has its key only now, which a window may hold.
-            let attached = Self.remoteKey(host, entry.board)
-            guard remoteControllers[attached] == nil, remoteLoads[.host(attached, entry.board)] == nil else { return mirror.close() }
-            let controller = makeRemoteController(host: host, mirror: mirror, board: loaded, key: attached, open: false)
-            controller.window?.isExcludedFromWindowsMenu = true
-            // Never shown, so never laid out: `view.get` and drawings see the window's own size.
-            controller.window?.contentView?.layoutSubtreeIfNeeded()
-            controller.serveHost()
+            // A saved address may acquire its server-home identity only after discovery.
+            _ = try await attachRemoteWindow(host: host, mirror: mirror, board: loaded, key: Self.remoteKey(host, entry.board), as: .attached)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !terminating, !(error is CancellationError) else { return }
             let code = (error as? ApiRouter.Failure)?.code ?? (error as? EaslConnection.Failure)?.code ?? "unavailable"
             NSLog("easl: background attach to %@ failed (%@)", entry.sshTarget, code)
         }
