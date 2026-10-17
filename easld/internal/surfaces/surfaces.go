@@ -276,15 +276,17 @@ func (s *Registry) watch(viewer Viewer) {
 }
 
 func (s *Registry) stop(drawer *clients.Client, id string) {
-	for range 2 {
+	for {
 		failure := s.clients.StopSurface(drawer, id)
 		if failure == nil || failure.Code == api.CodeNotFound {
 			return
 		}
+		timer := time.NewTimer(250 * time.Millisecond)
 		select {
 		case <-drawer.Done():
+			timer.Stop()
 			return
-		default:
+		case <-timer.C:
 		}
 	}
 }

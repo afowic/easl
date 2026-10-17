@@ -337,9 +337,16 @@ func TestAnEndedStreamHearsAndTakesNothingMore(t *testing.T) {
 	if got := wait(t, stopped); got.err != nil || !reflect.DeepEqual(got.result, map[string]any{"stopped": true}) {
 		t.Fatalf("a stop the Mac failed answered %+v", got)
 	}
-	if got := r.drawer.stopped(t, 1); !reflect.DeepEqual(got, []string{"str_2"}) {
-		t.Fatalf("the failed stop was sent again for %v", got)
+	for range 3 {
+		retry := r.drawer.request(t)
+		params, _ := retry["params"].(map[string]any)
+		if retry["method"] != "surface.stop" || params["stream"] != "str_2" {
+			t.Fatalf("the failed stop was retried as %v", retry)
+		}
+		r.macs.Answer(r.drawer, map[string]any{"id": retry["id"], "ok": false, "error": map[string]any{"code": "unavailable", "message": "busy"}})
 	}
+	retry := r.drawer.request(t)
+	r.answer(retry, map[string]any{"stopped": true})
 	if got := viewer.relayed(); len(got) != 0 {
 		t.Fatalf("after its stop the viewer got %v", got)
 	}
