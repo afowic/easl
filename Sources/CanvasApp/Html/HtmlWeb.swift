@@ -84,7 +84,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     private func rememberMedia(_ file: HostFile, request: HostFileRequest, path: String) {
-        mediaBlocks.removeAll { $0.path == path }
+        mediaBlocks.removeAll { $0.path == path && $0.file.offset == file.offset }
         if mediaBlocks.count == 4 { mediaBlocks.removeFirst() }
         var metadata = request
         metadata.bytes = false
@@ -94,6 +94,15 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
 
     init(tile: HtmlTile?) {
         self.tile = tile
+    }
+
+    static func boardFileURL(path: String) -> URL {
+        var url = URLComponents()
+        url.scheme = HtmlKit.scheme
+        url.host = HtmlKit.host
+        url.path = "/_file"
+        url.queryItems = [URLQueryItem(name: "path", value: path)]
+        return url.url!
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
@@ -134,7 +143,10 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
         let key = ObjectIdentifier(task)
         let files = tile.files
         let source = tile.isRemote ? tile.hostImageSource : .directory(tile.boardRoot.path)
-        let assetPath = url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" }))
+        let explicitPath = url.path == "/_file"
+            ? URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value : nil
+        let assetPath = explicitPath ?? (url.path.hasPrefix(tile.boardRoot.path + "/") ? url.path : String(url.path.drop(while: { $0 == "/" })))
+        let assetKey = explicitPath == nil ? url.path : url.absoluteString
         var request = HostFileRequest(source: source, policy: .boardAsset(assetPath), bytes: false)
         let live = webView === tile.webView
         reads[key] = Task { @MainActor [weak self, weak tile] in
@@ -144,7 +156,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             var observed = false
             do {
                 let metadata: HostFile
-                if let cached = self.mediaBlocks.first(where: { $0.path == url.path }) {
+                if let cached = self.mediaBlocks.first(where: { $0.path == assetKey }) {
                     var file = cached.file
                     file.data = Data()
                     file.offset = 0
@@ -152,7 +164,9 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                     request = cached.request
                 } else {
                     do {
-                        let asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files)
+                        let asset: (file: HostFile, request: HostFileRequest)
+                        if explicitPath != nil { asset = (try await Self.read(request, files: files), request) }
+                        else { asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files) }
                         metadata = asset.file
                         request = asset.request
                     } catch {
@@ -161,8 +175,9 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                         case HostFileError.refused, HostFileError.notFound: break
                         default: throw error
                         }
-                        guard let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
-                                                                     temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
+                        guard explicitPath == nil,
+                              let fallback = LocalImage.hostPageFile(requestPath: url.path, source: source,
+                                                                    temps: files?.temps ?? FollowFilter.tempDirectories) else { throw error }
                         var imageRequest = fallback
                         imageRequest.bytes = false
                         metadata = try await Self.read(imageRequest, files: files)
@@ -171,7 +186,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                 }
                 guard self.reads[key] != nil, !Task.isCancelled else { return }
                 observed = true
-                if live { tile.observeAsset(url.path, request: request, baseline: .version(metadata.version)) }
+                if live { tile.observeAsset(assetKey, request: request, baseline: .version(metadata.version)) }
                 let selection: MediaByteRange
                 do {
                     selection = try MediaByteRange(header: task.request.value(forHTTPHeaderField: "Range"), size: metadata.size)
@@ -201,7 +216,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                         try Task.checkCancellation()
                         let chunk: HostFile
                         if media, let cached = self.mediaBlocks.first(where: {
-                            $0.path == url.path && $0.file.version == metadata.version &&
+                            $0.path == assetKey && $0.file.version == metadata.version &&
                                 offset >= $0.file.offset && offset < $0.file.offset + Int64($0.file.data.count)
                         }) {
                             chunk = cached.file
@@ -213,7 +228,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                             guard self.reads[key] != nil, !Task.isCancelled else { return }
                             guard chunk.version == metadata.version, chunk.size == metadata.size,
                                   chunk.offset == start, chunk.data.count == length else { throw URLError(.resourceUnavailable) }
-                            if media { self.rememberMedia(chunk, request: request, path: url.path) }
+                            if media { self.rememberMedia(chunk, request: request, path: assetKey) }
                         }
                         let start = Int(offset - chunk.offset)
                         let count = Int(min(selection.bytes.upperBound - offset, Int64(chunk.data.count - start)))
@@ -235,7 +250,7 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
             } catch {
                 guard self.reads.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
                 if live, !observed {
-                    tile.observeAsset(url.path, request: request,
+                    tile.observeAsset(assetKey, request: request,
                                       baseline: .failure(assetFailure ?? (error as? HostFileError) ?? .unavailable(String(describing: error))))
                 }
                 if began {

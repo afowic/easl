@@ -77,6 +77,18 @@ struct HostHTTPTests {
         ] + Array(repeating: loop, count: HostHTTP.redirects + 1))
     }
 
+    @Test func crossOriginRedirectCannotBorrowItsRequestingOrigin() async throws {
+        let host = try await ScratchHost()
+        defer { host.close() }
+        await #expect(throws: HostFileError.refused) {
+            try await host.files.http(HostHTTPRequest(url: host.url("/away")),
+                                      allow: host.allow + ["127.0.0.1:\(host.other)"]) { _ in }
+        }
+        #expect(host.requests == [
+            Upstream(port: host.port, method: "GET", path: "/away", headers: ["accept-encoding", "host"], range: nil)
+        ])
+    }
+
     @Test func refusedRequestsNeverStartTheHostClient() async throws {
         let host = try await ScratchHost()
         defer { host.close() }

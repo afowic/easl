@@ -192,8 +192,10 @@ func DefaultSize(t ObjectType) (w, h float64) {
 		return 640, 506
 	case Changes:
 		return 820, 620
-	case Image, Video:
+	case Image:
 		return 640, 506
+	case Video:
+		return 640, 386
 	case Diagram:
 		return 760, 480
 	case Question:

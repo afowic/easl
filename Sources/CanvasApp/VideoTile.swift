@@ -24,11 +24,7 @@ final class VideoTile: NSView, TileContent {
                 .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
         }
         func asset(_ path: String) -> String {
-            var url = URLComponents()
-            url.scheme = HtmlKit.scheme
-            url.host = HtmlKit.host
-            url.path = path.hasPrefix("/") ? path : "/" + path
-            return attribute(url.string ?? "")
+            attribute(HtmlSchemeHandler.boardFileURL(path: path).absoluteString)
         }
         let props = object.props
         let flags = ["loop", "muted", "autoplay"].filter { props[$0] == .bool(true) }.joined(separator: " ")

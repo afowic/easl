@@ -79,10 +79,8 @@ final class HtmlTile: NSView, TileContent {
             do {
                 if let files { return try await files.observe(requests) }
                 return try await HostFiles.observeLocal(requests)
-            } catch is CancellationError {
-                return nil
             } catch {
-                return Array(repeating: .failure(error as? HostFileError ?? .unavailable(String(describing: error))), count: requests.count)
+                return nil
             }
         }, changed: { [weak self] _ in
             guard let self, self.live, self.window != nil else { return }
@@ -230,6 +228,7 @@ final class HtmlTile: NSView, TileContent {
         work.cancelAll()
         guard let web = webView else { return }
         webViewCount = nil
+        (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         web.stopLoading()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
         web.removeFromSuperview()
@@ -365,21 +364,17 @@ final class HtmlTile: NSView, TileContent {
         self.live = live
         if !live {
             suspendAssetWatch()
-            Task { [weak web = webView] in
-                _ = try? await web?.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(v => { if (!v.paused) { v.dataset.canvasWasPlaying = '1'; v.pause(); } })")
-            }
+            webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         }
         if live, let web = webView {
             // Back before its release: the page is still loaded. It may have re-rendered while
             // hidden (a `state` change), which parked pages don't capture: refresh the snapshot
             // once the page is on screen again.
             unpark()
+            web.setAllMediaPlaybackSuspended(false, completionHandler: nil)
             web.isHidden = false
             Metrics.shared.record("html.reuse")
             resumeAssetWatch()
-            Task { [weak web] in
-                _ = try? await web?.evaluateJavaScript("document.querySelectorAll('[data-canvas-was-playing]').forEach(v => { delete v.dataset.canvasWasPlaying; v.play().catch(() => {}); })")
-            }
             WebStage.afterNextPresentationUpdate(web) { [weak self] in
                 guard let self, self.live, self.webView === web else { return }
                 self.scheduleSnapshot()
@@ -433,10 +428,18 @@ final class HtmlTile: NSView, TileContent {
         lastSnapshot = image
     }
 
-    private static func videoFrame(_ web: WKWebView) async -> NSImage? {
+    private static func videoFrame(_ web: WKWebView, loadFirst: Bool = false) async -> NSImage? {
         let script = """
         const video = document.querySelector('video');
         if (!video) return null;
+        if (loadFirst && video.readyState < 2) {
+          const seek = () => {
+            if (!video.seeking && video.currentTime === 0 && Number.isFinite(video.duration) && video.duration > 0)
+              video.currentTime = Math.min(0.001, video.duration / 2);
+          };
+          if (video.readyState >= 1) seek();
+          else video.addEventListener('loadedmetadata', seek, {once:true});
+        }
         if (video.readyState < 2 && !video.error) {
           await new Promise(resolve => {
             const done = () => {
@@ -462,7 +465,7 @@ final class HtmlTile: NSView, TileContent {
         ctx.drawImage(video, (canvas.width-video.videoWidth*fit)/2, (canvas.height-video.videoHeight*fit)/2, video.videoWidth*fit, video.videoHeight*fit);
         return canvas.toDataURL('image/png').split(',')[1];
         """
-        guard let encoded = try? await web.callAsyncJavaScript(script, contentWorld: .page) as? String,
+        guard let encoded = try? await web.callAsyncJavaScript(script, arguments: ["loadFirst": loadFirst], contentWorld: .page) as? String,
               let data = Data(base64Encoded: encoded) else { return nil }
         return NSImage(data: data)
     }
@@ -496,7 +499,7 @@ final class HtmlTile: NSView, TileContent {
         }
         guard let web = renderWebView else { return .placeholder(request, "timed out") }
         if object.type == .video {
-            guard let frame = await Self.videoFrame(web) else { return .placeholder(request, "video frame unavailable") }
+            guard let frame = await Self.videoFrame(web, loadFirst: true) else { return .placeholder(request, "video frame unavailable") }
             let image = request.image { bounds in frame.drawUpright(in: bounds) }
             return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
         }
@@ -645,6 +648,7 @@ final class HtmlTile: NSView, TileContent {
             if keepPage { HtmlMeasurePool.give(page) } else { HtmlMeasurePool.discard(page) }
             return
         }
+        (renderWebView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         renderWebView?.stopLoading()
         renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
         renderWebView?.removeFromSuperview()
@@ -676,6 +680,7 @@ final class HtmlTile: NSView, TileContent {
         }
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         web.appearance = appearance
         web.underPageBackgroundColor = .textBackgroundColor
         WebStage.park(web, frame: NSRect(origin: .zero, size: size))
@@ -814,7 +819,8 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         let userLink = action.targetFrame == nil || (action.navigationType == .linkActivated && isMain)
         if userLink, followed(action, in: webView) { return .cancel }
         if isMain { return url.scheme == HtmlKit.scheme && url.host == HtmlKit.host && url.path == pageURL.path ? .allow : .cancel }
-        return ["about", "data", "blob", HtmlKit.scheme].contains(url.scheme ?? "") ? .allow : .cancel
+        let schemes = board.isRemote ? ["about", HtmlKit.scheme] : ["about", "data", "blob", HtmlKit.scheme]
+        return schemes.contains(url.scheme ?? "") ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

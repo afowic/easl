@@ -45,6 +45,12 @@ public enum HostNetworkPolicy {
               let origin = HostNetworkOrigin(components) else { return false }
         return rules.contains { origin.matches($0) }
     }
+
+    static func sameOrigin(_ first: URL, _ second: URL) -> Bool {
+        guard let a = URLComponents(url: first, resolvingAgainstBaseURL: true).flatMap(HostNetworkOrigin.init),
+              let b = URLComponents(url: second, resolvingAgainstBaseURL: true).flatMap(HostNetworkOrigin.init) else { return false }
+        return a == b
+    }
 }
 
 /// One page's capability map. Each random hostname grants one exact HTTP(S) origin.

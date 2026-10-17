@@ -40,7 +40,7 @@ extension HostFiles {
         try await session {
             let client = HostHTTPClient(command)
             try await withTaskCancellationHandler {
-                try await client.run(rules: rules, receive: receive)
+                try await client.run(initialURL: request.url, rules: rules, receive: receive)
             } onCancel: {
                 client.cancel()
             }
@@ -162,8 +162,14 @@ enum HostHTTP {
 
 
     def fetch(method, url, span, rules):
+        origin = None
         for _ in range(REDIRECTS + 1):
             parts, host, port = destination(url, rules)
+            current = parts.scheme, host, port
+            if origin is None:
+                origin = current
+            elif current != origin:
+                raise Refused()
             if parts.scheme == 'https':
                 connection = http.client.HTTPSConnection(host, port, timeout=IDLE, context=ssl.create_default_context())
             else:
@@ -304,12 +310,12 @@ private final class HostHTTPClient: @unchecked Sendable {
         }
     }
 
-    func run(rules: [HostNetworkRule], receive: @Sendable (HostHTTPEvent) async throws -> Void) async throws {
+    func run(initialURL: URL, rules: [HostNetworkRule], receive: @Sendable (HostHTTPEvent) async throws -> Void) async throws {
         try start()
         var failure: (any Error)?
         var responded = false
         do {
-            responded = try await pump(rules: rules, receive: receive)
+            responded = try await pump(initialURL: initialURL, rules: rules, receive: receive)
         } catch {
             failure = error
         }
@@ -354,12 +360,13 @@ private final class HostHTTPClient: @unchecked Sendable {
     }
 
     /// Delivers the head, then each chunk as it is read: false when output ended before a head.
-    private func pump(rules: [HostNetworkRule], receive: @Sendable (HostHTTPEvent) async throws -> Void) async throws -> Bool {
+    private func pump(initialURL: URL, rules: [HostNetworkRule], receive: @Sendable (HostHTTPEvent) async throws -> Void) async throws -> Bool {
         guard let first = try await headLine() else { return false }
         guard let head = try? JSONDecoder().decode(HostHTTP.Head.self, from: first.line) else { throw HostHTTP.invalid }
         guard head.ok else { throw HostFileError(code: head.code, message: head.message, limit: head.limit) }
         guard let status = head.status, (100...599).contains(status), let url = head.url.flatMap({ URL(string: $0) }),
-              HostNetworkPolicy.permits(url, rules: rules), let headers = head.headers else { throw HostHTTP.invalid }
+              HostNetworkPolicy.sameOrigin(url, initialURL), HostNetworkPolicy.permits(url, rules: rules),
+              let headers = head.headers else { throw HostHTTP.invalid }
         try await receive(.response(HostHTTPHead(url: url, status: status, headers: headers)))
         if !first.rest.isEmpty {
             try Task.checkCancellation()

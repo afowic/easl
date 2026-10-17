@@ -56,6 +56,22 @@ struct HostFileWatchTests {
         #expect(changes == [])
     }
 
+    @Test func nilObservationsPreserveTheBaselineAndContinuePolling() async throws {
+        let observations: [Int?] = [0, nil, 0, nil, 1]
+        let probes = Locked(0)
+        var changes: [Int] = []
+        let watch = HostFileWatch(baseline: 0, interval: .milliseconds(20), probe: {
+            probes.withLock { index in
+                let observation = observations[min(index, observations.count - 1)]
+                index += 1
+                return observation
+            }
+        }, changed: { changes.append($0) })
+        defer { watch.cancel() }
+        try #require(await eventually { !changes.isEmpty })
+        #expect(changes == [1])
+    }
+
     @Test func nilBaselineUsesMetadataOnlyAndNotifiesOnceForASameSizeEdit() async throws {
         let fixture = try HostFileFixture()
         try fixture.write("chart.png", Data("first".utf8))

@@ -25,8 +25,14 @@ final class ImageTile: NSView, TileContent {
     private final class Animation {
         let frames: GIFFrames
         var index = 0
+        var cycle = 0
         var image: NSImage
         var delay: TimeInterval
+
+        var isComplete: Bool {
+            guard let totalPlays = frames.totalPlays else { return false }
+            return cycle == totalPlays - 1 && index == frames.count - 1
+        }
 
         init(frames: GIFFrames, image: NSImage, delay: TimeInterval) {
             self.frames = frames
@@ -177,7 +183,7 @@ final class ImageTile: NSView, TileContent {
     }
 
     private func startAnimation() {
-        guard live, window != nil, picture?.path == path, let animation,
+        guard live, window != nil, picture?.path == path, let animation, !animation.isComplete,
               animationTimer == nil, animationTask == nil else { return }
         let timer = Timer(timeInterval: animation.delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -191,7 +197,7 @@ final class ImageTile: NSView, TileContent {
     }
 
     private func advanceAnimation() {
-        guard live, window != nil, let animation else { return }
+        guard live, window != nil, let animation, !animation.isComplete else { return }
         let generation = loadGeneration
         let next = (animation.index + 1) % animation.frames.count
         animationTask = Task { [weak self] in
@@ -200,6 +206,9 @@ final class ImageTile: NSView, TileContent {
                   self.animation === animation, self.live, self.window != nil else { return }
             self.animationTask = nil
             guard let frame else { return }
+            if next == 0, animation.frames.totalPlays != nil {
+                animation.cycle += 1
+            }
             animation.index = next
             animation.image = NSImage(cgImage: frame.image, size: self.picture?.size ?? .zero)
             animation.delay = frame.delay
@@ -407,6 +416,7 @@ final class ImageTile: NSView, TileContent {
 private actor GIFFrames {
     private let source: CGImageSource
     nonisolated let count: Int
+    nonisolated let totalPlays: Int?
 
     struct Frame: Sendable {
         let image: CGImage
@@ -419,6 +429,14 @@ private actor GIFFrames {
               CGImageSourceGetCount(source) > 1 else { return nil }
         self.source = source
         count = CGImageSourceGetCount(source)
+        let properties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
+        let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        if let repetitions = gif?[kCGImagePropertyGIFLoopCount] as? Int {
+            // The extension counts repetitions after the initial play; zero means forever.
+            totalPlays = repetitions == 0 ? nil : repetitions + 1
+        } else {
+            totalPlays = 1
+        }
     }
 
     func frame(_ index: Int) -> Frame? {
@@ -434,6 +452,6 @@ private actor GIFFrames {
         let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
         let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
             ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
-        return Frame(image: image, delay: delay.isFinite && delay > 0 ? max(0.02, delay) : 0.1)
+        return Frame(image: image, delay: delay.isFinite && delay >= 0.011 ? delay : 0.1)
     }
 }
