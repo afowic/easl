@@ -123,13 +123,7 @@ public struct HostURLMap {
             let name = (text as NSString).substring(with: match.range(at: 1)).lowercased()
             return Self.replaceOperand(in: attribute, match: match, indices: 2...4) { value in
                 if name == "style" { return rewriteCSS(in: value) }
-                if name == "srcset" {
-                    return Self.rewrite(value, matching: Self.srcsetTokens) { token, _ in
-                        let url = token.reversed().drop(while: { $0 == "," }).reversed()
-                        let literal = String(url)
-                        return rewriteURL(literal) + token.dropFirst(literal.count)
-                    }
-                }
+                if name == "srcset" { return rewriteSrcset(value) }
                 return rewriteURL(value)
             }
         }
@@ -162,11 +156,44 @@ public struct HostURLMap {
     }
 
     private mutating func rewriteURL(_ text: String) -> String {
-        guard let original = URL(string: text), let proxy = proxyURL(for: original) else { return text }
+        guard let original = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let proxy = proxyURL(for: original) else { return text }
         return proxy.absoluteString
     }
 
-    private static let srcsetTokens = try! NSRegularExpression(pattern: #"\S+"#)
+    private mutating func rewriteSrcset(_ text: String) -> String {
+        var result = ""
+        result.reserveCapacity(text.utf8.count)
+        var cursor = text.startIndex
+        var copied = cursor
+        while cursor < text.endIndex {
+            while cursor < text.endIndex, Self.srcsetSpace(text[cursor]) || text[cursor] == "," {
+                text.formIndex(after: &cursor)
+            }
+            let start = cursor
+            while cursor < text.endIndex, !Self.srcsetSpace(text[cursor]) {
+                text.formIndex(after: &cursor)
+            }
+            var end = cursor
+            while end > start, text[text.index(before: end)] == "," { text.formIndex(before: &end) }
+            if start < end {
+                result += text[copied..<start]
+                result += rewriteURL(String(text[start..<end]))
+                copied = end
+            }
+            if end < cursor { continue }
+            while cursor < text.endIndex, text[cursor] != "," { text.formIndex(after: &cursor) }
+        }
+        result += text[copied...]
+        return result
+    }
+
+    private static func srcsetSpace(_ character: Character) -> Bool {
+        switch character {
+        case " ", "\t", "\r", "\n", "\u{000C}": true
+        default: false
+        }
+    }
 
     private static let tagPattern = #"<(?:"[^"]*"|'[^']*'|[^'">])*>"#
     private static let styleEnd = #"</style(?=[\s/>])(?:"[^"]*"|'[^']*'|[^'">])*>"#

@@ -141,12 +141,18 @@ struct HostNetworkPolicyTests {
 struct HostURLMapTests {
     @Test func grantsAreRandomPerOriginAndReuseEquivalentDefaultPorts() throws {
         var map = HostURLMap(allow: ["private.internal", "other.internal"])
-        let http = try #require(map.proxyURL(for: URL(string: "http://private.internal/first")!))
-        let httpDefault = try #require(map.proxyURL(for: URL(string: "HTTP://PRIVATE.INTERNAL:80/second")!))
-        let https = try #require(map.proxyURL(for: URL(string: "https://private.internal/secure")!))
-        let httpsDefault = try #require(map.proxyURL(for: URL(string: "https://private.internal:443/another")!))
-        let otherPort = try #require(map.proxyURL(for: URL(string: "http://private.internal:8080/port")!))
-        let otherHost = try #require(map.proxyURL(for: URL(string: "http://other.internal/host")!))
+        let httpURL = map.proxyURL(for: URL(string: "http://private.internal/first")!)
+        let httpDefaultURL = map.proxyURL(for: URL(string: "HTTP://PRIVATE.INTERNAL:80/second")!)
+        let httpsURL = map.proxyURL(for: URL(string: "https://private.internal/secure")!)
+        let httpsDefaultURL = map.proxyURL(for: URL(string: "https://private.internal:443/another")!)
+        let otherPortURL = map.proxyURL(for: URL(string: "http://private.internal:8080/port")!)
+        let otherHostURL = map.proxyURL(for: URL(string: "http://other.internal/host")!)
+        let http = try #require(httpURL)
+        let httpDefault = try #require(httpDefaultURL)
+        let https = try #require(httpsURL)
+        let httpsDefault = try #require(httpsDefaultURL)
+        let otherPort = try #require(otherPortURL)
+        let otherHost = try #require(otherHostURL)
         let host = try #require(http.host)
         #expect(http.scheme == "canvas-kit")
         #expect(host.range(of: #"^p-[0-9a-f]{32}$"#, options: .regularExpression) != nil)
@@ -160,7 +166,8 @@ struct HostURLMapTests {
         #expect(map.originalURL(for: otherPort)?.absoluteString == "http://private.internal:8080/port")
 
         var separateView = HostURLMap(allow: ["private.internal"])
-        let separate = try #require(separateView.proxyURL(for: URL(string: "http://private.internal/first")!))
+        let separateURL = separateView.proxyURL(for: URL(string: "http://private.internal/first")!)
+        let separate = try #require(separateURL)
         #expect(separate.host != host)
         #expect(separateView.originalURL(for: http) == nil)
         #expect(map.originalURL(for: separate) == nil)
@@ -169,7 +176,8 @@ struct HostURLMapTests {
     @Test func preservesPercentEncodedPathsQueriesAndFragmentsInBothDirections() throws {
         var map = HostURLMap(allow: ["private.internal:8443"])
         let original = URL(string: "https://PRIVATE.internal:8443/a%2Fb/%25/%2e%2E/space%20here/%3F%23?x=a%2Fb&literal=%252F&plus=a+b&empty=#frag%2Fpiece")!
-        let proxy = try #require(map.proxyURL(for: original))
+        let mapped = map.proxyURL(for: original)
+        let proxy = try #require(mapped)
         let components = try #require(URLComponents(url: proxy, resolvingAgainstBaseURL: false))
         #expect(components.percentEncodedPath == "/a%2Fb/%25/%2e%2E/space%20here/%3F%23")
         #expect(components.percentEncodedQuery == "x=a%2Fb&literal=%252F&plus=a+b&empty=")
@@ -177,16 +185,20 @@ struct HostURLMapTests {
         #expect(components.port == nil)
         #expect(map.originalURL(for: proxy)?.absoluteString == "https://private.internal:8443/a%2Fb/%25/%2e%2E/space%20here/%3F%23?x=a%2Fb&literal=%252F&plus=a+b&empty=#frag%2Fpiece")
 
-        let emptyPath = try #require(map.proxyURL(for: URL(string: "https://private.internal:8443?empty=")!))
+        let emptyPathURL = map.proxyURL(for: URL(string: "https://private.internal:8443?empty=")!)
+        let emptyPath = try #require(emptyPathURL)
         #expect(URLComponents(url: emptyPath, resolvingAgainstBaseURL: false)?.percentEncodedPath == "")
         #expect(map.originalURL(for: emptyPath)?.absoluteString == "https://private.internal:8443?empty=")
     }
 
     @Test func rootRelativeAndDirectoryRelativeResourcesKeepDistinctOrigins() throws {
         var map = HostURLMap(allow: ["private.internal:8123", "api.internal:9443", "[::1]:8123"])
-        let first = try #require(map.proxyURL(for: URL(string: "http://private.internal:8123/docs/index.html")!))
-        let second = try #require(map.proxyURL(for: URL(string: "https://api.internal:9443/app/index.html")!))
-        let ipv6 = try #require(map.proxyURL(for: URL(string: "http://[::1]:8123/start")!))
+        let firstURL = map.proxyURL(for: URL(string: "http://private.internal:8123/docs/index.html")!)
+        let secondURL = map.proxyURL(for: URL(string: "https://api.internal:9443/app/index.html")!)
+        let ipv6URL = map.proxyURL(for: URL(string: "http://[::1]:8123/start")!)
+        let first = try #require(firstURL)
+        let second = try #require(secondURL)
+        let ipv6 = try #require(ipv6URL)
         let firstRoot = URL(string: "/api/items?key=a%2Fb", relativeTo: first)!.absoluteURL
         let secondRoot = URL(string: "/api/items?key=a%2Fb", relativeTo: second)!.absoluteURL
         #expect(map.originalURL(for: firstRoot)?.absoluteString == "http://private.internal:8123/api/items?key=a%2Fb")
@@ -197,7 +209,8 @@ struct HostURLMapTests {
 
     @Test func refusesUnknownForgedOrDecoratedGrantsAndUnallowedOrigins() throws {
         var map = HostURLMap(allow: ["private.internal:8123"])
-        let proxy = try #require(map.proxyURL(for: URL(string: "http://private.internal:8123/allowed")!))
+        let mapped = map.proxyURL(for: URL(string: "http://private.internal:8123/allowed")!)
+        let proxy = try #require(mapped)
         let host = try #require(proxy.host)
         #expect(map.originalURL(for: proxy)?.absoluteString == "http://private.internal:8123/allowed")
         for literal in [
@@ -215,7 +228,8 @@ struct HostURLMapTests {
             "http://user@private.internal:8123/", "https://private.internal:8123@evil.internal/",
             "file://private.internal:8123/path", "wss://private.internal:8123/socket"
         ] {
-            #expect(map.proxyURL(for: URL(string: literal)!) == nil, "\(literal)")
+            let refused = map.proxyURL(for: URL(string: literal)!)
+            #expect(refused == nil, "\(literal)")
         }
         #expect(!map.contains(host: "p-00000000000000000000000000000000"))
         #expect(!map.contains(host: host + ":80"))
@@ -223,8 +237,10 @@ struct HostURLMapTests {
 
     @Test func rewritesOnlyAuthorizedUnescapedAbsoluteLiterals() throws {
         var map = HostURLMap(allow: ["localhost:8123", "assets.internal:443"])
-        let local = try #require(map.proxyURL(for: URL(string: "http://localhost:8123/")!)?.host)
-        let assets = try #require(map.proxyURL(for: URL(string: "https://assets.internal/")!)?.host)
+        let localURL = map.proxyURL(for: URL(string: "http://localhost:8123/")!)
+        let assetsURL = map.proxyURL(for: URL(string: "https://assets.internal/")!)
+        let local = try #require(localURL?.host)
+        let assets = try #require(assetsURL?.host)
         let text = #"""
         🙂 <img src="http://localhost:8123/a%2Fb.png?x=%2F&amp;y=1">
         <style>.icon { background: url(https://assets.internal/image.png) }</style>
@@ -241,14 +257,17 @@ struct HostURLMapTests {
         <script>const escaped = "http:\\/\\/localhost:8123/missed"; const computed = "http" + "://localhost:8123/missed";</script>
         <a href="ftp://localhost:8123/file">nothttps://assets.internal/missed</a>
         """
-        #expect(map.rewriteHTML(in: text) == expected)
-        #expect(map.rewriteHTML(in: "<p>http://localhost:8123/ is the source</p>") == "<p>http://localhost:8123/ is the source</p>")
+        let rewritten = map.rewriteHTML(in: text)
+        #expect(rewritten == expected)
+        let displayed = map.rewriteHTML(in: "<p>http://localhost:8123/ is the source</p>")
+        #expect(displayed == "<p>http://localhost:8123/ is the source</p>")
         #expect(map.originalURL(for: URL(string: "canvas-kit://\(local)/data?x=a%2Bb")!)?.absoluteString == "http://localhost:8123/data?x=a%2Bb")
     }
 
     @Test func stylesheetRewritingPreservesCommentsAndDisplayedStrings() throws {
         var map = HostURLMap(allow: ["localhost:8123"])
-        let host = try #require(map.proxyURL(for: URL(string: "http://localhost:8123/")!)?.host)
+        let mapped = map.proxyURL(for: URL(string: "http://localhost:8123/")!)
+        let host = try #require(mapped?.host)
         let css = #"""
         /* url(http://localhost:8123/comment.png) */
         .note::after { content: "http://localhost:8123/source"; }
@@ -261,7 +280,8 @@ struct HostURLMapTests {
         .image { background: url("canvas-kit://\(host)/image.png"); }
         @import 'canvas-kit://\(host)/theme.css';
         """
-        #expect(map.rewriteCSS(in: css) == expected)
+        let rewritten = map.rewriteCSS(in: css)
+        #expect(rewritten == expected)
         let inline = #"<div style='background: url(http://localhost:8123/image.png); content: "http://localhost:8123/source"'>http://localhost:8123/source</div>"#
         let transformed = map.rewriteHTML(in: inline)
         #expect(transformed.contains("url(canvas-kit://\(host)/image.png)"))
@@ -280,9 +300,21 @@ struct HostURLMapTests {
             #"<title><img src="http://localhost:8123/source">"#,
             #"<!-- <img src="http://localhost:8123/source">"#,
         ] {
-            #expect(map.rewriteHTML(in: html) == html)
+            let rewritten = map.rewriteHTML(in: html)
+            #expect(rewritten == html)
         }
         let css = #"a { background: url("data:text/plain,http://localhost:8123/source"); }"#
-        #expect(map.rewriteCSS(in: css) == css)
+        let rewritten = map.rewriteCSS(in: css)
+        #expect(rewritten == css)
+    }
+
+    @Test func srcsetDescriptorsAndWhitespaceDoNotLoseCandidates() throws {
+        var map = HostURLMap(allow: ["localhost:8123"])
+        let mapped = map.proxyURL(for: URL(string: "http://localhost:8123/")!)
+        let host = try #require(mapped?.host)
+        let html = #"<img src=" http://localhost:8123/fallback " srcset="http://localhost:8123/a 1x,http://localhost:8123/b 2x, data:text/plain,http://localhost:8123/payload 3x">"#
+        let expected = #"<img src="canvas-kit://"# + host + #"/fallback" srcset="canvas-kit://"# + host + #"/a 1x,canvas-kit://"# + host + #"/b 2x, data:text/plain,http://localhost:8123/payload 3x">"#
+        let rewritten = map.rewriteHTML(in: html)
+        #expect(rewritten == expected)
     }
 }
