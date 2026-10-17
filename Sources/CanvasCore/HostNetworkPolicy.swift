@@ -265,6 +265,12 @@ private func networkAuthority(_ components: URLComponents) -> (host: String, por
 private func canonicalIPv6(_ host: String) -> String? {
     guard host.first == "[", host.last == "]" else { return nil }
     let literal = String(host.dropFirst().dropLast())
+    guard literal.utf8.allSatisfy({ byte in
+        switch byte {
+        case 48...57, 65...70, 97...102, 46, 58: true
+        default: false
+        }
+    }) else { return nil }
     var address = in6_addr()
     guard literal.withCString({ inet_pton(AF_INET6, $0, &address) }) == 1 else { return nil }
     // WHATWG URL.hostname uses hexadecimal words even for IPv4-mapped addresses.

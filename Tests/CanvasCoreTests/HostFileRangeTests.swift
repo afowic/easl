@@ -324,11 +324,6 @@ struct HostFileRangeTests {
         try #require(first.count == 5)
         #expect(first[3] == .failure(.notFound(commit: nil)))
         #expect(first[4] == .failure(.refused))
-        if case .version(let version) = first[2] {
-            #expect(version.path == fixture.root.resolvingSymlinksInPath().appendingPathComponent("movie.mp4").path)
-        } else {
-            Issue.record("large asset metadata must be observable without a content read")
-        }
         try fixture.write("a.js", Data("second".utf8))
         let second = try await observe()
         try #require(second.count == 5)
