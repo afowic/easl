@@ -47,7 +47,7 @@ struct RepoBoardTests {
     func real(_ path: String) -> String { GitDiffEngine.realPath(URL(fileURLWithPath: path)).path }
 
     func openThroughSocket(_ root: URL, router: ApiRouter) async throws -> JSONValue {
-        let socket = dir.appendingPathComponent("open.sock").path
+        let socket = "/tmp/cvr-\(UUID().uuidString.prefix(8)).sock"
         let server = SocketServer(path: socket) { request, connection in await router.handle(request, connection: connection) }
         try server.start()
         defer { server.stop() }
