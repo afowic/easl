@@ -11,8 +11,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
-    private let basics = BasicsPanel()
-    private let getStarted = GetStartedPanel()
+    private var basics: BasicsPanel?
+    private var getStarted: GetStartedPanel?
     /// The open-asks count beside the drawing toolbar (`AsksChip`).
     private let asks = AsksChip()
     /// The walk-through's progress while Get Started is open.
@@ -133,7 +133,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             ])
         }
         asks.onGo = { [weak self] in self?.canvas.goToNextAsk() }
-        canvas.chromeInsets = { [weak container, weak tray, weak drawing, weak getStarted] in
+        canvas.chromeInsets = { [weak self, weak container, weak tray, weak drawing] in
             guard let container else { return NSEdgeInsets() }
             // The toolbar and tray sit at fixed offsets, so only a window never laid out needs a
             // pass here; attention pills ask on every pan step, sometimes from inside layout.
@@ -141,7 +141,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             let top = drawing?.toolbar.map { $0.isHidden ? 0 : container.bounds.maxY - $0.frame.minY } ?? 0
             let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
             // Get Started's fixed width at its fixed leading offset, laid out or not.
-            let left = getStarted.map { $0.isOpen ? GetStartedPanel.leading + GetStartedPanel.width : 0 } ?? 0
+            let left = self?.getStarted?.isOpen == true ? GetStartedPanel.leading + GetStartedPanel.width : 0
             return NSEdgeInsets(top: top, left: left, bottom: bottom, right: 0)
         }
         // Edge pills with no clear stretch of the view's edge go to the toolbar row beside the
@@ -161,7 +161,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             self.refreshAsks()
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, getStarted, basics, navigator] {
+        for view in [nothingHere, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -174,20 +174,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
             navigatorWidth,
             navigator.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
-        ])
-        let basicsHeight = basics.heightAnchor.constraint(equalToConstant: 620)
-        basicsHeight.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            basics.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
-            basics.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-            basics.widthAnchor.constraint(equalToConstant: BasicsPanel.width),
-            basicsHeight,
-            basics.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
-        ])
-        NSLayoutConstraint.activate([
-            getStarted.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
-            getStarted.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GetStartedPanel.leading),
-            getStarted.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
         ])
         navigator.onGo = { [weak self] target in
             switch target {
@@ -205,17 +191,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
-        basics.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
-        getStarted.onClose = { [weak self] in self?.getStartedClosed() }
-        getStarted.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
-        getStarted.onShowPractice = { [weak self] in self?.showPracticeNote() }
         canvas.onTab = { [weak self] backward in
             guard let getStarted = self?.getStarted, getStarted.isOpen else { return false }
             getStarted.takeKeyboard(backward: backward)
             return true
         }
-        canvas.panelOpen = { [weak self] in self?.getStarted.isOpen ?? false }
-        canvas.closePanel = { [weak self] in self?.getStarted.close() }
+        canvas.panelOpen = { [weak self] in self?.getStarted?.isOpen ?? false }
+        canvas.closePanel = { [weak self] in self?.getStarted?.close() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onReveal = { [weak self] mention in self?.canvas.revealMention(mention.target) }
@@ -753,26 +735,59 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Esc on the canvas shows the chrome again.
     @objc func toggleCanvasChrome(_ sender: Any?) {
         canvas.chromeHidden.toggle()
-        if canvas.chromeHidden { basics.close() }
+        if canvas.chromeHidden { basics?.close() }
     }
 
     /// Help › easl Basics opens (or closes) the legend over this board.
     @objc func toggleBasics(_ sender: Any?) {
-        if basics.isOpen { basics.close() } else { basics.open() }
+        if let basics {
+            if basics.isOpen { basics.close() } else { basics.open() }
+            return
+        }
+        guard let container = window?.contentView else { return }
+        let panel = BasicsPanel()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(panel, positioned: .below, relativeTo: navigator)
+        let height = panel.heightAnchor.constraint(equalToConstant: 620)
+        height.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            panel.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+            panel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            panel.widthAnchor.constraint(equalToConstant: BasicsPanel.width),
+            height,
+            panel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
+        ])
+        panel.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
+        basics = panel
+        panel.open()
     }
 
     /// Help › Get Started opens (or closes) the first-run walk-through over this board; at the
     /// first launch of a new home the app opens it (`GetStarted.Store.launch`).
     @objc func toggleGetStarted(_ sender: Any?) {
-        if getStarted.isOpen { getStarted.close() } else { showGetStarted() }
+        if getStarted?.isOpen == true { getStarted?.close() } else { showGetStarted() }
     }
 
     /// Opens Get Started with its practice note in view and selected (so ⇧⌘M works on it
     /// straight away), counting from what the tray holds now.
     func showGetStarted() {
-        guard !getStarted.isOpen else { return }
+        guard getStarted?.isOpen != true, let container = window?.contentView else { return }
+        if getStarted == nil {
+            let panel = GetStartedPanel()
+            panel.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(panel, positioned: .below, relativeTo: (basics as NSView?) ?? navigator)
+            NSLayoutConstraint.activate([
+                panel.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+                panel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GetStartedPanel.leading),
+                panel.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
+            ])
+            panel.onClose = { [weak self] in self?.getStartedClosed() }
+            panel.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
+            panel.onShowPractice = { [weak self] in self?.showPracticeNote() }
+            getStarted = panel
+        }
         guide = GetStarted.Progress(delivered: board.delivered, trayCount: board.tray.count)
-        getStarted.open()
+        getStarted?.open()
         showPracticeNote()
         refreshTray()
         refreshEmptyHint()
@@ -811,12 +826,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         } else {
             board.objects.values.contains { $0.type == .terminal } ? .choose : .none
         }
-        getStarted.show(progress.step, target: shown)
+        getStarted?.show(progress.step, target: shown)
     }
 
     /// The empty-board hint shows on an empty board, unless Get Started is open over it.
     private func refreshEmptyHint() {
-        emptyHint.isHidden = !board.objects.isEmpty || getStarted.isOpen
+        emptyHint.isHidden = !board.objects.isEmpty || getStarted?.isOpen == true
     }
 
     /// Go to's file, symbol and Recent rows: a code tile in view already showing the lines, else
@@ -1201,10 +1216,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
             return !selection.isEmpty
         case #selector(toggleGetStarted(_:)):
-            item.state = getStarted.isOpen ? .on : .off
+            item.state = getStarted?.isOpen == true ? .on : .off
             return true
         case #selector(toggleBasics(_:)):
-            item.state = basics.isOpen ? .on : .off
+            item.state = basics?.isOpen == true ? .on : .off
             return true
         case #selector(toggleCanvasChrome(_:)):
             item.state = canvas.chromeHidden ? .on : .off
