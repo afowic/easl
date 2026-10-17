@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- **Board tabs stay on their Space.** Opening, closing or reopening a board no longer brings a replacement tab onto the Space you're using. Selecting a board on another Space, or in a minimized window, waits until you visit or restore its window instead of switching Spaces. Opening a folder through another easl launch follows the same rule. API close still discards the board's live surfaces immediately; an off-Space native tab finishes closing when its replacement can appear safely. ⌘J skips boards it cannot show and leaves their unseen attention markers untouched.
+
 ## 0.2.7
 
 **Updating from 0.2.4.** The update still runs 0.2.4's own install helper. If Update in 0.2.4 stops with nothing replaced, quit easl and install 0.2.7 from its zip on [GitHub Releases](https://github.com/twaldin/easl/releases), or run `brew upgrade --cask easl` for a Homebrew install.
