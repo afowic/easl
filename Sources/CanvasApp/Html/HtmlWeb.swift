@@ -164,8 +164,8 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                     request = cached.request
                 } else {
                     do {
-                        let asset: (file: HostFile, request: HostFileRequest)
-                        if explicitPath != nil { asset = (try await Self.read(request, files: files), request) }
+                        let asset: (request: HostFileRequest, file: HostFile)
+                        if explicitPath != nil { asset = (request, try await Self.read(request, files: files)) }
                         else { asset = try await Self.readBoardAsset(request, absolutePath: url.path, files: files) }
                         metadata = asset.file
                         request = asset.request
