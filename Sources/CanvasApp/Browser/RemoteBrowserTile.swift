@@ -1,15 +1,20 @@
 import AppKit
 import CanvasCore
 import ImageIO
+import UniformTypeIdentifiers
 
-/// A remote board's browser tile. The host keeps the WKWebView. This view holds one memory
-/// image and forwards native input on its own SSH link (`remote.host.connection()`), never
-/// through `BoardMirror` and never by constructing WebKit.
+/// A remote board's browser tile whose page this Mac doesn't run. The Mac that runs it keeps the
+/// WKWebView: a Mac host, or on an easld board the tile's `drawingMachine`, whose stream easld
+/// relays. This view holds one memory image and forwards native input on its own SSH link to the
+/// board's server (`remote.host.connection()`), never through `BoardMirror` and never by
+/// constructing WebKit.
 ///
 /// One connection per live period. It listens for `surface.frame`, `surface.dialog` and
-/// `surface.notice` on the canonical board before `surface.stream`. The host holds frame 0
-/// until `surface.ack` 0, then one frame is outstanding. A dropped link opens a new stream
-/// and does not replay input. The last image stays up.
+/// `surface.notice` on the canonical board before `surface.stream`. The page's Mac holds frame 0
+/// until `surface.ack` 0, then one frame is outstanding. A dropped link or stream opens a new
+/// stream and does not replay input. The last image stays up. On easld a stream also ends when
+/// its drawing Mac goes offline or the page moves to another Mac; the tile says so and opens again
+/// once that Mac is back, or on the new one.
 @MainActor
 final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputClient {
     private var object: CanvasObject
@@ -113,12 +118,20 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         addSubview(picture)
         addSubview(status)
         layoutParts()
-        if statusOnly { refreshStatus() }
+        refreshStatus()
     }
 
-    private var statusOnly: Bool { remote.host.server == .easld }
+    private var relayed: Bool { remote.host.server == .easld }
 
     private var drawingStatus: String { DrawingMachine.status(of: object.props, attached: remote.mirror.drawingMachines) }
+
+    /// An easld tile no attached Mac can stream now: it has no drawing Mac, or presence says that
+    /// Mac isn't attached.
+    private var drawingOffline: Bool {
+        guard relayed else { return false }
+        guard let machine = DrawingMachine(object.props) else { return true }
+        return remote.mirror.drawingMachines.map { !$0.contains(machine.id) } ?? false
+    }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
@@ -213,7 +226,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     /// Subscribe and start the event consumer before any `surface.stream`. A second call while
     /// the link is up does nothing.
     private func startLink() {
-        guard !statusOnly, wantsLive, remote.mirror.availability == .open, window != nil, owned.current() == nil else { return }
+        guard wantsLive, remote.mirror.availability == .open, window != nil, owned.current() == nil else { return }
         let board = remote.mirror.sessionBoardID
         guard !board.isEmpty else {
             setLinkStatus("No canonical board")
@@ -962,6 +975,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             complete(dialog, accept: false)
             return
         }
+        if dialog.kind == "file" {
+            chooseFiles(dialog, in: window)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = dialog.origin.isEmpty ? "This page says" : dialog.origin
         alert.informativeText = dialog.message ?? ""
@@ -1047,9 +1064,73 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
     }
 
-    private func complete(_ dialog: HostDialog, accept: Bool, text: String? = nil, user: String? = nil, password: String? = nil, choice: Int? = nil) {
+    private func chooseFiles(_ dialog: HostDialog, in window: NSWindow) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = dialog.multiple == true
+        let types = (dialog.accept ?? []).compactMap { hint -> UTType? in
+            if hint.hasPrefix(".") { return UTType(filenameExtension: String(hint.dropFirst())) }
+            switch hint {
+            case "image/*": return .image
+            case "audio/*": return .audio
+            case "video/*": return .movie
+            default: return UTType(mimeType: hint)
+            }
+        }
+        if !types.isEmpty { panel.allowedContentTypes = types }
+        panel.allowsOtherFileTypes = true
+        panel.message = "Choose files from this Mac to upload to \(dialog.origin). Up to 8 MiB total."
+        panel.prompt = "Upload"
+        dialogSheets[dialog.id] = (parent: window, sheet: panel)
+        let generation = streamEpoch
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            self.dialogSheets[dialog.id] = nil
+            guard generation == self.streamEpoch else { return }
+            guard response == .OK else { return self.complete(dialog, accept: false) }
+            let urls = DevInput.chosen(in: panel)
+            self.runStreamTask { [weak self] in
+                do {
+                    let files = try await Task.detached(priority: .userInitiated) { try Self.readFiles(urls) }.value
+                    guard let self, generation == self.streamEpoch else { return }
+                    self.complete(dialog, accept: true, files: files)
+                } catch {
+                    guard let self, generation == self.streamEpoch else { return }
+                    self.complete(dialog, accept: false)
+                    self.setNotice("Upload cancelled. \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    nonisolated private static func readFiles(_ urls: [URL]) throws -> [SurfaceFile] {
+        guard !urls.isEmpty, urls.count <= SurfaceFile.maxCount else {
+            throw EaslConnection.Failure("invalid_params", "Choose 1 to 32 files.")
+        }
+        var remaining = SurfaceFile.maxBytes
+        return try urls.map { url in
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentTypeKey, .contentModificationDateKey])
+            guard values.isRegularFile == true else { throw EaslConnection.Failure("invalid_params", "Choose regular files, not folders.") }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var bytes = Data()
+            while let chunk = try handle.read(upToCount: min(65_536, remaining - bytes.count + 1)), !chunk.isEmpty {
+                guard chunk.count <= remaining - bytes.count else {
+                    throw EaslConnection.Failure("invalid_params", "The files exceed the 8 MiB upload limit.")
+                }
+                bytes.append(chunk)
+            }
+            remaining -= bytes.count
+            return try SurfaceFile(name: url.lastPathComponent, type: values.contentType?.preferredMIMEType ?? "application/octet-stream",
+                                   modified: values.contentModificationDate.map { $0.timeIntervalSince1970 * 1000 }, bytes: bytes)
+        }
+    }
+
+    private func complete(_ dialog: HostDialog, accept: Bool, text: String? = nil, user: String? = nil, password: String? = nil, choice: Int? = nil,
+                          files: [SurfaceFile]? = nil) {
         guard dialogs[dialog.id] == false, dialog.stream == streamID, let connection = owned.current() else { return }
-        guard let params = answerFields(dialog, accept: accept, text: text, user: user, password: password, choice: choice) else {
+        guard let params = answerFields(dialog, accept: accept, text: text, user: user, password: password, choice: choice, files: files) else {
             return reopen(dialog)
         }
         let generation = streamEpoch
@@ -1063,13 +1144,15 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 guard generation == self.streamEpoch else { return }
                 self.reopen(dialog)
             } catch {
+                guard generation == self.streamEpoch else { return }
+                if dialog.kind == "file" { self.setNotice("Upload was not completed. Check the page before trying again.") }
                 self.dialogs[dialog.id] = true
             }
         }
     }
 
     /// Extra fields are invalid_params and leave the host dialog open. Cancel sends accept only.
-    private func answerFields(_ dialog: HostDialog, accept: Bool, text: String?, user: String?, password: String?, choice: Int?) -> JSONValue? {
+    private func answerFields(_ dialog: HostDialog, accept: Bool, text: String?, user: String?, password: String?, choice: Int?, files: [SurfaceFile]?) -> JSONValue? {
         var params: [String: JSONValue] = [
             "stream": .string(dialog.stream),
             "dialog": .string(dialog.id),
@@ -1091,6 +1174,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             guard let choice, choice >= 0, choice < count else { return nil }
             params["choice"] = .number(Double(choice))
             return .object(params)
+        case "file":
+            guard let files, !files.isEmpty, dialog.multiple == true || files.count == 1 else { return nil }
+            params["files"] = .array(files.map(\.json))
+            return .object(params)
         default:
             return .object(params)
         }
@@ -1111,7 +1198,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             setNotice(Self.refusedLine(notice.reason))
         case "closed":
             guard notice.stream == streamID else { return }
-            dropStream(reason: Self.closedLine(notice.reason))
+            dropStream(reason: closedLine(notice.reason))
+            // easld ends a relayed stream for these, and the page streams again from that Mac once
+            // it is back, or from the Mac it moved to.
+            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" { scheduleRetry() }
         default:
             setNotice("Host notice (\(notice.kind))")
         }
@@ -1132,7 +1222,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         switch reason {
         case "menu": return "Host blocked a context menu"
         case "select": return "Host blocked a select menu"
-        case "upload": return "File upload was cancelled. It is not sent from this Mac."
+        case "upload": return "The page's file picker could not be relayed."
         case "media": return "Host refused the camera or microphone"
         case "certificate": return "Host refused a client certificate"
         case "app link": return "Host refused an app link"
@@ -1142,8 +1232,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
     }
 
-    private static func closedLine(_ reason: String?) -> String {
+    private func closedLine(_ reason: String?) -> String {
         switch reason {
+        case "drawing machine offline": return DrawingMachine.status(of: object.props, attached: [])
+        case "drawing moved": return "The page moved to another Mac"
         case "tile closed": return "Host closed this tile"
         case "board closed": return "Host closed the board"
         case "window closed": return "Host closed the window"
@@ -1166,31 +1258,42 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     private func refreshStatus() {
-        let lines = [statusOnly ? drawingStatus : linkStatus, noticeText].compactMap { $0 }
+        let lines = [streamID == nil && drawingOffline ? drawingStatus : linkStatus, noticeText].compactMap { $0 }
         status.stringValue = lines.joined(separator: "\n")
         status.isHidden = lines.isEmpty
         status.setAccessibilityLabel(lines.joined(separator: ". "))
-        status.toolTip = statusOnly ? DrawingMachine(object.props).map { "\($0.host): \($0.id)" } : nil
+        status.toolTip = relayed ? DrawingMachine(object.props).map { "\($0.host): \($0.id)" } : nil
     }
 
+    /// The board's attached drawing Macs changed: the tile says where its page runs again, and a
+    /// relayed tile that isn't streaming opens now that its drawing Mac is attached.
     func drawingMachinesChanged() {
-        if statusOnly { refreshStatus() }
+        refreshStatus()
+        guard relayed, streamID == nil, !opening, remote.mirror.drawingMachines != nil, !drawingOffline,
+              owned.current()?.state == .online else { return }
+        retryDelay = 1
+        openStream()
     }
 
+    /// A relayed page that moved to another Mac streams from there: the old stream and its link
+    /// end, dropping input not sent yet, and a new link opens. A new name for the same Mac moves
+    /// nothing.
     func update(_ object: CanvasObject) {
         let idChanged = object.id != self.object.id
+        let moved = relayed && DrawingMachine(object.props)?.id != DrawingMachine(self.object.props)?.id
         let zoomChanged = object.zoom != self.object.zoom
         self.object = object
         if !chrome.isEditing { chrome.setAddress(object.props["url"]?.string ?? "") }
         if zoomChanged { layoutParts() }
-        if statusOnly { refreshStatus() }
-        guard idChanged, wantsLive else { return }
+        refreshStatus()
+        guard idChanged || moved, wantsLive else { return }
+        retryDelay = 1
         endLink()
         startLink()
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let image else { return .placeholder(request, statusOnly ? drawingStatus : "not streamed from \(remote.host.name) yet") }
+        guard let image else { return .placeholder(request, relayed ? drawingStatus : "not streamed from \(remote.host.name) yet") }
         let pageSize = self.pageSize
         let drawn = request.image { bounds in
             NSColor.controlBackgroundColor.setFill()
@@ -1211,7 +1314,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
-        if image != nil || statusOnly { ready() } else { readyWaiters.append(ready) }
+        if image != nil || drawingOffline { ready() } else { readyWaiters.append(ready) }
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }
@@ -1320,6 +1423,8 @@ private struct HostDialog {
     var text: String?
     var choices: [String]?
     var selected: Int?
+    var multiple: Bool?
+    var accept: [String]?
 }
 
 private struct HostNotice {
@@ -1362,7 +1467,8 @@ private enum SurfaceWire {
               let kind = data["kind"]?.string, let origin = data["origin"]?.string else { return nil }
         let choices = data["choices"]?.array?.compactMap(\.string)
         return HostDialog(stream: stream, id: id, kind: kind, origin: origin, message: data["message"]?.string,
-                          text: data["text"]?.string, choices: choices, selected: integer(data["selected"]))
+                          text: data["text"]?.string, choices: choices, selected: integer(data["selected"]),
+                          multiple: data["multiple"]?.bool, accept: data["accept"]?.array?.compactMap(\.string))
     }
 
     static func notice(_ data: JSONValue) -> HostNotice? {

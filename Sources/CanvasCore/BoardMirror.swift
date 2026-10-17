@@ -98,11 +98,14 @@ public final class BoardMirror: BoardHost {
     /// This viewer as the board's easld's client (docs/design/next.md "The client protocol");
     /// nil until `serve`, and on a Mac host, which answers those calls itself.
     public private(set) var attachment: Attachment?
-    /// The machine identities of the Macs attached to the board that run its browser tiles' pages
-    /// (`client.list`, then each `client.changed`): attached as easld's clients serving the board
-    /// and `browser.call`. Nil until heard after `serve`, and while the link is down; never stored.
-    public private(set) var drawingMachines: Set<String>?
-    /// `drawingMachines` changed: the tiles that say where their page runs say it again.
+    /// The Macs attached to the board that run its browser tiles' pages (`client.list`, then each
+    /// `client.changed`): attached as easld's clients serving the board and `browser.call`, one per
+    /// machine identity, named as it attached, sorted by name. What a tile can be moved to draw on.
+    /// Nil until heard after `serve`, and while the link is down; never stored.
+    public private(set) var drawingMachineChoices: [DrawingMachine]?
+    /// The machine identities of `drawingMachineChoices`.
+    public var drawingMachines: Set<String>? { drawingMachineChoices.map { Set($0.map(\.id)) } }
+    /// `drawingMachineChoices` changed: the tiles that say where their page runs say it again.
     public var onDrawingMachines: (() -> Void)?
     private var presenceHeard = 0
 
@@ -337,13 +340,18 @@ public final class BoardMirror: BoardHost {
         }
     }
 
+    /// The board's incarnation while its window answers easld's calls for it; nil once the board
+    /// closed or the window let it go. A browser stream opened for one of those calls lasts only
+    /// while this stays the same, so a board closed and opened again on the host ends it.
+    public var serving: Int? { !ended && availability == .open && calls != nil ? generation : nil }
+
     private func answer(_ call: EaslConnection.Call) async -> Result<JSONValue, EaslConnection.Failure> {
         guard !ended, availability == .open, let calls else {
             return .failure(EaslConnection.Failure("unavailable", "board \(boardID) is closed"))
         }
         let generation = generation
         do {
-            if call.method == "browser.call" || (call.method == "object.reload" && call.params["_diagram"] == nil) {
+            if call.method == "browser.call" || call.method == "surface.stream" || (call.method == "object.reload" && call.params["_diagram"] == nil) {
                 try await admit(through: call.eventsThrough)
             }
             try requireCurrent(generation)
@@ -460,18 +468,21 @@ public final class BoardMirror: BoardHost {
         setDrawingMachines(drawingMachines(in: event.data["clients"]))
     }
 
-    private func drawingMachines(in clients: JSONValue?) -> Set<String> {
+    private func drawingMachines(in clients: JSONValue?) -> [DrawingMachine] {
         let boards: Set<BoardID> = [boardID, sessionBoardID]
-        return Set((clients?.array ?? []).compactMap { entry -> String? in
+        var seen: Set<String> = []
+        return (clients?.array ?? []).compactMap { entry -> DrawingMachine? in
             guard let identity = entry["identity"]?.string, entry["serves"]?.array?.contains(.string("browser.call")) == true,
                   entry["boards"]?.array?.contains(where: { $0.string.map { boards.contains($0) } == true }) == true else { return nil }
-            return identity
-        })
+            return DrawingMachine(id: identity, host: entry["host"]?.string ?? identity)
+        }
+        .sorted { ($0.host, $0.id) < ($1.host, $1.id) }
+        .filter { seen.insert($0.id).inserted }
     }
 
-    private func setDrawingMachines(_ machines: Set<String>?) {
-        guard machines != drawingMachines else { return }
-        drawingMachines = machines
+    private func setDrawingMachines(_ machines: [DrawingMachine]?) {
+        guard machines != drawingMachineChoices else { return }
+        drawingMachineChoices = machines
         onDrawingMachines?()
     }
 

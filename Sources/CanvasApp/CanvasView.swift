@@ -430,7 +430,38 @@ final class CanvasView: NSScrollView {
     }
 
     func drawingMachinesChanged() {
-        for tile in tiles.values { (tile.content as? RemoteBrowserTile)?.drawingMachinesChanged() }
+        for tile in tiles.values {
+            tile.setDrawingMachines(remote?.mirror.drawingMachineChoices, canSwitch: remote?.host.server == .easld)
+            (tile.content as? RemoteBrowserTile)?.drawingMachinesChanged()
+        }
+    }
+
+    private func moveDrawing(of id: ObjectID, to machine: DrawingMachine) {
+        guard let object = board.objects[id], object.type == .browser, let window,
+              remote?.host.server == .easld, DrawingMachine(object.props)?.id != machine.id else { return }
+        let previous = DrawingMachine(object.props)
+        let label = machine.host.isEmpty ? machine.id : machine.host
+        let alert = NSAlert()
+        alert.messageText = "Draw this page on \(label)?"
+        alert.informativeText = "The page reloads at its current URL in \(label)'s own browser profile. Cookies, logins, and unsaved page state are not copied."
+        alert.addButton(withTitle: "Move")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let current = self.board.objects[id], DrawingMachine(current.props)?.id == previous?.id else {
+                self.showNotice("The drawing machine changed while this choice was open.")
+                return
+            }
+            guard self.remote?.mirror.drawingMachineChoices?.contains(where: { $0.id == machine.id }) == true else {
+                self.showNotice("\(label) is no longer attached to this board.")
+                return
+            }
+            do {
+                _ = try self.board.update(id, props: .object(["drawingMachine": machine.json]))
+            } catch {
+                self.showNotice(error.localizedDescription)
+            }
+        }
     }
 
     private func remount(_ object: CanvasObject) {
@@ -528,6 +559,8 @@ final class CanvasView: NSScrollView {
             guard let self, let object = self.board.objects[id] else { return }
             self.setZoom(zoom, of: [object])
         }
+        tile.setDrawingMachines(remote?.mirror.drawingMachineChoices, canSwitch: remote?.host.server == .easld)
+        tile.onDrawingMachine = { [weak self] machine in self?.moveDrawing(of: id, to: machine) }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
         tile.onMoveBegan = { [weak self] event in self?.beginMove(event, pressing: id) }

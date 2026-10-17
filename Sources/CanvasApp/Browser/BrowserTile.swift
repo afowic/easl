@@ -320,6 +320,10 @@ final class BrowserTile: NSView, TileContent {
             guard let self, message.frameInfo.isMainFrame else { return }
             self.surface?.selectRequested(message.body, origin: Self.host(of: message.frameInfo.securityOrigin))
         }, contentWorld: BrowserScripts.world, name: BrowserScripts.selectMessageName)
+        controller.add(PageMessages { [weak self] message in
+            guard let self, message.frameInfo.isMainFrame, let webView = message.webView else { return }
+            self.surface?.uploadRequested(message.body, in: webView, origin: Self.host(of: message.frameInfo.securityOrigin))
+        }, contentWorld: BrowserScripts.world, name: BrowserScripts.fileMessageName)
         // The page's console, errors and requests from its first line on (`PageLog`).
         controller.addUserScript(WKUserScript(source: PageCapture.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
         controller.add(PageMessages { [weak self] message in
