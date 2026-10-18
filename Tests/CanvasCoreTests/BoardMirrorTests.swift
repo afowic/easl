@@ -2062,8 +2062,8 @@ final class BoardMirrorTests {
         let fails = transition.hasSuffix("read-failure")
         try serveEasld(easld, browser: { request, connection in
             let reply: JSONValue = fails
-                ? .object(["id": request["id"] ?? .null, "ok": false, "error": .object(["code": "unavailable", "message": "read failed"])])
-                : .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["url": "https://page.example/live"])])
+                ? .object(["id": request["id"] ?? .null, "ok": .bool(false), "error": .object(["code": "unavailable", "message": "read failed"])])
+                : .object(["id": request["id"] ?? .null, "ok": .bool(true), "result": .object(["url": "https://page.example/live"])])
             pending.withLock { $0 = { connection.send(reply) } }
             return nil
         })
