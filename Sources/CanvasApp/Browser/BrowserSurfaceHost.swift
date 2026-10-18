@@ -436,10 +436,16 @@ final class BrowserSurface {
     /// callback leaves that class pending; a later key cannot credit an unconfirmed mouse.
     private func native(for stream: SurfaceStream, mouse: Bool, key: Bool,
                         _ body: @escaping @MainActor (BrowserSurface, BrowserTile, WKWebView) -> Void) async -> Bool {
-        guard let expectedPage = tile?.webView, tile?.surface === self, !stream.closed,
-              await Self.setSurfaceRelay(true, in: expectedPage) else {
+        guard let expectedPage = tile?.webView, tile?.surface === self, !stream.closed else {
             end(stream, "page input unavailable")
             return false
+        }
+        if !hasBlockingDialog {
+            let ready = await Self.setSurfaceRelay(true, in: expectedPage)
+            guard ready || hasBlockingDialog else {
+                end(stream, "page input unavailable")
+                return false
+            }
         }
         let page = try? await SurfaceEventQueue.run { [weak self] () -> WKWebView? in
             guard let self, !stream.closed, let tile = self.tile, tile.surface === self,
@@ -693,6 +699,16 @@ final class BrowserSurface {
             case .select: break
             case .file(let token, _, let webView):
                 Task { _ = await BrowserSurface.install(nil, token: token, in: webView) }
+            }
+        }
+    }
+
+    // A relayed JavaScript dialog blocks helper evaluation until its viewer answers.
+    private var hasBlockingDialog: Bool {
+        dialogs.values.contains {
+            switch $0.dialog {
+            case .alert, .confirm, .prompt: true
+            default: false
             }
         }
     }
