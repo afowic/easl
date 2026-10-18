@@ -271,7 +271,7 @@ protocol TileContent: NSView {
     func setLive(_ live: Bool)                                  // false: detach heavy resources, show the card
     var liveZoom: CGFloat { get }                                // below this zoom the tile is its card (default 0.3; terminals 0.15)
     func render(_ request: TileRenderRequest) async -> TileRender   // offscreen image for view.render
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)  // default: render at card scale
+    func cardSnapshot() async -> NSImage?                       // default: render at card scale
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void)  // just made live: call once the live view is drawn (default: at once)
     func showSnapshot(_ show: Bool)                              // view.snapshot: cover Metal/WebKit content
     func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
@@ -282,6 +282,8 @@ protocol TileContent: NSView {
     func update(_ object: CanvasObject)                          // a new revision of the backing object
 }
 ```
+
+`TileFrameView` owns each card task. Replacing a request, changing liveness or host-board availability, or detaching the frame cancels that task and invalidates its result. Deferred cards check cancellation before rendering. Closed Note and Changes renders use their retained models without file or Git reads. An availability generation rejects results that cross closure, including a close followed by a reopen, before they can replace retained models.
 
 `render` draws the content offscreen for `view.render`, independent of liveness, window, Space, and viewport: from the tile's model (or an AppKit view that draws itself anywhere, like a code tile's header, drawn offscreen), never by capturing what is on screen. `TileRenderRequest` = `size` (the body in the content's points: the frame below the title bar, ÷ the tile's zoom), `scale` (pixels per point, the render's × the tile's zoom), `full` (the whole content, not the frame's window), `appearance` (resolve colors under it). `TileRender` = `image` (points, top-left at the body; `max(size, contentSize)` when full), `contentSize` (the content's extent at that width; overflow = content − size; a code tile's is its range, `CodeDocument.content`, which is what `size: "fit"` sizes), `state` (`rendered`, or `placeholder`/`failed` with a `reason`; never `rendered` with a blank image). The renderer cancels a render at the request's deadline (tiles should return what they have when cancelled) and reports a tile that still hasn't answered a second later as a placeholder. Tile chrome (title bar at 1×, with the content zoom's % when not 100%, and border) is drawn around the image by the renderer, the image at the tile's zoom inside the frame; app chrome never is.
 

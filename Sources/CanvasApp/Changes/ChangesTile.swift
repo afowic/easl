@@ -71,6 +71,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private var heldRepository: String?
     /// A Stage or Discard is being applied; others wait for it (they'd be built from old rows).
     private var acting = false
+    private var actionTask: Task<Void, Never>?
+    private var closureGeneration = 0
     /// The listing after an action: its current hunk scrolls into view.
     private var revealAfterLoad = false
 
@@ -122,6 +124,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     required init?(coder: NSCoder) { fatalError("unused") }
 
     deinit {
+        actionTask?.cancel()
         if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
     }
 
@@ -1039,6 +1042,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         setScroll(painter.rows.tops[row])
     }
 
+    private func acceptsAction(_ epoch: Int) -> Bool {
+        !Task.isCancelled && !hostBoardClosed && !board.isClosed && closureGeneration == epoch
+    }
+
     /// Stage, unstage, or discard one hunk (nil: the whole file), or some of its lines: the patch
     /// is built, applied, and recorded as one undo step; a refusal shows in the header and
     /// changes nothing. Discard only ever puts back work not committed yet: a committed hunk is
@@ -1052,9 +1059,14 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let target = hunk.map { changed.hunks[$0] }
         guard action.applies(to: changed, hunk: hunk) else { return show(message: action.refusal) }
         acting = true
+        let epoch = closureGeneration
         let tile = object.id, board = board, includesCommits = set.includesCommits
-        Task { [weak self] in
-            defer { self?.acting = false }
+        actionTask = Task { [weak self] in
+            defer {
+                self?.acting = false
+                self?.actionTask = nil
+            }
+            guard self?.acceptsAction(epoch) == true else { return }
             do {
                 let hunks = target.map { [$0] }
                 let patch: ReviewPatch
@@ -1065,7 +1077,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                     patch = includesCommits ? try await ReviewPatch.discardUncommitted(hunks, of: changed, in: repository, lines: lines)
                         : try ReviewPatch.revert(hunks ?? changed.hunks, of: changed, in: repository, lines: lines)
                 }
+                guard self?.acceptsAction(epoch) == true else { return }
                 try await ReviewGit.shared.apply(patch)
+                guard self?.acceptsAction(epoch) == true else { return }
                 let entry = ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch)
                 try board.recordReview(tile: tile, entry: entry, patch: patch)
                 // Files changing shows nowhere on the board: say what went and how to get it back.
@@ -1078,8 +1092,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                     self.refreshPainter()
                 }
             } catch let failure as ChangesFailure {
+                guard self?.acceptsAction(epoch) == true else { return }
                 self?.show(message: "\(action.rawValue) refused: \(failure.message)")
             } catch {
+                guard self?.acceptsAction(epoch) == true else { return }
                 self?.show(message: "\(action.rawValue) failed: \(error)")
             }
         }
@@ -1092,9 +1108,14 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         guard action.applies(to: changed, hunk: hunk) else { return show(message: action.refusal) }
         guard let sides = listing.sides[changed.path] else { return show(message: "\(action.rawValue) refused: too large to show") }
         acting = true
+        let epoch = closureGeneration
         let tile = object.id, board = board, includesCommits = set.includesCommits, boardRoot = board.root.path
-        Task { [weak self] in
-            defer { self?.acting = false }
+        actionTask = Task { [weak self] in
+            defer {
+                self?.acting = false
+                self?.actionTask = nil
+            }
+            guard self?.acceptsAction(epoch) == true else { return }
             do {
                 let hunks = target.map { [$0] }
                 let patch: ReviewPatch
@@ -1105,7 +1126,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                     patch = includesCommits ? try await ReviewPatch.discardUncommitted(hunks, of: changed, sides: sides, onHost: checkout, lines: lines)
                         : try ReviewPatch.revert(hunks ?? changed.hunks, of: changed, onHost: checkout, lines: lines)
                 }
+                guard self?.acceptsAction(epoch) == true else { return }
                 try await git.apply(patch, to: changed, sides: sides, boardRoot: boardRoot)
+                guard self?.acceptsAction(epoch) == true else { return }
                 let entry = ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch)
                 try board.recordReview(tile: tile, entry: entry, patch: patch)
                 if action == .revert { (self?.enclosingScrollView as? CanvasView)?.showNotice(ReviewPatch.discardNotice(of: entry, host: git.hostName)) }
@@ -1118,8 +1141,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 }
                 self.load()
             } catch let failure as ChangesFailure {
+                guard self?.acceptsAction(epoch) == true else { return }
                 self?.show(message: "\(action.rawValue) refused: \(failure.message)")
             } catch {
+                guard self?.acceptsAction(epoch) == true else { return }
                 self?.show(message: "\(action.rawValue) failed: \(error)")
             }
         }
@@ -1130,7 +1155,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     func setHostBoardClosed(_ closed: Bool) {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
+        closureGeneration += 1
         if closed {
+            actionTask?.cancel()
             setLive(false)
             dropDiscardQuestion()
             needsDisplay = true
@@ -1249,8 +1276,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let generation = closureGeneration
         var loaded = set
-        if !listingIsCurrent {
+        if !hostBoardClosed, !board.isClosed, !listingIsCurrent {
             let spec = spec
             let fresh: ChangeSet
             var hostLoad: HostChangesLoad?
@@ -1266,6 +1295,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 fresh = await ChangeSet.load(root: board.root, spec: spec)
             }
             guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+            guard generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
+                return .placeholder(request, "board availability changed while rendering")
+            }
             guard spec == self.spec else { return .placeholder(request, "the tile changed while loading") }
             if let ref = spec.ref, let sha = hostLoad?.set.refSha { hostRefShas[ref] = sha }
             // A live tile's own load installs (and grows a fitted frame); one that isn't live

@@ -475,7 +475,7 @@ final class TileFrameView: NSView {
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
-        cardRequest += 1
+        invalidateCard()
         if live {
             showContent(true)
             revealWhenReady()
@@ -488,7 +488,7 @@ final class TileFrameView: NSView {
     func setHostBoardClosed(_ closed: Bool) {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
-        cardRequest += 1
+        invalidateCard()
         if closed {
             if let terminal = content as? TerminalTile {
                 terminal.setHostBoardClosed(true)
@@ -557,7 +557,7 @@ final class TileFrameView: NSView {
     func startAsCard() {
         guard isLive else { return }
         isLive = false
-        cardRequest += 1
+        invalidateCard()
         cardTitle.isHidden = false
         showContent(false)
         startCardDue = true
@@ -577,7 +577,10 @@ final class TileFrameView: NSView {
                 }
             }
         }
-        guard let window else { return }
+        guard let window else {
+            invalidateCard()
+            return
+        }
         if window.occlusionState.contains(.visible) { syncTitle() }
         guard startCardDue else { return }
         startCardDue = false
@@ -585,6 +588,7 @@ final class TileFrameView: NSView {
     }
 
     private func requestCard() {
+        invalidateCard()
         syncTitle()
         if hostBoardClosed {
             if contentLive {
@@ -605,8 +609,10 @@ final class TileFrameView: NSView {
         let started = Metrics.now()
         DevPerf.time("card.call.\(type(of: content))") {
             Metrics.shared.span("card", "card.call.\(kind)", detail: objectID) {
-                content.cardSnapshot { [weak self] image in
-                    guard let self, !self.isLive, self.cardRequest == request else { return }
+                cardTask = Task { [weak self, content] in
+                    let image = await content.cardSnapshot()
+                    guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return nil }
+                    self.cardTask = nil
                     DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
                     Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
                     DevPerf.time("card.install.\(type(of: self.content))") {
@@ -615,6 +621,7 @@ final class TileFrameView: NSView {
                         self.cardTitle.isHidden = self.card.image != nil
                         self.showContent(false)
                     }
+                    return image
                 }
             }
         }
@@ -634,11 +641,18 @@ final class TileFrameView: NSView {
     func refreshCard() async {
         guard !hostBoardClosed else { return }
         guard !isLive, !contentLive else { return }
+        invalidateCard()
         let request = cardRequest
-        let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
-            content.cardSnapshot { continuation.resume(returning: $0) }
+        let task = Task { [content] in await content.cardSnapshot() }
+        cardTask = task
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
         }
-        guard !isLive, cardRequest == request, let image else { return }
+        guard cardRequest == request else { return }
+        cardTask = nil
+        guard !Task.isCancelled, !task.isCancelled, !hostBoardClosed, !isLive, let image else { return }
         card.image = cardImage(image)
         card.isHidden = false
         cardTitle.isHidden = true
@@ -651,6 +665,18 @@ final class TileFrameView: NSView {
     }
 
     private var cardRequest = 0
+    private var cardTask: Task<NSImage?, Never>?
+
+    deinit {
+        cardTask?.cancel()
+    }
+
+    private func invalidateCard() {
+        cardRequest += 1
+        cardTask?.cancel()
+        cardTask = nil
+    }
+
     private var contentLive = true
     /// Whether this tile's live content counts in `app.metrics` (`live.<Kind>`): while it is on a
     /// board.
@@ -670,6 +696,7 @@ final class TileFrameView: NSView {
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         let onBoard = superview != nil
+        if !onBoard { invalidateCard() }
         guard onBoard != countedLive else { return }
         countedLive = onBoard
         if contentLive { Metrics.shared.adjust("live.\(type(of: content))", by: onBoard ? 1 : -1) }

@@ -325,16 +325,16 @@ final class HtmlTile: NSView, TileContent {
     }
 
     /// Card image: the live page's last capture, else an offscreen render.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
-        if let lastSnapshot { return deliver(lastSnapshot) }
+    func cardSnapshot() async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
+        if let lastSnapshot { return lastSnapshot }
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
                                         appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
-        Task { @MainActor in
-            // Cards requested together (a batch of new tiles) render one per wake of the main thread.
-            await MainTurns.next()
-            let render = await self.render(request)
-            deliver(render.state == .rendered ? render.image : nil)
-        }
+        // Cards requested together (a batch of new tiles) render one per wake of the main thread.
+        await MainTurns.next()
+        guard !Task.isCancelled else { return nil }
+        let render = await self.render(request)
+        return !Task.isCancelled && render.state == .rendered ? render.image : nil
     }
 
     // MARK: Offscreen render

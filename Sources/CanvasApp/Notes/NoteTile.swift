@@ -44,6 +44,8 @@ final class NoteTile: NSView, TileContent {
     private var resolveGeneration = 0
     private var pendingResolve: DispatchWorkItem?
     private var live = true
+    private var hostBoardClosed = false
+    private var closureGeneration = 0
 
     private var session: NoteEditSession?
     var isEditing: Bool { session != nil }
@@ -110,6 +112,9 @@ final class NoteTile: NSView, TileContent {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
+        closureGeneration += 1
         if closed {
             suspendWork()
         }
@@ -213,7 +218,7 @@ final class NoteTile: NSView, TileContent {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live, !display.isSelectable, window != nil else { return }
+        guard live, !hostBoardClosed, !board.isClosed, window != nil else { return }
         if board.isRemote {
             resolveHost()
             return
@@ -267,6 +272,7 @@ final class NoteTile: NSView, TileContent {
         let generation = resolveGeneration
         let captured = captured
         resolveTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             let read = await files.loadNote(request, captured: captured)
             let pictures = await NoteImages.decode(read.images)
             guard !Task.isCancelled, let self, self.resolveGeneration == generation else { return }
@@ -312,17 +318,21 @@ final class NoteTile: NSView, TileContent {
     /// note that isn't live watches nothing, so a render or `object.get` of it must not trust
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
+        guard !Task.isCancelled, !hostBoardClosed, !board.isClosed else { return excerpts }
+        let generation = closureGeneration
         if board.isRemote {
             guard !fences.isEmpty, let files else { return [:] }
             let read = await files.loadNote(hostRequest(), captured: captured)
+            guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
             return read.observation.isUnavailable && !excerpts.isEmpty ? excerpts : read.excerpts
         }
         let jobs = fences
         let reading = await board.linkSource(of: object)
+        guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
         self.reading = reading
         let results = await NoteSource.excerpts(for: reading.fences(jobs), root: reading.root, captured: captured)
         // The markdown changed meanwhile: its own resolution is on its way.
-        guard jobs == fences, !Task.isCancelled else { return results }
+        guard jobs == fences, !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else { return excerpts }
         capture(results)
         if results != excerpts {
             excerpts = results
@@ -393,6 +403,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
     private func suspendWork() {
+        resolveGeneration += 1
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
@@ -729,9 +740,14 @@ final class NoteTile: NSView, TileContent {
     /// the note is live and caught up (watching its files, nothing pending): an offscreen note's
     /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let generation = closureGeneration
         let resolved: [String: NoteExcerpt]
         let pictures: [String: NSImage]
-        if board.isRemote {
+        if hostBoardClosed || board.isClosed {
+            resolved = excerpts
+            pictures = images
+        } else if board.isRemote {
             let host = hostRequest()
             let current = live && window != nil && hostWatch != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
             if host.fences.isEmpty && host.images.isEmpty {
@@ -742,13 +758,22 @@ final class NoteTile: NSView, TileContent {
                 pictures = images
             } else {
                 let read = await files?.loadNote(host, captured: captured)
+                guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
+                    return .placeholder(request, "board availability changed while rendering")
+                }
                 resolved = read?.observation.isUnavailable == true ? excerpts : read?.excerpts ?? [:]
                 pictures = read?.observation.isUnavailable == true ? images : await NoteImages.decode(read?.images ?? [:])
             }
         } else {
             let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
             resolved = current ? excerpts : await resolvedExcerpts()
+            guard !Task.isCancelled, generation == closureGeneration, !hostBoardClosed, !board.isClosed else {
+                return .placeholder(request, "board availability changed while rendering")
+            }
             pictures = await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
+        }
+        guard !Task.isCancelled, generation == closureGeneration else {
+            return .placeholder(request, "board availability changed while rendering")
         }
         let inset = NSSize(width: 8, height: 10)
         let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
