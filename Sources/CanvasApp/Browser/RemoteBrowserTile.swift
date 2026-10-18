@@ -1206,9 +1206,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         case "closed":
             guard notice.stream == streamID else { return }
             dropStream(reason: closedLine(notice.reason))
-            // easld ends a relayed stream for these, and the page streams again from that Mac once
-            // it is back, or from the Mac it moved to.
-            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" { scheduleRetry() }
+            // Reopen transient failures without replaying accepted input.
+            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" || notice.reason == "page input unavailable" { scheduleRetry() }
         default:
             setNotice("Host notice (\(notice.kind))")
         }
