@@ -17,8 +17,12 @@ public enum SurfaceVideoRefresh {
         return next
     }
 
+    public static func deadline(lastChange: TimeInterval, lastInput: TimeInterval, lastVideoAck: TimeInterval) -> TimeInterval {
+        max(lastChange, lastInput, lastVideoAck) + 0.35
+    }
+
     public static func isDue(at now: TimeInterval, lastChange: TimeInterval, lastInput: TimeInterval, lastVideoAck: TimeInterval) -> Bool {
-        now - max(lastChange, lastInput, lastVideoAck) >= 0.35
+        now >= deadline(lastChange: lastChange, lastInput: lastInput, lastVideoAck: lastVideoAck)
     }
 }
 

@@ -7,6 +7,7 @@ struct SurfaceVideoTests {
     @Test func sharpRefreshWaitsForDecodedAcknowledgementAndNewActivity() {
         #expect(!SurfaceVideoRefresh.isDue(at: 1, lastChange: 0, lastInput: 0, lastVideoAck: 1))
         #expect(!SurfaceVideoRefresh.isDue(at: 1.34, lastChange: 0, lastInput: 0, lastVideoAck: 1))
+        #expect(SurfaceVideoRefresh.isDue(at: 1.35, lastChange: 0, lastInput: 0, lastVideoAck: 1))
         #expect(SurfaceVideoRefresh.isDue(at: 1.36, lastChange: 0, lastInput: 0, lastVideoAck: 1))
         #expect(!SurfaceVideoRefresh.isDue(at: 1.4, lastChange: 0, lastInput: 1.2, lastVideoAck: 1))
         #expect(!SurfaceVideoRefresh.isDue(at: 1.6, lastChange: 1.4, lastInput: 1.2, lastVideoAck: 1))

@@ -283,6 +283,7 @@ final class BrowserSurface {
 
     /// Captures while any stream may have its next frame, one capture at a time.
     func pump() {
+        wake()
         guard !capturing, streams.contains(where: { $0.next != nil }) else { return }
         capturing = true
         Task {
@@ -298,11 +299,22 @@ final class BrowserSurface {
         wake()
     }
 
+    private func captureWait(at now: TimeInterval) -> TimeInterval {
+        var next = lastCapture + interval
+        let lastInput = streams.lazy.map(\.lastInput).max() ?? 0
+        for stream in streams where stream.next != nil && stream.needsSharpRefresh {
+            let sharp = SurfaceVideoRefresh.deadline(lastChange: lastPixelChange, lastInput: lastInput,
+                lastVideoAck: stream.lastVideoAck)
+            next = min(next, max(lastCapture + Self.frameInterval, sharp))
+        }
+        return next - now
+    }
+
     private func capture() async {
-        var wait = lastCapture + interval - ProcessInfo.processInfo.systemUptime
+        var wait = captureWait(at: ProcessInfo.processInfo.systemUptime)
         while wait > 0 {
             await pause(wait)
-            wait = lastCapture + interval - ProcessInfo.processInfo.systemUptime
+            wait = captureWait(at: ProcessInfo.processInfo.systemUptime)
         }
         guard let tile, streams.contains(where: { $0.next != nil }) else { return }
         lastCapture = ProcessInfo.processInfo.systemUptime

@@ -77,6 +77,8 @@ final class SurfaceStream {
     /// Input accepted that hasn't reached the page yet.
     var pending: Bool { queued > 0 }
 
+    var needsSharpRefresh: Bool { format == .h264 && lastSent?.format == .h264 }
+
     /// The outstanding frame acknowledged grants exactly one more; an older ack changes nothing.
     func ack(_ frame: Int) throws {
         switch credit {
