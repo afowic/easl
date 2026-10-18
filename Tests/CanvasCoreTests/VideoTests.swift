@@ -230,7 +230,7 @@ struct VideoMetadataTests {
     }
 }
 
-private enum VideoHeader {
+enum VideoHeader {
     static func word(_ value: UInt32) -> Data {
         Data([UInt8(truncatingIfNeeded: value >> 24), UInt8(truncatingIfNeeded: value >> 16),
               UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)])
