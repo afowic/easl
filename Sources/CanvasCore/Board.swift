@@ -190,7 +190,7 @@ public final class Board {
     /// The `archiveAfter` a new question that names none gets (`questionToCreate`): its host's
     /// setting, given by the registry that opened it (`BoardRegistry.open`); in memory, never saved.
     var defaultQuestionArchiveAfter = QuestionSpec.defaultArchiveAfter
-    var endingSessionCounts: [ObjectID: Int] = [:]
+    var endingSessions: Set<ObjectID> = []
     public private(set) var isClosed = false
 
     func deactivate() {

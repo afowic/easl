@@ -41,17 +41,16 @@ public struct BoardCloseResult: Sendable {
 }
 
 extension Board {
-    /// A window opened during shutdown must not start the session again. Counts cover overlapping closes.
+    /// A window opened during shutdown must not start the session again.
     public func beginEndingSession(_ id: ObjectID) {
-        endingSessionCounts[id, default: 0] += 1
+        endingSessions.insert(id)
     }
 
     public func endEndingSession(_ id: ObjectID) {
-        guard let count = endingSessionCounts[id] else { return }
-        if count == 1 { endingSessionCounts[id] = nil } else { endingSessionCounts[id] = count - 1 }
+        endingSessions.remove(id)
     }
 
     public func isEndingSession(_ id: ObjectID) -> Bool {
-        endingSessionCounts[id] != nil
+        endingSessions.contains(id)
     }
 }
