@@ -36,17 +36,14 @@ final class TerminalTile: NSView, TileContent {
     private let references: HostReferences?
     private var referenceTask: Task<Void, Never>?
     private var referenceGeneration = UUID()
-    private var endingRequested = false
-    var endingSession: Bool {
-        get { endingRequested || board.isEndingSession(objectID) }
-        set {
-            endingRequested = newValue
-            if newValue {
-                terminal.cancelImageInput()
-            } else if !discarded, !endingSession, terminal.controller == nil {
-                terminal.controller = TerminalConfig.shared.controller
-                host?.add(self)
-            }
+    var endingSession: Bool { board.isEndingSession(objectID) }
+
+    func sessionShutdownChanged() {
+        if endingSession {
+            terminal.cancelImageInput()
+        } else if !discarded, !board.isClosed, board.objects[objectID] != nil, terminal.controller == nil {
+            terminal.controller = TerminalConfig.shared.controller
+            host?.add(self)
         }
     }
 
