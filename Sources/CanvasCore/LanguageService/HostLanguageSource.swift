@@ -83,7 +83,7 @@ final class HostLanguageSource: LanguageSource {
     static let launcher = #"""
     for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
       if [ -n "$b" ] && [ -x "$b" ]; then
-        exec "$b" -e '
+        exec "$b" --no-env-file -e '
     const cp = require("node:child_process");
     const [binary, directory, searchPath, ...args] = process.argv.slice(1);
     const child = cp.spawn(binary, args, {

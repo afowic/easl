@@ -152,6 +152,36 @@ class HostLSPLifetimeTests(unittest.TestCase):
                 process.stdout.close()
                 process.stderr.close()
 
+    def test_launcher_does_not_load_environment_files(self):
+        with tempfile.TemporaryDirectory(prefix="host-lsp-") as directory:
+            Path(directory, ".env").write_text("EASL_LSP_UNEXPECTED_ENV=from-unrelated-dotenv\n")
+            environment = dict(os.environ)
+            environment.pop("EASL_LSP_UNEXPECTED_ENV", None)
+            program = "import os,sys; sys.stdin.buffer.readline(); print(os.environ.get('EASL_LSP_UNEXPECTED_ENV', 'unset'), flush=True); sys.stdin.buffer.read()"
+            process = subprocess.Popen(["/bin/sh", "-c", host_launcher(), "easl", sys.executable, directory, "", "-c", program],
+                                       cwd=directory, env=environment, stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            pid = None
+            try:
+                pid = read_header(process.stdout)["params"]["pid"]
+                process.stdin.write(b"inspect\n")
+                process.stdin.flush()
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(5), "the language server did not answer")
+                    self.assertEqual(os.read(process.stdout.fileno(), 4096), b"unset\n")
+            finally:
+                process.stdin.close()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if pid is not None and process_exists(pid):
+                        os.kill(pid, signal.SIGKILL)
+                    process.kill()
+                    process.wait(timeout=5)
+                process.stdout.close()
+                process.stderr.close()
+
 
 if __name__ == "__main__":
     unittest.main()
