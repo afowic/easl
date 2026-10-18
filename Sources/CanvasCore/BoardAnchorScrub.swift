@@ -239,10 +239,12 @@ extension Board {
     func settleAnchors(_ checked: [ObjectID: [String: JSONValue]]) {
         let held = heldAnchors
         heldAnchors = [:]
-        history.rewriteObjects { object in
+        func restore(_ object: CanvasObject) -> CanvasObject {
             guard let hold = held[object.id], let carriers = checked[object.id] else { return object }
             return BoardAnchorScrub.restoring(object, held: hold, carriers: carriers)
         }
+        history.rewriteObjects(restore)
+        viewerHistories.rewriteObjects(restore)
         for (id, carriers) in checked.sorted(by: { $0.key < $1.key }) {
             guard let live = objects[id], let published = held[id]?.published, BoardAnchorScrub.carriers(of: live.props) == published else { continue }
             let patch = BoardAnchorScrub.carrierKeys.map { ($0, carriers[$0] ?? .null) }

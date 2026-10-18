@@ -211,20 +211,21 @@ public final class UndoHistory {
         return .object(props)
     }
 
-    func rewriteObjects(_ transform: (CanvasObject) -> CanvasObject) {
-        func rewrite(_ changes: inout [Change]) {
-            for index in changes.indices {
-                switch changes[index] {
-                case .created(let object): changes[index] = .created(transform(object))
-                case .updated(let before, let after): changes[index] = .updated(before: transform(before), after: transform(after))
-                case .deleted(let object): changes[index] = .deleted(transform(object))
-                case .effect, .unstaged, .noteRecovery: break
-                }
+    static func rewriteObjects(in changes: inout [Change], _ transform: (CanvasObject) -> CanvasObject) {
+        for index in changes.indices {
+            switch changes[index] {
+            case .created(let object): changes[index] = .created(transform(object))
+            case .updated(let before, let after): changes[index] = .updated(before: transform(before), after: transform(after))
+            case .deleted(let object): changes[index] = .deleted(transform(object))
+            case .effect, .unstaged, .noteRecovery: break
             }
         }
-        for index in undoSteps.indices { rewrite(&undoSteps[index].changes) }
-        for index in redoSteps.indices { rewrite(&redoSteps[index].changes) }
-        rewrite(&open)
+    }
+
+    func rewriteObjects(_ transform: (CanvasObject) -> CanvasObject) {
+        for index in undoSteps.indices { Self.rewriteObjects(in: &undoSteps[index].changes, transform) }
+        for index in redoSteps.indices { Self.rewriteObjects(in: &redoSteps[index].changes, transform) }
+        Self.rewriteObjects(in: &open, transform)
     }
 
     /// `target`'s content applied to `current`, keeping current's bookkeeping props.
