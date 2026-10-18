@@ -70,17 +70,21 @@ struct SurfaceFrameFlowTests {
         #expect(flow.next == 1)
     }
 
-    @Test func theDecodedFirstFrameMeasuresTheLinkNotAckZero() {
+    @Test func decodedWarmFramesMeasureTheLinkWithoutColdDecoderBias() {
         var fast = SurfaceFrameFlow(adaptive: true)
         #expect(fast.acknowledge(0, at: 100) == .granted)
         #expect(fast.mode == .probing)
-        _ = fast.publish(1, refinement: false, at: 101)
-        #expect(fast.acknowledge(1, at: 101.015) == .granted)
-        #expect(fast.mode == .jpeg)
+        for (frame, elapsed) in [(1, 0.12), (2, 0.015), (3, 0.02)] {
+            _ = fast.publish(frame, refinement: false, at: Double(frame))
+            #expect(fast.acknowledge(frame, at: Double(frame) + elapsed) == .granted)
+            #expect(fast.mode == (frame == 3 ? .jpeg : .probing))
+        }
         var slow = SurfaceFrameFlow(adaptive: true)
         _ = slow.acknowledge(0, at: 0)
-        _ = slow.publish(1, refinement: false, at: 1)
-        _ = slow.acknowledge(1, at: 1.08)
+        for (frame, elapsed) in [(1, 0.12), (2, 0.08), (3, 0.09)] {
+            _ = slow.publish(frame, refinement: false, at: Double(frame))
+            _ = slow.acknowledge(frame, at: Double(frame) + elapsed)
+        }
         #expect(slow.mode == .video)
         var raw = SurfaceFrameFlow(adaptive: false)
         _ = raw.acknowledge(0, at: 0)

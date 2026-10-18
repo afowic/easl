@@ -150,7 +150,7 @@
           "w": { "type": "number", "exclusiveMinimum": 0 }, "h": { "type": "number", "exclusiveMinimum": 0 }
         }, "additionalProperties": false, "description": "Changed raster region; unchanged sharp pixels remain installed." }
       }, "additionalProperties": false,
-      "description": "Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first decoded acknowledgement, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."
+      "description": "Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."
     },
     "SurfaceFile": {
       "type": "object", "required": ["name", "type", "data"],

@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "b326af2d2a76de42"
+const SchemaHash = "12e1925173019462"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -341,7 +341,7 @@ type SurfaceFrameDamage struct {
 	H float64 `json:"h"`
 }
 
-// SurfaceFrame: Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first decoded acknowledgement, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
+// SurfaceFrame: Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`

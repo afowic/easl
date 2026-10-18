@@ -18,6 +18,8 @@ public struct SurfaceFrameFlow: Sendable {
     public private(set) var state: State = .outstanding(frame: 0, refinement: false, sentAt: nil)
     public private(set) var mode: SurfaceLinkMode
     private var superseded: Int?
+    private var probeFrames = 0
+    private var fastestAcknowledgement = TimeInterval.infinity
 
     public init(adaptive: Bool) {
         mode = adaptive ? .probing : .video
@@ -34,7 +36,9 @@ public struct SurfaceFrameFlow: Sendable {
             guard frame <= sent else { return .invalid }
             guard frame == sent else { return .stale }
             if mode == .probing, !refinement, let sentAt {
-                mode = now - sentAt < 0.04 ? .jpeg : .video
+                probeFrames += 1
+                fastestAcknowledgement = min(fastestAcknowledgement, now - sentAt)
+                if probeFrames == 3 { mode = fastestAcknowledgement < 0.04 ? .jpeg : .video }
             }
             state = .granted(next: sent + 1)
             superseded = nil
