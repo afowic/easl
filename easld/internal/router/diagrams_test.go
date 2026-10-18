@@ -257,7 +257,7 @@ func TestDiagramFailureDoesNotReuseGraphOfPreviousAim(t *testing.T) {
 	event := diagramMessage(t, updates.incoming)
 	graph := asMap(asMap(asMap(event["data"])["props"])["graph"])
 	want := map[string]any{
-		"aim": map[string]any{"kind": "calls", "path": "other.go", "line": 1.0, "direction": "incoming"},
+		"aim":   map[string]any{"kind": "calls", "path": "other.go", "line": 1.0, "direction": "incoming"},
 		"nodes": []any{}, "edges": []any{}, "error": "host transport failed", "computedAt": graph["computedAt"],
 	}
 	if event["event"] != "object.updated" || !reflect.DeepEqual(graph, want) {
