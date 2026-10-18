@@ -109,6 +109,15 @@ final class NoteTile: NSView, TileContent {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
+    func setHostBoardClosed(_ closed: Bool) {
+        if closed {
+            suspendWork()
+            if session != nil { finishEditing(returningFocus: false) }
+        }
+        display.isSelectable = closed
+        if !closed, live { resolve() }
+    }
+
     private func configure(_ scroll: NSScrollView, document: NSTextView) {
         document.isVerticallyResizable = true
         document.isHorizontallyResizable = false
@@ -409,7 +418,7 @@ final class NoteTile: NSView, TileContent {
     // MARK: Mouse
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !isEditing else { return super.hitTest(point) }
+        guard !isEditing, !display.isSelectable else { return super.hitTest(point) }
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }
         if let scroller = displayScroll.verticalScroller, !scroller.isHidden, scroller.bounds.contains(scroller.convert(local, from: self)) {
@@ -505,6 +514,7 @@ final class NoteTile: NSView, TileContent {
     /// Return on the selected note: editing, the caret at the end; Esc or ⌘↩ gives the keyboard
     /// back to the canvas with the note selected.
     func enterKeyboard() -> Bool {
+        if display.isSelectable { return window?.makeFirstResponder(display) == true }
         guard session == nil else { return false }
         beginEditing(at: nil)
         enteredByKeyboard = true
@@ -542,7 +552,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Editing, the caret where `point` is (nil: at the end).
     private func beginEditing(at point: NSPoint?) {
-        guard session == nil else { return }
+        guard session == nil, !display.isSelectable else { return }
         session = NoteEditSession(object)
         enteredByKeyboard = false
         let text = markdown
@@ -890,7 +900,9 @@ final class NoteDisplayView: NSTextView {
     /// The text's context menu leads with Mention: the block under the right-click.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = (super.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
-        CanvasView.insertMention(into: menu, in: self, for: event)
+        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true {
+            CanvasView.insertMention(into: menu, in: self, for: event)
+        }
         return menu
     }
 

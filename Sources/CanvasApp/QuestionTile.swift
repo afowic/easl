@@ -239,6 +239,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
 
     /// What a control does, clicked or pressed through accessibility.
     fileprivate func perform(_ hit: QuestionPainter.Hit) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         switch hit {
         case .option(let id):
             window?.makeFirstResponder(self)
@@ -437,7 +438,7 @@ private final class QuestionNoteText: NSTextView {
 
 /// The scrolling page a question tile paints on; clicks go to the tile.
 @MainActor
-private final class QuestionPage: NSView {
+final class QuestionPage: NSView {
     weak var tile: QuestionTile?
 
     nonisolated override var isFlipped: Bool { true }
@@ -467,7 +468,7 @@ private final class QuestionPage: NSView {
         guard let tile, tile.selectedText != nil else { return super.menu(for: event) }
         var view = superview
         var menu: NSMenu?
-        while let current = view, menu == nil {
+        while let current = view, menu == nil, (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true {
             menu = current.menu(for: event)
             view = current.superview
         }

@@ -49,16 +49,17 @@ final class TerminalTile: NSView, TileContent {
         guard isRemote, hostBoardClosed != closed, !discarded else { return }
         if closed {
             lastRemoteScreen = liveScreen()
+            hostBoardClosed = true
             snapshotHistory = lastRemoteScreen
             showSnapshot(true)
             terminal.cancelImageInput()
             terminal.controller = nil
         } else {
+            hostBoardClosed = false
             showSnapshot(false)
             lastRemoteScreen = nil
             terminal.controller = TerminalConfig.shared.controller
         }
-        hostBoardClosed = closed
     }
 
     func discard() {
@@ -1392,7 +1393,7 @@ final class TerminalTile: NSView, TileContent {
         return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 
-    private var snapshotView: NSImageView?
+    private var snapshotView: NSView?
     /// The session's styled screen text `prepareSnapshot` fetched for the next `showSnapshot`.
     private var snapshotHistory: (lines: [TerminalLine], cursorRow: Int?)?
 
@@ -1428,6 +1429,36 @@ final class TerminalTile: NSView, TileContent {
         guard show, let history else { return }
         let grid = snapshotGrid
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
+        if hostBoardClosed {
+            let style = TerminalConfig.shared.style(for: effectiveAppearance)
+            let text = NSTextView(frame: bounds)
+            text.isEditable = false
+            text.isSelectable = true
+            text.isRichText = false
+            text.backgroundColor = style.background
+            text.textContainerInset = style.padding
+            text.textContainer?.lineFragmentPadding = 0
+            text.textContainer?.widthTracksTextView = true
+            text.isVerticallyResizable = true
+            text.autoresizingMask = [.width]
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = grid.cell.height
+            paragraph.maximumLineHeight = grid.cell.height
+            paragraph.lineBreakMode = .byClipping
+            let string = screen.map { $0.runs.map(\.text).joined() }.joined(separator: "\n")
+            text.textStorage?.setAttributedString(NSAttributedString(string: string, attributes: [
+                .font: TerminalRender.fonts(size: style.fontSize, cellWidth: grid.cell.width).regular,
+                .foregroundColor: style.foreground, .paragraphStyle: paragraph,
+            ]))
+            let scroll = NSScrollView(frame: bounds)
+            scroll.documentView = text
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.autoresizingMask = [.width, .height]
+            addSubview(scroll)
+            snapshotView = scroll
+            return
+        }
         let request = TileRenderRequest(size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance)
         let view = NSImageView(frame: bounds)
         view.image = request.image { rect in TerminalRender.draw(screen, grid: grid, in: rect, appearance: request.appearance) }

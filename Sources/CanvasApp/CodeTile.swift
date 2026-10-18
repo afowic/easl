@@ -82,7 +82,10 @@ final class CodeTile: NSView, TileContent {
         }
         addSubview(header)
         rowsView.onSign = { [weak self] sign in self?.togglePeek(sign) }
-        rowsView.onInteract = { [weak self] in self?.userInteracted() }
+        rowsView.onInteract = { [weak self] in
+            guard let self, (self.window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
+            self.userInteracted()
+        }
         rowsView.onEditHere = { [weak self] point in self?.editHere(at: point) }
         rowsView.onEscape = { [weak self] in
             guard let self else { return }
@@ -1029,6 +1032,13 @@ extension CodeTile {
 // MARK: TileContent
 
 extension CodeTile {
+    func setHostBoardClosed(_ closed: Bool) {
+        guard closed else { return }
+        setLive(false)
+        addSubview(rowsView)
+        addSubview(header)
+    }
+
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live

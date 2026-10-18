@@ -750,7 +750,7 @@ final class CanvasView: NSScrollView {
     /// and still receive the click (a terminal keeps focusing); drawn objects are selected and
     /// dragged here because they have no view of their own.
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
-        guard !isHidden, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
+        guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {
         case .leftMouseDown:
             guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }

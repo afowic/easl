@@ -695,7 +695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var entries: [NeedsYouTour.Entry] = []
         entries.reserveCapacity(boards.count)
         var waiting: CanvasWindowController?
-        for controller in boards {
+        for controller in boards where !controller.hostBoardClosed {
             let items = controller.canvas.needsYouItems
             if let window = controller.window, canPresentTab(window.tabGroup?.selectedWindow ?? window) {
                 entries.append(NeedsYouTour.Entry(board: tourKey(controller), items: items))
