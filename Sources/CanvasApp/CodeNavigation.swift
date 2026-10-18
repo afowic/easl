@@ -7,6 +7,7 @@ protocol CodeNavigationHost: AnyObject {
     /// Board-relative path of the file shown.
     var navigationPath: String { get }
     var navigationUnavailableReason: String? { get }
+    var navigationEnabled: Bool { get }
     var navigationText: SideText? { get }
     /// The view showing the code; hover, ⌘-click, and right-click are handled over it.
     var navigationView: NSView { get }
@@ -548,7 +549,9 @@ final class CodeNavigation: NSObject {
     private static func controller(at event: NSEvent) -> CodeNavigation? {
         guard let contentView = event.window?.contentView,
               let hit = contentView.hitTest(contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow) else { return nil }
-        return controllers.allObjects.first { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }
+        return controllers.allObjects.first { controller in
+            controller.host?.navigationEnabled == true && (controller.codeView.map { hit.isDescendant(of: $0) } ?? false)
+        }
     }
 
     private func menu(for event: NSEvent) -> NSMenu? {
@@ -598,6 +601,7 @@ final class CodeNavigation: NSObject {
     /// Runs one explicit action (superseding the previous one and any hover) and shows its
     /// failure where it was asked for: an uninstalled or crashed server is reported, not swallowed.
     private func run(anchor: NSPoint, _ action: @escaping @MainActor (URL, URL) async throws -> Void) {
+        guard host?.navigationEnabled == true else { return }
         cancelPendingHover()
         dismissHover()
         if let reason = host?.navigationUnavailableReason { return showMessage(reason, anchor: anchor) }

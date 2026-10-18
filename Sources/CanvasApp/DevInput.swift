@@ -79,11 +79,16 @@ enum DevInput {
         var titles = path.replacingOccurrences(of: "//", with: "\u{0}").split(separator: "/").map { $0.replacingOccurrences(of: "\u{0}", with: "/") }
         while let current = menu, !titles.isEmpty {
             current.delegate?.menuNeedsUpdate?(current)
+            current.update()
             let title = titles.removeFirst()
             guard let index = current.items.firstIndex(where: { $0.title == title }) else {
                 return NSLog("DevInput: no menu item %@ in [%@]", title, current.items.map(\.title).joined(separator: ", "))
             }
-            if titles.isEmpty { current.performActionForItem(at: index) } else { menu = current.items[index].submenu }
+            if titles.isEmpty {
+                if current.items[index].isEnabled { current.performActionForItem(at: index) }
+            } else {
+                menu = current.items[index].submenu
+            }
         }
     }
 

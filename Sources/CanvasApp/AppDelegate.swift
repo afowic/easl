@@ -1436,7 +1436,7 @@ extension AppDelegate: NSMenuItemValidation {
             item.state = backgroundAttach ? .on : .off
             return true
         case #selector(openRemote(_:)), #selector(checkForUpdates(_:)): return true
-        default: return keyController?.validate(item) ?? false
+        default: return keyController?.validateMenuItem(item) ?? false
         }
     }
 }

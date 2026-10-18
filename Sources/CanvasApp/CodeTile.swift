@@ -1349,6 +1349,7 @@ extension CodeTile {
 extension CodeTile: CodeNavigationHost {
     var navigationPath: String { showsCurrent ? document?.readPath ?? displayed.path : displayed.path }
     var navigationText: SideText? { showsCurrent ? document?.text : nil }
+    var navigationEnabled: Bool { !hostBoardClosed }
 
     var navigationUnavailableReason: String? {
         guard git != nil else { return nil }

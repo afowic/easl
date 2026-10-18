@@ -3,7 +3,7 @@ import CanvasCore
 
 /// One window per board: the canvas scene plus the composer (the tray bar).
 @MainActor
-final class CanvasWindowController: NSWindowController, NSWindowDelegate {
+final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     let board: Board
     let canvas: CanvasView
     private let tray: ComposerBar
@@ -1178,8 +1178,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// View ▸ Leave Tile (⌘Esc): the one way out of a terminal, whose Esc belongs to its program.
     @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
 
-    /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
-    func validate(_ item: NSMenuItem) -> Bool {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if hostBoardClosed, let action = item.action, !Self.closedBoardActions.contains(action) { return false }
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
@@ -1389,9 +1388,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 }
                 return true
             }
-            if let item = Self.menuItem(for: event, in: NSApp.mainMenu) {
-                item.menu?.update()
-                if item.isEnabled { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
+            if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
+                _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
                 return true
             }
             if flags.isEmpty || flags == .shift {
