@@ -94,8 +94,14 @@ if ProcessInfo.processInfo.environment["EASL_TERMINAL_DEBUG"] == "1" {
     TerminalDebugLog.enable([.lifecycle, .actions])
 }
 
-let app = CanvasApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
+@MainActor
+func runApp(settings: UISettings) {
+    let app = CanvasApplication.shared
+    let delegate = AppDelegate(settings: settings)
+    app.delegate = delegate
+    app.setActivationPolicy(.regular)
+    app.run()
+}
+
+let launchSettings = try await ClientFiles.read { UISettings.Store(url: AppPaths.uiSettings).load() }
+runApp(settings: launchSettings)

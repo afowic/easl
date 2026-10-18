@@ -3,8 +3,7 @@ import CanvasCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports,
-                                         defaultQuestionArchiveAfter: UISettings.Store(url: AppPaths.uiSettings).load().questionArchiveAfter)
+    private let registry: BoardRegistry
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
     private var cmuxServer: SocketServer?
@@ -33,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let reopenList = RemoteReopen.Store(url: AppPaths.remoteBoards)
     private let settings = UISettings.Store(url: AppPaths.uiSettings)
     /// easl › Keep Remote Boards Attached (`UISettings.backgroundAttach`).
-    private lazy var backgroundAttach = settings.load().backgroundAttach
+    private var backgroundAttach: Bool
     /// Reopen-list boards being read to attach with no window shown, by `remoteKey`. Cancelling
     /// one (its board opened by the user, the setting off, quit) keeps it from attaching when its read ends.
     private var backgroundLoads: [String: Task<Void, Never>] = [:]
@@ -52,6 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ?? self.remoteControllers.values.first(where: { $0.window === window }),
               !controller.hostBoardClosed else { return nil }
         return controller.canvas
+    }
+
+    init(settings: UISettings) {
+        registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports,
+                                 defaultQuestionArchiveAfter: settings.questionArchiveAfter)
+        backgroundAttach = settings.backgroundAttach
+        super.init()
+        ChromeText.configure(settings.chromeTextScale)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -308,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ClientFiles.sync {}
         pasteMaintenance?.stop()
         pasteMaintenance = nil
         for controller in controllers.values { controller.canvas.saveViewport() }
@@ -492,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for load in opening { _ = try? await load.value }
             guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
         }
-        let target = try closeTarget(id)
+        var target = try closeTarget(id)
         if case .remote = target, endSessions != nil {
             throw ApiRouter.Failure("invalid_params", "board \(id) is a remote tab: its host owns its sessions, so omit endSessions")
         }
@@ -539,6 +547,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         Self.removeSpooledReports([terminal])
                     }
                 }
+                guard registry.boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(board.id) closed while ending sessions") }
+                let controller = window(drawing: board)
+                target = .local(board, controller)
+                controller?.apiCloseInProgress = true
                 try refuseLastBoard()
                 guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
                 controller?.canvas.saveViewport()
@@ -563,7 +575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Out of the reopen list first: a board closed with `board.close` stays detached.
             if let entry = controller.remote.flatMap({ RemoteReopen(board: controller.board.id, on: $0.host) }) {
                 do {
-                    try reopenList.forget(entry)
+                    try ClientFiles.sync { try reopenList.forget(entry) }
                 } catch {
                     throw ApiRouter.Failure("unavailable", "cannot save remote-boards.json before closing \(id): \(error.localizedDescription)")
                 }
@@ -610,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               controller.closing?.outcome(backgroundAttach: backgroundAttach, server: host.server) == .forget,
               let entry = RemoteReopen(board: controller.board.id, on: host) else { return true }
         do {
-            try reopenList.forget(entry)
+            try ClientFiles.sync { try reopenList.forget(entry) }
             return true
         } catch {
             controller.closing = nil
@@ -837,6 +849,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let intent = RemoteOpenIntent.named(name, board)
         if let loading = remoteLoads[intent] {
             let open = try await loading.value
+            await ClientFiles.flush()
             try checkRemoteOpen()
             guard !loading.isCancelled else { throw CancellationError() }
             if select, let window = open.controller.window { bringForward(window) }
@@ -844,13 +857,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let loading: RemoteLoad = Task { @MainActor in
             try self.checkRemoteOpen()
-            let recents = await offPool { RemoteHost.Recents.load(AppPaths.remoteHosts) }
+            let recents = try await ClientFiles.read { RemoteHost.Recents.load(AppPaths.remoteHosts) }
             // The picker lists the tailnet's Macs when Tailscale answers, else only the hosts opened before.
             let peers = (try? await Tailnet.peers()) ?? []
             try self.checkRemoteOpen()
             let target = try RemoteHost.target(name, among: RemoteHost.candidates(peers: peers, recents: recents))
-            let support = try self.reopenList.support(sshTarget: target.sshTarget, board: board,
-                                                      devRemoteHome: AppPaths.devRemoteHome, recentHome: target.home)
+            let store = self.reopenList
+            let support = try await ClientFiles.read {
+                try store.support(sshTarget: target.sshTarget, board: board, devRemoteHome: AppPaths.devRemoteHome, recentHome: target.home)
+            }
+            try self.checkRemoteOpen()
             if let support, let open = self.shownRemote(Self.remoteKey(target.sshTarget, RemoteHost.socketPath(home: support), board), select: select) { return open }
             let host: RemoteHost
             do {
@@ -861,7 +877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 throw ApiRouter.Failure(failure.code, "\(target.name) is offline: \(failure.message)")
             }
             try self.checkRemoteOpen()
-            RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts)
+            ClientFiles.enqueue { RemoteHost.Recents.remember(host, in: AppPaths.remoteHosts) }
             do {
                 let open = try await self.openRemoteBoard(host: host, board: board, select: select)
                 try self.checkRemoteOpen()
@@ -874,6 +890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         remoteLoads[intent] = loading
         defer { remoteLoads[intent] = nil }
         let open = try await loading.value
+        await ClientFiles.flush()
         try checkRemoteOpen()
         guard !loading.isCancelled else { throw CancellationError() }
         return try opened(open.controller, alreadyOpen: open.alreadyOpen)
@@ -1044,7 +1061,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rememberReopen(_ controller: CanvasWindowController) {
         guard let host = controller.remote?.host, host.server == .easld,
               let entry = RemoteReopen(board: controller.board.id, on: host) else { return }
-        try? reopenList.remember(entry)
+        let store = reopenList
+        ClientFiles.enqueue { try? store.remember(entry) }
     }
 
     /// Attaches every reopen-list board that has no window here, with its window closed and never
@@ -1052,7 +1070,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func attachInBackground() {
         let store = reopenList
         Task { @MainActor in
-            let entries = await offPool { store.load() }
+            let entries = (try? await ClientFiles.read { store.load() }) ?? []
             guard backgroundAttach, !terminating else { return }
             for entry in entries {
                 let key = Self.remoteKey(entry)
@@ -1173,7 +1191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let others = open.filter { $0.window !== closing }
         let shown = others.isEmpty ? open : others
-        try? writeOpenBoards(shown)
+        let roots = openBoardRoots(shown)
+        ClientFiles.enqueue {
+            if let data = try? JSONEncoder().encode(roots) { try? data.write(to: AppPaths.openBoards, options: .atomic) }
+        }
     }
 
     private func openLocalBoards(excluding closing: NSWindow?) -> [CanvasWindowController] {
@@ -1182,20 +1203,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
+    private func openBoardRoots(_ shown: [CanvasWindowController]) -> [String] {
         let order = shown.first?.window?.tabbedWindows ?? []
-        let roots = shown.sorted { lhs, rhs in
+        return shown.sorted { lhs, rhs in
             (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)
         }.map(\.board.root.path)
-        let data = try JSONEncoder().encode(roots)
-        try data.write(to: AppPaths.openBoards, options: .atomic)
+    }
+
+    private func writeOpenBoards(_ shown: [CanvasWindowController]) throws {
+        let roots = openBoardRoots(shown)
+        try ClientFiles.sync {
+            try JSONEncoder().encode(roots).write(to: AppPaths.openBoards, options: .atomic)
+        }
     }
 
     private static func savedOpenBoards() async -> [URL] {
-        await offPool {
+        (try? await ClientFiles.read {
             guard let data = try? Data(contentsOf: AppPaths.openBoards), let roots = try? JSONDecoder().decode([String].self, from: data) else { return [] }
             return roots.map { URL(fileURLWithPath: $0) }
-        }
+        }) ?? []
     }
 
     /// The requested root, else home (launched from Finder or `open` without a root).
@@ -1303,7 +1329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleBackgroundAttach(_ sender: Any?) {
         let on = !backgroundAttach
         do {
-            try settings.update { $0.backgroundAttach = on }
+            try ClientFiles.sync { try settings.update { $0.backgroundAttach = on } }
         } catch {
             NSLog("easl: cannot save background attach to %@: %@", settings.url.path, error.localizedDescription)
             return
