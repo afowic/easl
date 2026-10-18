@@ -417,7 +417,7 @@ final class BrowserSurface {
         switch format {
         case .jpeg: type = .jpeg
         case .png: type = .png
-        case .h264, .patch: return nil
+        case .h264: return nil
         }
         var source = image
         if image.width != width || image.height != height {
