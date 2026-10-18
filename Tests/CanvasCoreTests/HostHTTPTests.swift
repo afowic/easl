@@ -288,12 +288,11 @@ private final class ScratchHost {
     }
 
     private static let upstream = #"""
-    import faulthandler
-    faulthandler.dump_traceback_later(10)
     import gzip
     import http.server
     import json
     import os
+    import socketserver
     import sys
     import threading
 
@@ -365,14 +364,18 @@ private final class ScratchHost {
                 self.wfile.write(data)
 
 
-    servers = [http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler) for _ in range(2)]
+    # The fixture needs a loopback socket, not HTTPServer's reverse-DNS hostname lookup.
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+
+
+    servers = [Server(('127.0.0.1', 0), Handler) for _ in range(2)]
     for server in servers:
         threading.Thread(target=server.serve_forever, daemon=True).start()
     ports = os.path.join(directory, 'ports')
     with open(ports + '.partial', 'w') as file:
         file.write(' '.join(str(server.server_address[1]) for server in servers))
     os.rename(ports + '.partial', ports)
-    faulthandler.cancel_dump_traceback_later()
     threading.Event().wait(120)
     """#
 }
