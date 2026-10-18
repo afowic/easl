@@ -191,22 +191,31 @@ func TestAdoptedVideoReadsOriginalFileURIAndRelativeSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	clip := (&url.URL{Scheme: "file", Path: filepath.Join(sub, "clip space.mp4")}).String()
+	uri := (&url.URL{Scheme: "file", Path: filepath.Join(sub, "clip space.mp4")}).String()
+	clip := "FILE:" + uri[5:]
 	write(filepath.Join(sub, "clip space.mp4"), movie(640, 360))
 	write(filepath.Join(sub, clip), movie(90, 160))
 	write(filepath.Join(sub, "relative.mp4"), movie(800, 600))
+	write(filepath.Join(sub, "~", "clip.mp4"), movie(90, 160))
 	stored(t, boards, &Snapshot{ID: PathID(sub), Root: Standardized(sub), Revision: 1, Objects: []model.Object{
 		adoptedObject("obj_uri", model.Video, 0, map[string]any{"path": clip}),
 		adoptedObject("obj_relative", model.Video, 300, map[string]any{"path": "relative.mp4"}),
+		adoptedObject("obj_refused", model.Video, 600, map[string]any{"path": "~/clip.mp4"}),
 	}})
 	s := New(boards, time.Hour, nil)
 	s.Loading(RepoID(commonDir), commonDir, adoptedAt)
 	got := readStored(t, s, RepoID(commonDir))
-	if len(got.Objects) != 2 {
+	if len(got.Objects) != 3 {
 		t.Fatalf("adopted objects: %+v", got.Objects)
 	}
 	for _, object := range got.Objects {
 		w, h, err := measure.VideoNaturalSize(object.Props["path"].(string), got.Root)
+		if object.ID == "obj_refused" {
+			if err == nil {
+				t.Fatalf("adoption made a refused source readable: %v x %v", w, h)
+			}
+			continue
+		}
 		wantW, wantH := 640.0, 360.0
 		if object.ID == "obj_relative" {
 			wantW, wantH = 800, 600

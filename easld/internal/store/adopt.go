@@ -802,8 +802,7 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 	case model.Video:
 		for _, key := range []string{"path", "poster"} {
 			path, ok := props[key].(string)
-			fileURI := len(path) >= 5 && strings.EqualFold(path[:5], "file:")
-			if ok && !fileURI {
+			if ok && IsRelativeFileReference(path) {
 				props[key] = r.worktreePath(path, what)
 			}
 		}

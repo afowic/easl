@@ -40,6 +40,10 @@ extension Board {
         return "/" + parts.joined(separator: "/")
     }
 
+    nonisolated static func isRelativeFileReference(_ path: String) -> Bool {
+        !path.isEmpty && !path.hasPrefix("/") && !path.hasPrefix("~") && path.prefix(5).lowercased() != "file:"
+    }
+
     /// A note or HTML tile's `root` must be an existing directory in the board's checkout or in
     /// another worktree of its repository (inside the board root when the board isn't in git).
     public func checkLinkRoot(_ value: String) throws {
@@ -99,7 +103,7 @@ extension Board {
             fields["path"] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
         case .video:
             for key in ["path", "poster"] {
-                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~"), path.prefix(5).lowercased() != "file:" else { continue }
+                guard let path = fields[key]?.string, Self.isRelativeFileReference(path) else { continue }
                 fields[key] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
             }
         case .changes, .note, .html:

@@ -226,8 +226,7 @@ func (b *Board) InCallersCheckout(props map[string]any, typ model.ObjectType, ca
 	case model.Video:
 		for _, key := range []string{"path", "poster"} {
 			path, ok := fields[key].(string)
-			fileURI := len(path) >= 5 && strings.EqualFold(path[:5], "file:")
-			if ok && path != "" && !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "~") && !fileURI {
+			if ok && store.IsRelativeFileReference(path) {
 				fields[key] = store.Standardized(filepath.Join(checkout, path))
 			}
 		}
