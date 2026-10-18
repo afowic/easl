@@ -152,6 +152,36 @@ enum DevInput {
             let ms = Double(fields["ms"] ?? "") ?? 2000
             return Metrics.shared.span("dev", "dev.stall") { Thread.sleep(forTimeInterval: ms / 1000) }
         }
+        if fields["kind"] == "state" {
+            func selectedText(in view: NSView) -> [String] {
+                if let text = view as? NSTextView, !text.isHiddenOrHasHiddenAncestor {
+                    return text.selectedRanges.compactMap { value in
+                        let range = value.rangeValue
+                        return range.length > 0 && NSMaxRange(range) <= (text.string as NSString).length
+                            ? (text.string as NSString).substring(with: range) : nil
+                    }
+                }
+                if let rows = view as? CodeRowsView, let text = rows.selectedText { return [text] }
+                return view.subviews.flatMap { selectedText(in: $0) }
+            }
+            let windows: [JSONValue] = NSApp.windows.compactMap { window in
+                guard let controller = window.windowController as? CanvasWindowController else { return nil }
+                return .object([
+                    "window": .number(Double(window.windowNumber)),
+                    "board": .string(controller.board.id),
+                    "closed": .bool(controller.hostBoardClosed),
+                    "selected": .bool(window.tabGroup?.selectedWindow === window || window.tabGroup == nil),
+                    "viewport": controller.canvas.viewport.json,
+                    "responder": .string(window.firstResponder.map { String(describing: type(of: $0)) } ?? ""),
+                    "selectedText": .array(window.contentView.map { selectedText(in: $0).map(JSONValue.string) } ?? []),
+                    "objects": .array(controller.board.snapshot.objects.compactMap { try? JSONValue.encode($0) }),
+                ])
+            }
+            if let data = try? JSONEncoder().encode(JSONValue.array(windows)) {
+                NSLog("DevInput.state %@", String(decoding: data, as: UTF8.self))
+            }
+            return
+        }
         if fields["kind"] == "remote", let target = fields["target"], let board = fields["board"] {
             // Opens another easl's board as a remote board (`AppDelegate.openRemoteBoard`), its
             // host found over ssh; `home` is the host's support directory (a development instance),
