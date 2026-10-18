@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "04784d8ed5460340"
+const SchemaHash = "e759b57ac1a38e7c"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -333,7 +333,7 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrame: surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it.
+// SurfaceFrame: surface.frame data held in memory, never persisted or broadcast. JPEG and PNG carry a full current page image. H264 carries a bounded ESV1 packet, opaque to easld, and may be followed by a full PNG when idle. The first H264 frame of a new session and the first after resize are keyframes. A missing sequence or decoding failure requires a fresh stream. Only the subscribed owning connection receives it.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
@@ -341,7 +341,7 @@ type SurfaceFrame struct {
 	Input int         `json:"input"`
 	Size  SurfaceSize `json:"size"`
 	Scale float64     `json:"scale"`
-	// One of "jpeg", "png".
+	// One of "jpeg", "png", "h264".
 	Format  string `json:"format"`
 	Data    string `json:"data"`
 	Width   int    `json:"width"`

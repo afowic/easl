@@ -34,8 +34,11 @@ final class SurfaceStream {
     /// The last frame's delivered input and full page state.
     private(set) var fence = 0
     private var lastSent: SurfaceEvent.Frame?
+    private var imageVersion: Int?
+    lazy var video = SurfaceVideoEncoder()
     /// When it last accepted input (system uptime): the page's dialogs go to the latest.
     private(set) var lastInput: TimeInterval = 0
+    private(set) var lastVideoAck: TimeInterval = 0
     var closed = false
     /// Where the viewer's button is down, in web view points, and the keys it holds.
     var heldButton: NSPoint?
@@ -80,6 +83,7 @@ final class SurfaceStream {
         case .outstanding(let sent):
             guard frame <= sent else { throw ApiRouter.Failure("invalid_params", "frame \(frame) wasn't sent; the latest is \(sent)") }
             guard frame == sent else { return }
+            if lastSent?.format == .h264 { lastVideoAck = ProcessInfo.processInfo.systemUptime }
             if !started {
                 started = true
                 for line in pendingEvents { owner.send(line) }
@@ -145,12 +149,20 @@ final class SurfaceStream {
         }
     }
 
-    func send(_ frame: SurfaceEvent.Frame) -> Bool {
-        if let last = lastSent,
-           frame.input == last.input, frame.size == last.size, frame.scale == last.scale,
-           frame.width == last.width, frame.height == last.height, frame.format == last.format,
-           frame.back == last.back, frame.forward == last.forward, frame.loading == last.loading,
-           frame.data == last.data { return false }
+    func needsVideoFrame(_ frame: SurfaceEvent.Frame, version: Int) -> Bool {
+        guard let last = lastSent else { return true }
+        return imageVersion != version || !sameState(frame, last)
+    }
+
+    private func sameState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
+        frame.input == last.input && frame.size == last.size && frame.scale == last.scale &&
+        frame.width == last.width && frame.height == last.height && frame.format == last.format &&
+        frame.back == last.back && frame.forward == last.forward && frame.loading == last.loading
+    }
+
+    func send(_ frame: SurfaceEvent.Frame, version: Int? = nil) -> Bool {
+        if format != .h264, let last = lastSent, sameState(frame, last), frame.data == last.data { return false }
+        imageVersion = version
         credit = .outstanding(frame.seq)
         fence = frame.input
         lastSent = frame

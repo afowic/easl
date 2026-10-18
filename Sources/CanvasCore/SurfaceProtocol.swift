@@ -28,7 +28,7 @@ public enum SurfaceRequest: Sendable, Equatable {
             let scale = try p.number("scale") ?? 1
             guard scale > 0, scale <= Self.maxScale else { throw Self.invalid("scale must be above 0 and at most \(Self.maxScale)") }
             let format = try p.string("format", optional: true).map { name in
-                guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg or png") }
+                guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg, png or h264") }
                 return parsed
             } ?? .jpeg
             self = .stream(tile: tile, scale: scale, format: format)
@@ -66,6 +66,7 @@ public enum SurfaceRequest: Sendable, Equatable {
 
 public enum SurfaceFormat: String, Sendable, Equatable {
     case jpeg, png
+    case h264 = "h264"
 }
 
 /// One `SurfaceInputEvent`: its sequence number on its stream and what it does.

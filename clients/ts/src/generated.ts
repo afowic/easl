@@ -110,7 +110,7 @@ export type SurfaceInputEvent = {
   url: string;
 };
 
-/** surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it. */
+/** surface.frame data held in memory, never persisted or broadcast. JPEG and PNG carry a full current page image. H264 carries a bounded ESV1 packet, opaque to easld, and may be followed by a full PNG when idle. The first H264 frame of a new session and the first after resize are keyframes. A missing sequence or decoding failure requires a fresh stream. Only the subscribed owning connection receives it. */
 export type SurfaceFrame = {
   stream: SurfaceStream;
   seq: number;
@@ -118,7 +118,7 @@ export type SurfaceFrame = {
   input: number;
   size: SurfaceSize;
   scale: number;
-  format: "jpeg" | "png";
+  format: "jpeg" | "png" | "h264";
   data: string;
   width: number;
   height: number;
@@ -1001,7 +1001,7 @@ export type MetricsCounter = {
 export type SurfaceStreamParams = {
   id: string;
   scale?: number;
-  format?: "jpeg" | "png";
+  format?: "jpeg" | "png" | "h264";
 };
 export type SurfaceStreamResult = {
   stream: SurfaceStream;
@@ -2158,7 +2158,7 @@ export type TextMeasureResult = {
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
   surface: {
-    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
+    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Acknowledge each frame only after decoding and presentation. JPEG remains the default and PNG requests remain full lossless images. Explicit h264 requests receive bounded ESV1 packets during motion and may receive full PNG refreshes when idle. The first H264 frame of each new session and after resize is a keyframe. Reopen a fresh stream after a missing sequence or decoding failure. Easld relays requests to the exact attached drawingMachine and pins the stream to that attachment. It forwards frame payload bytes unchanged to the owning viewer. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;

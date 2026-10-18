@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Streamed browser tiles negotiate predicted H.264 frames instead of sending a full JPEG on every update. A lossless PNG refresh restores text after interaction settles. Direct Mac hosts and easld relays retain one-frame credit, private delivery, and fresh streams without input replay after a decode failure or reconnect.
 - **Use the same live browser page from every easld viewer.** Easld relays private frames and input from the tile's drawing Mac, without storing page payloads or replaying input after reconnect. The title-bar selector moves drawing among attached Macs and explains the reload into that Mac's own profile. If the page's input relay cannot be prepared, its stream closes with a clear notice instead of silently losing queued input. Mac-hosted boards still draw only on their host.
 - Streamed file inputs open the file picker on the driving viewer. Up to 32 files and 8 MiB total travel in memory, without staging files on easld or the drawing Mac. Folder and iframe uploads remain unavailable.
 - **Undo and restack remote boards.** ⌘Z and ⇧⌘Z replay this viewer's own edits on the host, including create, move, resize, text edit and delete. Guarded field inverses keep concurrent edits by agents and other viewers. Bring to Front, Send to Back and API `object.update z` change the host's order for everyone. History is in memory, scoped per viewer, and requires an updated host.

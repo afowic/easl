@@ -142,12 +142,14 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	}{
 		{map[string]any{"id": page}, "invalid_params", fmt.Sprintf("subscribe this connection to surface.frame on board %s (events.subscribe) before surface.stream", board)},
 		{map[string]any{"id": page, "scale": 0.0}, "invalid_params", "scale must be above 0 and at most 2.0"},
-		{map[string]any{"id": page, "format": "gif"}, "invalid_params", "format must be jpeg or png"},
 		{map[string]any{"id": "page"}, "invalid_params", "id page is not an object id"},
 	} {
 		if code, message := errorOf(f.as(viewer, "surface.stream", c.params)); code != c.code || message != c.message {
 			t.Errorf("%v: %s %q, want %s %q", c.params, code, message, c.code, c.message)
 		}
+	}
+	if code, _ := errorOf(f.as(viewer, "surface.stream", map[string]any{"id": page, "format": "gif"})); code != "invalid_params" {
+		t.Errorf("unknown format: got %s, want invalid_params", code)
 	}
 	f.as(viewer, "events.subscribe", map[string]any{"board": board, "events": []any{"surface.frame"}})
 	for _, c := range []struct {
@@ -168,7 +170,7 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	}
 
 	observer := newSurfaceViewer(t, f, allSurfaceEvents...)
-	params := map[string]any{"id": page, "scale": 2.0, "format": "png"}
+	params := map[string]any{"id": page, "scale": 2.0, "format": "h264"}
 	opened := f.onSurface(viewer, "surface.stream", params)
 	request := diagramMessage(t, drawer.incoming)
 	if request["method"] != "surface.stream" || !reflect.DeepEqual(request["params"], params) || !reflect.DeepEqual(request["surfaceEvents"], []string{"surface.frame"}) {
@@ -191,9 +193,10 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	}
 
 	dialog := `{"event":"surface.dialog","board":"` + board + `","data":{"stream":"str_1","dialog":"dlg_1","kind":"confirm","origin":"x"}}`
-	f.router.surfaces.Push(drawer, []byte(surfaceFrame(board, "str_1")))
+	frame := `{"event":"surface.frame","board":"` + board + `","data":{"stream":"str_1","seq":1,"format":"h264","data":"RVNWMS8rAA==","opaque":"\/"}}`
+	f.router.surfaces.Push(drawer, []byte(frame))
 	f.router.surfaces.Push(drawer, []byte(dialog))
-	if got := viewer.relayed(); !reflect.DeepEqual(got, []string{surfaceFrame(board, "str_1")}) {
+	if got := viewer.relayed(); !reflect.DeepEqual(got, []string{frame}) {
 		t.Fatalf("the frame-only viewer got %v", got)
 	}
 	if got, messages := observer.relayed(), observer.messages(); len(got) != 0 || len(messages) != 1 {

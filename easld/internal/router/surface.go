@@ -148,8 +148,8 @@ func checkSurface(method string, p map[string]any) error {
 			if !ok {
 				return invalid("format must be a string")
 			}
-			if format != "jpeg" && format != "png" {
-				return invalid("format must be jpeg or png")
+			if format != "jpeg" && format != "png" && format != "h264" {
+				return invalid("format must be jpeg, png or h264")
 			}
 		}
 		return nil
