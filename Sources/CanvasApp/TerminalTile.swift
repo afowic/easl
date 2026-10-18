@@ -36,9 +36,17 @@ final class TerminalTile: NSView, TileContent {
     private let references: HostReferences?
     private var referenceTask: Task<Void, Never>?
     private var referenceGeneration = UUID()
-    var endingSession = false {
-        didSet {
-            if endingSession { terminal.cancelImageInput() }
+    private var endingRequested = false
+    var endingSession: Bool {
+        get { endingRequested || board.isEndingSession(objectID) }
+        set {
+            endingRequested = newValue
+            if newValue {
+                terminal.cancelImageInput()
+            } else if !discarded, !endingSession, terminal.controller == nil {
+                terminal.controller = TerminalConfig.shared.controller
+                host?.add(self)
+            }
         }
     }
 
@@ -112,7 +120,7 @@ final class TerminalTile: NSView, TileContent {
                     ?? Self.command(session: sessionName, object: object, board: board, environment: environment)
             )
         }
-        terminal.controller = TerminalConfig.shared.controller
+        if !endingSession { terminal.controller = TerminalConfig.shared.controller }
         handler.tile = self
         terminal.delegate = handler
         if isRemote {

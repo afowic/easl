@@ -39,3 +39,19 @@ public struct BoardCloseResult: Sendable {
                  "kept": .array(kept.map(\.json)), "ended": .array(ended.map(\.json))])
     }
 }
+
+extension Board {
+    /// A window opened during shutdown must not start the session again. Counts cover overlapping closes.
+    public func beginEndingSession(_ id: ObjectID) {
+        endingSessionCounts[id, default: 0] += 1
+    }
+
+    public func endEndingSession(_ id: ObjectID) {
+        guard let count = endingSessionCounts[id] else { return }
+        if count == 1 { endingSessionCounts[id] = nil } else { endingSessionCounts[id] = count - 1 }
+    }
+
+    public func isEndingSession(_ id: ObjectID) -> Bool {
+        endingSessionCounts[id] != nil
+    }
+}

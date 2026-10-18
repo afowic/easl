@@ -518,11 +518,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if endSessions == true {
                     let terminals = board.objects.values.filter { $0.type == .terminal }.sorted { $0.id < $1.id }
                     for terminal in terminals {
+                        board.beginEndingSession(terminal.id)
                         (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = true
                     }
                     defer {
                         for terminal in terminals {
-                            (controller?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = false
+                            board.endEndingSession(terminal.id)
+                            (window(drawing: board)?.canvas.tiles[terminal.id]?.content as? TerminalTile)?.endingSession = false
                         }
                     }
                     for terminal in terminals {
