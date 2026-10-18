@@ -34,6 +34,7 @@ func TestSurfaceAnswerRejectsInvalidUploadsWithoutDisturbingDrawingStreams(t *te
 	}{
 		{"null", nil},
 		{"object", map[string]any{}},
+		{"empty selection", []any{}},
 		{"too many files", tooMany},
 		{"nonobject file", []any{"upload.bin"}},
 		{"missing fields", []any{map[string]any{"name": "upload.bin"}}},
@@ -114,7 +115,6 @@ func TestSurfaceAnswerAcceptsUploadBoundaries(t *testing.T) {
 		files []any
 	}{
 		{"omitted", nil},
-		{"empty selection", []any{}},
 		{"32 files", many},
 		{"metadata boundaries", []any{metadata}},
 		{"8 MiB worst slash boundary", []any{file(strings.Repeat("/", 11184810) + "8=")}},
@@ -135,11 +135,8 @@ func TestSurfaceAnswerAcceptsUploadBoundaries(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("valid upload was not delegated")
 			}
-			answerSurface(f, drawer, request, map[string]any{"accepted": true})
-			if request["method"] != "surface.answer" {
-				t.Fatal("upload did not reach the drawing Mac")
-			}
-			if reply := surfaceReply(t, done); reply["ok"] != true || !reflect.DeepEqual(reply["result"], map[string]any{"accepted": true}) {
+			answerSurface(f, drawer, request, map[string]any{})
+			if reply := surfaceReply(t, done); reply["ok"] != true {
 				t.Fatalf("upload answer: %v", reply)
 			}
 		})

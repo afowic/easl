@@ -227,8 +227,8 @@ func surfaceFiles(p map[string]any) error {
 		return nil
 	}
 	files, ok := raw.([]any)
-	if !ok || len(files) > maxSurfaceFiles {
-		return invalid("files must be an array of at most %d files", maxSurfaceFiles)
+	if !ok || len(files) == 0 || len(files) > maxSurfaceFiles {
+		return invalid("files must be an array of 1 to %d files", maxSurfaceFiles)
 	}
 	total := 0
 	for _, raw := range files {

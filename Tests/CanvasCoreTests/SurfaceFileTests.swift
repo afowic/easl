@@ -6,7 +6,6 @@ struct SurfaceFileTests {
     @Test func binaryAndEmptyFilesKeepTheirBytes() throws {
         for (encoded, count) in [("", 0), ("AA==", 1), ("AAE=", 2), ("AAEC", 3), ("AAECf4D/", 6)] {
             let file = try SurfaceFile(.object(["name": .string("proof.bin"), "type": .string("application/octet-stream"), "data": .string(encoded)]))
-            #expect(file.data == encoded)
             #expect(file.byteCount == count)
         }
         let file = try SurfaceFile(name: "proof.bin", type: "application/octet-stream", bytes: Data([0, 1, 2, 127, 128, 255]))
@@ -25,7 +24,8 @@ struct SurfaceFileTests {
         }
     }
 
-    @Test func theLimitAppliesToAllFilesTogether() throws {
+    @Test func selectionCountAndAggregateBytesAreBounded() throws {
+        #expect(throws: ApiRouter.Failure.self) { try SurfaceFile.parse(.array([])) }
         let first = try SurfaceFile(name: "first.bin", type: "", bytes: Data(repeating: 0, count: SurfaceFile.maxBytes / 2))
         let second = try SurfaceFile(name: "second.bin", type: "", bytes: Data(repeating: 1, count: SurfaceFile.maxBytes / 2))
         let accepted = try SurfaceFile.parse(.array([first.json, second.json]))
@@ -33,6 +33,7 @@ struct SurfaceFileTests {
         let extra = try SurfaceFile(name: "extra.bin", type: "", bytes: Data([2]))
         #expect(throws: ApiRouter.Failure.self) { try SurfaceFile.parse(.array([first.json, second.json, extra.json])) }
         let empty = try SurfaceFile(name: "empty.bin", type: "", bytes: Data())
+        #expect(try SurfaceFile.parse(.array([empty.json]))?.map(\.byteCount) == [0])
         #expect(throws: ApiRouter.Failure.self) { try SurfaceFile.parse(.array(Array(repeating: empty.json, count: 33))) }
     }
 

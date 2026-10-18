@@ -50,8 +50,8 @@ public struct SurfaceFile: Sendable, Equatable {
 
     public static func parse(_ value: JSONValue?) throws -> [SurfaceFile]? {
         guard let value else { return nil }
-        guard let values = value.array, values.count <= maxCount else {
-            throw invalid("files must be an array of at most \(maxCount) files")
+        guard let values = value.array, !values.isEmpty, values.count <= maxCount else {
+            throw invalid("files must be an array of 1 to \(maxCount) files")
         }
         var bytes = 0
         return try values.map { value in
