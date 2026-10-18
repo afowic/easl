@@ -275,17 +275,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             banner.isHidden = true
             window?.makeFirstResponder(nil)
             for tile in canvas.tiles.values {
-                if let terminal = tile.content as? TerminalTile {
-                    terminal.setHostBoardClosed(true)
-                } else if let note = tile.content as? NoteTile {
-                    note.setHostBoardClosed(true)
-                } else if let code = tile.content as? CodeTile {
-                    code.setHostBoardClosed(true)
-                } else {
-                    tile.content.showSnapshot(true)
-                }
-                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
-                tile.hostBoardAvailabilityChanged()
+                tile.setHostBoardClosed(true)
             }
             let cover = ClosedBoardView(canvas: canvas, frame: container.bounds)
             cover.autoresizingMask = [.width, .height]
@@ -296,13 +286,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             closedBoardView?.removeFromSuperview()
             closedBoardView = nil
             for tile in canvas.tiles.values {
-                tile.content.setLive(tile.isLive)
-                (tile.content as? TerminalTile)?.setHostBoardClosed(false)
-                (tile.content as? NoteTile)?.setHostBoardClosed(false)
-                (tile.content as? CodeTile)?.setHostBoardClosed(false)
-                if !(tile.content is TerminalTile) { tile.content.showSnapshot(false) }
-                (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
-                tile.hostBoardAvailabilityChanged()
+                tile.setHostBoardClosed(false)
             }
         }
         banner.show(remote.mirror.state, availability: remote.mirror.availability, host: remote.host.name, problem: remote.mirror.problem)

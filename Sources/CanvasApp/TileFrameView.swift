@@ -27,6 +27,7 @@ final class TileFrameView: NSView {
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
     private(set) var isLive = true
+    private var hostBoardClosed = false
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
     private var lifecycleState: String?
@@ -484,9 +485,29 @@ final class TileFrameView: NSView {
         updateTint()
     }
 
-    func hostBoardAvailabilityChanged() {
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
         cardRequest += 1
-        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true {
+        if closed {
+            if let terminal = content as? TerminalTile {
+                terminal.setHostBoardClosed(true)
+            } else if let note = content as? NoteTile {
+                note.setHostBoardClosed(true)
+            } else if let code = content as? CodeTile {
+                code.setHostBoardClosed(true)
+            } else {
+                content.showSnapshot(true)
+            }
+        } else {
+            content.setLive(isLive)
+            (content as? TerminalTile)?.setHostBoardClosed(false)
+            (content as? NoteTile)?.setHostBoardClosed(false)
+            (content as? CodeTile)?.setHostBoardClosed(false)
+            if !(content is TerminalTile) { content.showSnapshot(false) }
+        }
+        (content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+        if closed {
             if !isLive || !(content is NoteTile || content is CodeTile || content is TerminalTile || content is QuestionTile) {
                 requestCard()
             } else {
@@ -558,7 +579,7 @@ final class TileFrameView: NSView {
 
     private func requestCard() {
         syncTitle()
-        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true {
+        if hostBoardClosed {
             if contentLive {
                 let scale = isLive ? (window?.backingScaleFactor ?? 1) : Self.cardPixelsPerPoint
                 let request = TileRenderRequest(size: content.bounds.size, scale: scale,
@@ -604,7 +625,7 @@ final class TileFrameView: NSView {
     /// model first (`cardSnapshot` reloads a model that isn't current), so it shows what the
     /// tile holds now.
     func refreshCard() async {
-        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
+        guard !hostBoardClosed else { return }
         guard !isLive, !contentLive else { return }
         let request = cardRequest
         let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in

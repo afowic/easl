@@ -1393,7 +1393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // ⌘R and ⌥⌘I as in Safari: the focused or selected browser tile's page. Disabled
             // otherwise, so the key goes on to whoever has the keyboard.
             item("Reload Page", #selector(reloadPage(_:)), "r"),
-            // Show or Hide (`CanvasWindowController.validate`), docked under the address bar.
+            // Show or Hide (`CanvasWindowController.validateMenuItem`), docked under the address bar.
             item("Show Web Inspector", #selector(toggleWebInspector(_:)), "i", [.option, .command]),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
             // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.

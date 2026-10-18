@@ -25,7 +25,7 @@ The Swift navigation fixture builds with `--build-system native --enable-index-s
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
 
-`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. It kills the input link before delivering the PID notification and checks that the server is reaped. Other cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. They run through the Python discovery command above and need Bun, as the host launcher does.
+`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. The link-death regression reads the `easl/hostProcess` PID notification before killing the input link, then checks that the server is reaped. It does not prove cleanup before PID delivery. Separate retained real-SSH proof holds that notification back, verifies that the viewer receives zero bytes, and kills the SSH link before checking the host process. Other script cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. The scripts run through the Python discovery command above and need Bun, as the host launcher does.
 
 ## Rotating an omp lead
 
@@ -159,12 +159,31 @@ Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-
 
 `magnify` is a real gesture event (CG type 29 with HID zoom type), so NSScrollView runs its own live magnification and the board's liveness pass runs at the end, exactly as for a trackpad pinch. Calling `setMagnification` per step instead measures a different thing. Live magnification anchors at the real pointer, so the replay moves the document back under the replayed point after each step. Put that point over empty board or a code tile: a note or terminal under it takes the gesture. On macOS 26 AppKit damps replayed steps after the first few (0.05 per step barely moves; `0.25 --repeat 45` goes from fit to 100% and `-0.25 --repeat 45` back out, rubber-banding at the limits).
 
-`Tests/RemoteClosedBoard/run.py` exercises a separate development viewer of a scratch host. It requires macOS, Pillow, the viewer checkout and home, a local Unix socket forwarding to the scratch host, its SSH target and home, and an empty scratch board root. It checks pan, native screenshot changes on zoom, selected text, edit refusal, the hidden closed tab's needs-you behavior, and host state after reopen. It captures only the viewer window by ID. Follow the machine's GUI policy before launching it.
+`Tests/RemoteClosedBoard/run.py` exercises a separate development viewer of a scratch host. It requires macOS, Pillow, the authorized CuaDriver, the viewer checkout and home, a local Unix socket forwarding to the scratch host, its SSH target and home, and an empty scratch board. The prepared fixture directory must be visible to both the runner and the host. Follow the machine's GUI policy before launching it.
+
+The regression keeps the exact Cmd-T focus, selection, object, and viewport checks, Select All, literal clipboard copies, pan, visible zoom changes, and the hidden closed tab's needs-you behavior. Code context actions, Code-menu actions, and Cmd-clicks must preserve those inspection fields and the clipboard while closed. The public viewer `app.metrics` board-write count also stays fixed, so a rejected provisional edit cannot pass by rolling back before the next state sample.
+
+Reopening must leave host objects, revision, and attention unchanged. Object timestamps are compared at their stored whole-second precision, with raw snapshots retained. The in-memory mutation journal resets when its board closes, so it is not compared across reopening.
+
+Prepare a fresh host root with the real sourcekit-lsp binary. The helper prints the canonical root and an `EASL_LSP_SWIFT` launcher path. Set that existing override in the scratch host's isolated SSH login environment before starting the viewer. Do not change a shared shell profile. This fixture is not a language-server replacement. It forwards real LSP frames unchanged and holds one actual definition reply until the runner releases it.
+
+```sh
+python3 Tests/RemoteClosedBoard/lsp_gate.py prepare --root /tmp/owned-empty-board \
+  --server /path/to/real/sourcekit-lsp
+```
+
+Open and reopened controls must create host code tiles aimed at `main.swift` line 3 through the context menu, menubar, and Cmd-click navigation. URL controls must create a host browser with the literal fixture URL. The delayed regression selects the code tile, pans it entirely offscreen, starts the native Open Definition shortcut, and waits for a real server reply. It closes the host board before releasing that reply. The viewport, focus, selection, clipboard, model, and board-write count must remain unchanged. The same held-reply action while open must create the exact code target.
+
+The runner's accessibility regression uses `Tests/RemoteClosedBoard/native.py` and the guest's authorized CuaDriver. Each snapshot checks that the development PID owns the instance lock and requests that exact PID and window ID. A fresh tree supplies the labelled Close button's opaque element token. The helper immediately sends a background accessibility `press` with the same PID, window ID, and unique session. It never supplies coordinates or falls back to a pointer click. Open and reopened `ax-control.swift` controls must remove exactly that host object and viewer tile, advance the host revision once, and increment the viewer's public board-write count once. With the host board closed, pressing `Close main.swift` must preserve the exact model, selection, selected-text hashes, first responder, viewport, clipboard, and board-write count. Subsequent closed code-menu and Cmd-click checks and a literal cached-source copy detect a delete-and-restore that rebuilds an editable tile. Driver action receipts are retained as evidence, not treated as proof of the postcondition.
+
+The cached Changes proof also requires a real Git hunk and native zoom **in**, not only a zoomed-out capture. Record the fixture's literal path, removed line, and added line while the board is open. Close the host board, pan the Changes tile entirely offscreen and back, and increase board zoom from 100% to at least 150% with native input. Retain before-and-after viewport states showing the increased zoom and CuaDriver captures of the actual cached hunk at both scales. Inspect the enlarged path and diff text for sharp rendering and unchanged content. Check that the host file bytes, index and worktree diff, board contents, and revision remain unchanged. A model-only assertion, a rescaled PNG, or the general pan/zoom captures above do not satisfy this proof.
+
+The runner writes observations, protocol evidence, native action receipts, and CuaDriver captures of only its verified viewer PID and window. It releases its reply gates, removes its code-navigation control objects in `finally`, and ends its native-driver session on exit. It does not request native SSH Screen Recording permission or use `screencapture`. The caller still owns the scratch viewer, host, SSH forwarding, and root cleanup.
 
 ```sh
 python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DEV_HOME" \
   --host-socket /tmp/owned-host.sock --host-home /tmp/owned-host-home --host deckbox \
-  --root /tmp/owned-empty-board --out /tmp/owned-proof
+  --root /tmp/owned-empty-board --fixture-directory /tmp/owned-empty-board --out /tmp/owned-proof
 ```
 
 ### Performance probes

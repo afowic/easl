@@ -1131,6 +1131,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             refreshToolTips()
             if needsLoad || (git == nil ? events == nil : hostWatch == nil) { load() }
         } else {
+            basePopover?.close()
             loadTask?.cancel()
             loadTask = nil
             reloadWork?.cancel()
@@ -1304,7 +1305,7 @@ extension ChangesTile {
     }
 
     fileprivate func setBase(_ choice: ChangesBaseChoice) {
-        guard choice.prop != spec.baseProp else { return }
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true, choice.prop != spec.baseProp else { return }
         _ = try? board.update(object.id, props: .object(["base": .string(choice.prop)]))
     }
 
@@ -1312,6 +1313,7 @@ extension ChangesTile {
     /// Return compares with it, Esc or a click elsewhere leaves the base as it is. A name git
     /// doesn't know shows as the tile's notice, and the picker is still there to fix it.
     fileprivate func askForBase(below rect: NSRect) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         let field = NSTextField(string: "")
         field.placeholderString = "commit, branch, or tag (HEAD~3, origin/main, v1.2)"
         field.font = .systemFont(ofSize: 12)
