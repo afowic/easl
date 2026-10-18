@@ -149,15 +149,29 @@ final class SurfaceStream {
         }
     }
 
-    func needsVideoFrame(_ frame: SurfaceEvent.Frame, version: Int) -> Bool {
-        guard let last = lastSent else { return true }
-        return imageVersion != version || !sameState(frame, last)
+    func videoFormat(_ frame: SurfaceEvent.Frame, version: Int, settled: Bool, videoSized: Bool) -> SurfaceFormat? {
+        let previous = lastSent.map { $0.format == .png ? SurfaceVideoRefresh.Frame.png : .video }
+        let choice = SurfaceVideoRefresh.frame(after: previous, pixelsChanged: imageVersion != version,
+            inputChanged: lastSent?.input != frame.input,
+            pageStateChanged: lastSent.map { !samePageState(frame, $0) } ?? true,
+            isDue: settled, canVideo: videoSized)
+        return choice.map { $0 == .png ? .png : .h264 }
+    }
+
+    func cachedPNG(version: Int, width: Int, height: Int) -> Data? {
+        guard imageVersion == version, let last = lastSent, last.format == .png,
+              last.width == width, last.height == height else { return nil }
+        return last.data
+    }
+
+    private func samePageState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
+        frame.size == last.size && frame.scale == last.scale &&
+        frame.back == last.back && frame.forward == last.forward && frame.loading == last.loading
     }
 
     private func sameState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
-        frame.input == last.input && frame.size == last.size && frame.scale == last.scale &&
-        frame.width == last.width && frame.height == last.height && frame.format == last.format &&
-        frame.back == last.back && frame.forward == last.forward && frame.loading == last.loading
+        samePageState(frame, last) && frame.input == last.input &&
+        frame.width == last.width && frame.height == last.height && frame.format == last.format
     }
 
     func send(_ frame: SurfaceEvent.Frame, version: Int? = nil) -> Bool {

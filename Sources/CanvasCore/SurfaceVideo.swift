@@ -5,6 +5,18 @@ import CoreVideo
 import VideoToolbox
 
 public enum SurfaceVideoRefresh {
+    public enum Frame: Sendable, Equatable {
+        case video, png
+    }
+
+    public static func frame(after previous: Frame?, pixelsChanged: Bool, inputChanged: Bool,
+                             pageStateChanged: Bool, isDue: Bool, canVideo: Bool) -> Frame? {
+        if previous == .png, !pixelsChanged { return pageStateChanged ? .png : nil }
+        let next: Frame = isDue || !canVideo ? .png : .video
+        if previous != nil, !pixelsChanged, !inputChanged, !pageStateChanged, previous == next { return nil }
+        return next
+    }
+
     public static func isDue(at now: TimeInterval, lastChange: TimeInterval, lastInput: TimeInterval, lastVideoAck: TimeInterval) -> Bool {
         now - max(lastChange, lastInput, lastVideoAck) >= 0.35
     }
@@ -125,6 +137,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     private var width = 0
     private var height = 0
     private var sequence: Int64 = 0
+    private var epoch: TimeInterval = 0
 
     public init() {}
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
@@ -134,12 +147,6 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         let h = Double(max(1, height))
         let scale = min(1, 4096 / w, 4096 / h, sqrt(4_000_000 / w / h))
         return (max(16, Int(w * scale) / 2 * 2), max(16, Int(h * scale) / 2 * 2))
-    }
-
-    public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        clear()
     }
 
     private func clear() {
@@ -173,7 +180,8 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             }
             let output = VideoOutput<CMSampleBuffer>()
             try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
-                presentationTimeStamp: CMTime(value: sequence, timescale: 15), duration: CMTime(value: 1, timescale: 15),
+                presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - epoch, preferredTimescale: 1_000_000),
+                duration: .invalid,
                 frameProperties: sequence == 0 ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
                 infoFlagsOut: nil, outputHandler: { status, flags, sample in
                     output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
@@ -195,7 +203,8 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             kCVPixelBufferIOSurfacePropertiesKey: [:]]
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264,
-            encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true] as CFDictionary,
+            encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
+                kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true] as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &session))
         guard let session else { throw SurfaceVideoError.missingOutput }
@@ -204,9 +213,8 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             (kVTCompressionPropertyKey_AllowTemporalCompression, kCFBooleanTrue),
             (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse),
             (kVTCompressionPropertyKey_ExpectedFrameRate, NSNumber(value: 15)),
-            (kVTCompressionPropertyKey_MaxKeyFrameInterval, NSNumber(value: 60)),
-            (kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, NSNumber(value: 4)),
             (kVTCompressionPropertyKey_AverageBitRate, NSNumber(value: 2_000_000)),
+            (kVTCompressionPropertyKey_MinAllowedFrameQP, NSNumber(value: 35)),
             (kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel)]
         for (key, value) in settings { try videoCheck(VTSessionSetProperty(session, key: key, value: value)) }
         try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session))
@@ -214,6 +222,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                                              attributes as CFDictionary, &pool))
         self.width = width
         self.height = height
+        epoch = ProcessInfo.processInfo.systemUptime
     }
 
     private func packetFromSample(_ sample: CMSampleBuffer) throws -> Data {
@@ -266,12 +275,6 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
 
     public init() {}
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }
-
-    public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-        clear()
-    }
 
     private func clear() {
         if let session { VTDecompressionSessionInvalidate(session) }

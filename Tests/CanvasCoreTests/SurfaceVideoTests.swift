@@ -13,6 +13,27 @@ struct SurfaceVideoTests {
         #expect(SurfaceVideoRefresh.isDue(at: 1.76, lastChange: 1.4, lastInput: 1.2, lastVideoAck: 1))
     }
 
+    @Test func sharpPixelsSurviveInputThatDoesNotChangeThePage() {
+        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: false, inputChanged: true,
+            pageStateChanged: false, isDue: false, canVideo: true) == nil)
+    }
+
+    @Test func chromeChangesReuseTheSharpRepresentation() {
+        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: false, inputChanged: true,
+            pageStateChanged: true, isDue: false, canVideo: true) == .png)
+    }
+
+    @Test func changedPixelsAndQuietMotionChooseTheirRepresentations() {
+        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: true, inputChanged: true,
+            pageStateChanged: false, isDue: false, canVideo: true) == .video)
+        #expect(SurfaceVideoRefresh.frame(after: .video, pixelsChanged: false, inputChanged: false,
+            pageStateChanged: false, isDue: true, canVideo: true) == .png)
+        #expect(SurfaceVideoRefresh.frame(after: .video, pixelsChanged: false, inputChanged: false,
+            pageStateChanged: false, isDue: false, canVideo: true) == nil)
+        #expect(SurfaceVideoRefresh.frame(after: nil, pixelsChanged: false, inputChanged: false,
+            pageStateChanged: false, isDue: false, canVideo: false) == .png)
+    }
+
     private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -51,7 +72,7 @@ struct SurfaceVideoTests {
         #expect(try center(black) == blackPixel)
     }
 
-    @Test func resizingAndResetProduceRecoverableKeyframes() throws {
+    @Test func resizingAndNewStreamsProduceRecoverableKeyframes() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
         _ = try decoder.decode(encoder.encode(image(), width: 64, height: 64), width: 64, height: 64)
@@ -61,10 +82,8 @@ struct SurfaceVideoTests {
             #expect(decoded.width == 96 && decoded.height == 80)
             #expect(try center(decoded)[0] > 220)
         }
-        encoder.reset()
-        decoder.reset()
-        let restarted = try encoder.encode(image(), width: 64, height: 64)
-        #expect(try center(decoder.decode(restarted, width: 64, height: 64)).allSatisfy { $0 < 30 })
+        let restarted = try SurfaceVideoEncoder().encode(image(), width: 64, height: 64)
+        #expect(try center(SurfaceVideoDecoder().decode(restarted, width: 64, height: 64)).allSatisfy { $0 < 30 })
     }
 
     @Test func predictedFirstFrameAndForgedKeyframeAreRejected() throws {

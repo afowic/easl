@@ -337,7 +337,7 @@ final class BrowserSurface {
                 lastPixelChange = ProcessInfo.processInfo.systemUptime
             }
         }
-        var images: [Variant: (data: Data, width: Int, height: Int)] = [:]
+        var images: [Variant: Data] = [:]
         var sent = false
         for (stream, fence) in zip(targets, fences) {
             guard !stream.closed, let seq = stream.next else { continue }
@@ -346,32 +346,37 @@ final class BrowserSurface {
             let videoSized = raster.width >= 16 && raster.height >= 16
             let settled = stream.format == .h264 && SurfaceVideoRefresh.isDue(at: ProcessInfo.processInfo.systemUptime,
                 lastChange: lastPixelChange, lastInput: lastInput, lastVideoAck: stream.lastVideoAck)
-            let format: SurfaceFormat = stream.format == .h264 && (settled || !videoSized) ? .png : stream.format
-            let variant = Variant(scale: targetScale, format: format)
-            let (width, height) = stream.format == .h264 && videoSized
-                ? SurfaceVideoEncoder.fittedVideoPixels(width: raster.width, height: raster.height)
-                : raster
             // A timeout is not evidence that WebKit presented the delivered input.
             let input = presented ? fence : stream.fence
-            var frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: variant.scale, format: format,
-                                           data: Data(), width: width, height: height, back: back, forward: forward, loading: loading)
-            if stream.format == .h264, !stream.needsVideoFrame(frame, version: imageVersion) { continue }
-            if format == .h264 {
+            var frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: targetScale, format: stream.format,
+                                           data: Data(), width: raster.width, height: raster.height, back: back, forward: forward, loading: loading)
+            if stream.format == .h264 {
+                guard let format = stream.videoFormat(frame, version: imageVersion, settled: settled, videoSized: videoSized) else { continue }
+                frame.format = format
+                if format == .h264 {
+                    (frame.width, frame.height) = SurfaceVideoEncoder.fittedVideoPixels(width: raster.width, height: raster.height)
+                }
+            }
+            let variant = Variant(scale: targetScale, format: frame.format, width: frame.width, height: frame.height)
+            if frame.format == .h264 {
                 let encoder = stream.video
-                let encoded = await offPool { Result { try encoder.encode(pixels, width: width, height: height) } }
+                let encoded = await offPool { Result { try encoder.encode(pixels, width: variant.width, height: variant.height) } }
                 switch encoded {
                 case .success(let data): frame.data = data
                 case .failure:
                     end(stream, "video encoding failed")
                     continue
                 }
+            } else if stream.format == .h264,
+                      let cached = stream.cachedPNG(version: imageVersion, width: frame.width, height: frame.height) {
+                frame.data = cached
             } else {
                 if images[variant] == nil,
-                   let data = await offPool({ Self.encode(pixels, width: width, height: height, format: format) }) {
-                    images[variant] = (data, width, height)
+                   let data = await offPool({ Self.encode(pixels, width: variant.width, height: variant.height, format: variant.format) }) {
+                    images[variant] = data
                 }
-                guard let image = images[variant] else { continue }
-                frame.data = image.data
+                guard let data = images[variant] else { continue }
+                frame.data = data
             }
             guard !stream.closed, stream.next == seq else { continue }
             guard frame.data.count <= Self.frameBytes else {
@@ -391,6 +396,8 @@ final class BrowserSurface {
     private struct Variant: Hashable {
         let scale: Double
         let format: SurfaceFormat
+        let width: Int
+        let height: Int
     }
 
     private struct PixelIdentity: @unchecked Sendable, Equatable {
@@ -447,6 +454,12 @@ final class BrowserSurface {
     }
 
     nonisolated static func encode(_ image: CGImage, width: Int, height: Int, format: SurfaceFormat) -> Data? {
+        let type: UTType
+        switch format {
+        case .jpeg: type = .jpeg
+        case .png: type = .png
+        case .h264: return nil
+        }
         var source = image
         if image.width != width || image.height != height {
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -458,7 +471,6 @@ final class BrowserSurface {
             source = scaled
         }
         let output = NSMutableData()
-        let type = format == .png ? UTType.png : UTType.jpeg
         guard let destination = CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil) else { return nil }
         let properties: [CFString: Any] = format == .jpeg ? [kCGImageDestinationLossyCompressionQuality: jpegQuality] : [:]
         CGImageDestinationAddImage(destination, source, properties as CFDictionary)

@@ -395,7 +395,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     self.failOpen("invalid_params")
                     return
                 }
-                self.retryDelay = 1
                 self.streamID = stream
                 self.pageSize = CGSize(width: w, height: h)
                 self.credit = .owingZero
@@ -525,6 +524,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         linkStatus = nil
         let shown = NSImage(cgImage: cg, size: frame.size)
         image = shown
+        retryDelay = 1
         picture.image = shown
         if sizeChanged { layoutParts() }
         Metrics.shared.record("surface.frameAccepted", bytes: decoded.bytes)
@@ -1227,7 +1227,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             guard notice.stream == streamID else { return }
             dropStream(reason: closedLine(notice.reason))
             // Reopen transient failures without replaying accepted input.
-            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" || notice.reason == "page input unavailable" { scheduleRetry() }
+            if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" ||
+               notice.reason == "page input unavailable" || notice.reason == "video encoding failed" { scheduleRetry() }
         default:
             setNotice("Host notice (\(notice.kind))")
         }
