@@ -283,7 +283,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                     code.setHostBoardClosed(true)
                 } else {
                     tile.content.showSnapshot(true)
-                    tile.content.setLive(false)
                 }
                 (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
                 tile.hostBoardAvailabilityChanged()

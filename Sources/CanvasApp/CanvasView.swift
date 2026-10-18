@@ -536,6 +536,7 @@ final class CanvasView: NSScrollView {
         tile.onMoveEnded = { [weak self] event in self?.endMove(event) }
         tile.onTitleDoubleClick = { [weak self] in self?.focus(tile: id) }
         tile.onMenu = { [weak self, weak tile] event in
+            guard self?.remote?.mirror.availability != .closed else { return NSMenu() }
             // A right-click on the tile's body mentions what is under it; on its title bar, the tile.
             let point = tile.map { $0.content.convert(event.locationInWindow, from: nil) }
             return self?.objectMenu(for: id, at: point.flatMap { point in tile?.content.bounds.contains(point) == true ? point : nil })
@@ -658,6 +659,7 @@ final class CanvasView: NSScrollView {
     }
 
     func selectAll() {
+        guard remote?.mirror.availability != .closed else { return }
         let scope = enteredGroup.flatMap { groups[$0]?.members }.map(Set.init)
         setSelection(Set(selectableRects().map(\.id).filter { scope?.contains($0) ?? true }))
     }

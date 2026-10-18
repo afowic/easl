@@ -91,6 +91,10 @@ def main():
                            "props": {"question": "Hidden closed-board question", "asker": {"name": "closed-board regression"},
                                      "options": [{"id": "a", "label": "Keep unanswered"}], "keep": True},
                            "frame": {"x": 5000, "y": 5000, "w": 300, "h": 200}})
+    visible_question = call("object.create", {"board": board, "type": "question",
+                                             "props": {"question": "Keep this question open", "asker": {"name": "closed-board regression"},
+                                                       "options": [{"id": "a", "label": "Do not answer"}], "keep": True},
+                                             "frame": {"x": 650, "y": 0, "w": 400, "h": 260}})["object"]
     input_event("drag", 700, 600, -7300, 600, "--middle")
     time.sleep(2)
     call("board.close", {"board": board})
@@ -105,6 +109,12 @@ def main():
     capture("closed-before.png", before["window"])
     rect = before["viewport"]["rect"]
     zoom = before["viewport"]["zoom"]
+    menu_x = int((visible_question["frame"]["x"] - rect["x"] + 30) * zoom)
+    menu_y = int((visible_question["frame"]["y"] - rect["y"] + 50) * zoom)
+    input_event("menu", menu_x, menu_y, "Close")
+    after_menu = remote_state()
+    expect("closed question context menu refuses edits",
+           after_menu["objects"] == before["objects"] and after_menu["selectedObjects"] == before["selectedObjects"], after_menu)
     x = int((note["frame"]["x"] - rect["x"] + 80) * zoom)
     y = int((note["frame"]["y"] - rect["y"] + 100) * zoom)
     input_event("click", x, y)
@@ -142,6 +152,7 @@ def main():
     input_event("mainmenu", "Edit/Select All")
     after_edit = remote_state()
     expect("closed board refuses edits", after_edit["objects"] == before["objects"], after_edit["objects"])
+    expect("closed menu Select All does not select board objects", after_edit["selectedObjects"] == before["selectedObjects"], after_edit["selectedObjects"])
     tour_root = args.viewer_home.parent / "easl-followups-tour"
     tour_root.mkdir(exist_ok=True)
     local = call("board.open", {"root": str(tour_root), "select": True}, str(args.viewer_home / "easl.sock"))["board"]

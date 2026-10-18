@@ -112,9 +112,9 @@ final class NoteTile: NSView, TileContent {
     func setHostBoardClosed(_ closed: Bool) {
         if closed {
             suspendWork()
-            if session != nil { finishEditing(returningFocus: false) }
         }
         display.isSelectable = closed
+        editor.isEditable = !closed
         if !closed, live { resolve() }
     }
 
@@ -599,6 +599,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func endEditing(_ end: EditEnd, returningFocus: Bool = true) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         guard let session else { return }
         if end == .keepTheirs {
             if session.keepTheirs(discarding: editor.string, on: board) {

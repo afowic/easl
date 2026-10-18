@@ -486,8 +486,18 @@ final class TileFrameView: NSView {
 
     func hostBoardAvailabilityChanged() {
         cardRequest += 1
-        if isLive { revealWhenReady() }
-        else { requestCard() }
+        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true {
+            if !isLive || !(content is NoteTile || content is CodeTile || content is TerminalTile || content is QuestionTile) {
+                requestCard()
+            } else {
+                revealWhenReady()
+            }
+        } else if isLive {
+            showContent(true)
+            revealWhenReady()
+        } else {
+            requestCard()
+        }
     }
 
     /// Longest a card covers content that never reports ready (a page whose script fails).
