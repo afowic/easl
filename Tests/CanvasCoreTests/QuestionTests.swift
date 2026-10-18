@@ -290,8 +290,9 @@ final class QuestionTests {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(stored.snapshot).write(to: store.url(for: stored.id))
-        let configured = BoardRegistry(store: store, defaultQuestionArchiveAfter: 30)
+        let configured = BoardRegistry(store: store)
         let hosted = await configured.open(root: root)
+        configured.defaultQuestionArchiveAfter = 30
         #expect(throws: BoardError.self, "a caller's delay is never replaced") {
             try self.ask(on: hosted, ["archiveAfter": -1])
         }

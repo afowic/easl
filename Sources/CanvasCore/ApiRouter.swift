@@ -32,7 +32,11 @@ public final class BoardRegistry {
     }
     /// The host's `archiveAfter` for new questions that name none, on every board it opens
     /// (`Board.defaultQuestionArchiveAfter`): the app's `UISettings.questionArchiveAfter`.
-    private let defaultQuestionArchiveAfter: TimeInterval
+    public var defaultQuestionArchiveAfter: TimeInterval {
+        didSet {
+            for board in boards.values { board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter }
+        }
+    }
 
     public init(store: BoardStore = BoardStore(), agentReports: URL? = nil, defaultQuestionArchiveAfter: TimeInterval = QuestionSpec.defaultArchiveAfter) {
         self.store = store

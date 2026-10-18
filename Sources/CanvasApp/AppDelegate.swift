@@ -3,7 +3,7 @@ import CanvasCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let registry: BoardRegistry
+    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports)
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
     private var cmuxServer: SocketServer?
@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let reopenList = RemoteReopen.Store(url: AppPaths.remoteBoards)
     private let settings = UISettings.Store(url: AppPaths.uiSettings)
     /// easl › Keep Remote Boards Attached (`UISettings.backgroundAttach`).
-    private var backgroundAttach: Bool
+    private var backgroundAttach = true
     /// Reopen-list boards being read to attach with no window shown, by `remoteKey`. Cancelling
     /// one (its board opened by the user, the setting off, quit) keeps it from attaching when its read ends.
     private var backgroundLoads: [String: Task<Void, Never>] = [:]
@@ -51,14 +51,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ?? self.remoteControllers.values.first(where: { $0.window === window }),
               !controller.hostBoardClosed else { return nil }
         return controller.canvas
-    }
-
-    init(settings: UISettings) {
-        registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports,
-                                 defaultQuestionArchiveAfter: settings.questionArchiveAfter)
-        backgroundAttach = settings.backgroundAttach
-        super.init()
-        ChromeText.configure(settings.chromeTextScale)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -266,6 +258,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 localRestore = nil
                 saveOpenBoards()
             }
+            let settings = self.settings
+            let configured = (try? await ClientFiles.read { settings.load() }) ?? UISettings()
+            guard !terminating else { return }
+            registry.defaultQuestionArchiveAfter = configured.questionArchiveAfter
+            backgroundAttach = configured.backgroundAttach
+            ChromeText.configure(configured.chromeTextScale)
             let saved = await Self.savedOpenBoards()
             let initialRoot = Self.initialRoot()
             let getStarted = await offPool {

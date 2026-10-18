@@ -15,7 +15,9 @@ enum ChromeText {
     private(set) static var scale = ChromeTextScale.normal
 
     static func configure(_ value: Double) {
+        guard scale != value else { return }
         scale = value
+        NotificationCenter.default.post(name: didChange, object: nil)
     }
 
     /// `base` points at the current scale.
