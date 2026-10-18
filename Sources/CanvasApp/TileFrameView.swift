@@ -560,9 +560,11 @@ final class TileFrameView: NSView {
         syncTitle()
         if (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true {
             if contentLive {
-                let request = TileRenderRequest(size: content.bounds.size, scale: window?.backingScaleFactor ?? 1,
+                let scale = isLive ? (window?.backingScaleFactor ?? 1) : Self.cardPixelsPerPoint
+                let request = TileRenderRequest(size: content.bounds.size, scale: scale,
                                                 full: false, appearance: effectiveAppearance)
-                card.image = request.image(of: content)
+                let image = request.image(of: content)
+                card.image = isLive ? image : image.map { cardImage($0) }
                 card.isHidden = card.image == nil
                 cardTitle.isHidden = card.image != nil
             }
