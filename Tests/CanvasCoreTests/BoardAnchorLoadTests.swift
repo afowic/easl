@@ -271,6 +271,62 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(authored))
     }
 
+    @Test(.timeLimit(.minutes(1))) func viewerUndoAndRedoKeepAuthorizedAnchorsAcrossScrub() async throws {
+        let fixture = try await gitFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.repo.root) }
+        let holds = GitLoadHolds()
+        defer { holds.release() }
+        try await holds.occupy(in: directory)
+        let registry = BoardRegistry(store: fixture.store)
+        let router = ApiRouter(registry: registry)
+        let socket = directory.appendingPathComponent("s").path
+        let server = SocketServer(path: socket) { request, connection in await router.handle(request, connection: connection) }
+        try server.start()
+        defer { server.stop() }
+        let client = try LineClient(path: socket)
+        @MainActor func request(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+            let reply = try await call(client, method, params)
+            try #require(reply["ok"] == .bool(true), "\(method): \(reply)")
+            return try #require(reply["result"])
+        }
+        @MainActor func replay(_ viewer: String, redo: Bool = false) async throws {
+            let result = try await request(redo ? "board.redo" : "board.undo", ["board": .string(fixture.board.id), "viewer": .string(viewer), "step": 1])
+            #expect(result["kept"] == .array([]))
+            #expect(result["pushed"] == .bool(true))
+            #expect(!encoded(result).contains("LEAKED_"))
+        }
+        _ = try await request("board.open", ["root": .string(fixture.repo.root.path)])
+        let loaded = try #require(registry.boards[fixture.board.id])
+        #expect(loaded.isAnchorScrubPending(fixture.allowed.id))
+        let authored = "The remote viewer's authored text."
+        for (object, viewer) in [(fixture.allowed, "vw_anchor_edit"), (fixture.edited, "vw_anchor_redo")] {
+            _ = try await request("object.update", ["id": .string(object.id), "props": .object(["markdown": .string(authored)]), "viewer": .string(viewer), "step": 1])
+        }
+        try await replay("vw_anchor_redo")
+        #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(fixture.quarantined))
+        _ = try await request("object.delete", ["id": .string(fixture.code.id), "viewer": "vw_anchor_delete", "step": 1])
+        #expect(!encoded(try await request("board.get", ["board": .string(loaded.id)])).contains("KEEP_"))
+        try await holds.finish()
+        await loaded.waitForAnchorScrub()
+        try await replay("vw_anchor_edit")
+        #expect(try loaded.object(fixture.allowed.id).props["markdown"] == .string(fixture.accepted))
+        try await replay("vw_anchor_redo", redo: true)
+        #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(authored))
+        try await replay("vw_anchor_delete")
+        #expect(try loaded.object(fixture.code.id).props["anchor"] == "KEEP_CODE")
+        try fixture.store.saveChecked(loaded)
+        let persisted = try saved(loaded.id, in: fixture.store)
+        #expect(persisted.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == .string(fixture.accepted))
+        #expect(persisted.objects.first { $0.id == fixture.code.id }?.props["anchor"] == "KEEP_CODE")
+        #expect(!String(decoding: try BoardStore.encoder.encode(persisted), as: UTF8.self).contains("LEAKED_"))
+        try await replay("vw_anchor_edit", redo: true)
+        #expect(try loaded.object(fixture.allowed.id).props["markdown"] == .string(authored))
+        try await replay("vw_anchor_redo")
+        #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(fixture.accepted))
+        try await replay("vw_anchor_delete", redo: true)
+        #expect(loaded.objects[fixture.code.id] == nil)
+    }
+
     @Test(.timeLimit(.minutes(1))) func closingAndReopeningDuringGitScrubCannotResurrectOrOverwriteObjects() async throws {
         let fixture = try await gitFixture()
         defer { try? FileManager.default.removeItem(at: fixture.repo.root) }
