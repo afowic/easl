@@ -1078,9 +1078,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return roots.map { URL(fileURLWithPath: $0) }
     }
 
-    /// The requested root, else home (launched from Finder or `open` without a root).
+    /// The requested root, else the configured board directory, else home.
     static func initialRoot() -> URL {
-        requestedRoot() ?? URL(fileURLWithPath: NSHomeDirectory())
+        requestedRoot() ?? configuredBoardDirectory ?? URL(fileURLWithPath: NSHomeDirectory())
+    }
+
+    /// A preferred starting directory, not a restriction on which boards can open.
+    private static var configuredBoardDirectory: URL? {
+        guard let path = UserDefaults.standard.string(forKey: "canvas.boardDirectory") else { return nil }
+        let expanded = (path as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/"), BoardStore.isDirectory(expanded) else { return nil }
+        return URL(fileURLWithPath: expanded).standardizedFileURL
     }
 
     /// EASL_ROOT, else the first non-flag argument, else the working directory unless it's
@@ -1207,7 +1215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.prompt = "Open Board"
-        panel.directoryURL = keyController?.board.root
+        panel.directoryURL = Self.configuredBoardDirectory ?? keyController?.board.root
         let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
             guard response == .OK, let url = panel.url else { return }
             self?.open(root: url)
