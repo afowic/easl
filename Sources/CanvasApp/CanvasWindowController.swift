@@ -1389,8 +1389,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 }
                 return true
             }
-            if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
-                _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
+            if let item = Self.menuItem(for: event, in: NSApp.mainMenu) {
+                item.menu?.update()
+                if item.isEnabled { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
                 return true
             }
             if flags.isEmpty || flags == .shift {
