@@ -92,7 +92,6 @@ class HostLSPLifetimeTests(unittest.TestCase):
                 self.assertTrue(process_exists(pid), "the server must exist before the link dies")
                 header = read_header(host.stdout)
                 self.assertEqual(header, {"jsonrpc": "2.0", "method": "easl/hostProcess", "params": {"pid": pid}})
-                # The host's header is held here, not delivered to the viewer, when its link dies.
                 link.kill()
                 link.wait(timeout=5)
                 ended = wait_until(lambda: host.poll() is not None and not process_exists(pid), timeout=3)

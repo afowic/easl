@@ -83,9 +83,9 @@ final class HostLanguageSource: LanguageSource {
     static let launcher = #"""
     for b in "$(command -v bun)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
       if [ -n "$b" ] && [ -x "$b" ]; then
-        exec "$b" --no-env-file -e '
+        exec "$b" --env-file=/dev/null -e '
     const cp = require("node:child_process");
-    const [binary, directory, searchPath, ...args] = process.argv.slice(1);
+    const [binary, directory, searchPath, ...args] = process.argv.slice(2);
     const child = cp.spawn(binary, args, {
       cwd: directory, env: searchPath ? { ...process.env, PATH: searchPath } : process.env,
       detached: true, stdio: ["pipe", "pipe", "inherit"]
@@ -112,7 +112,7 @@ final class HostLanguageSource: LanguageSource {
     }
     child.stdout.pipe(process.stdout);
     process.stdin.pipe(child.stdin);
-    ' -- "$@"
+    ' -- easl-lsp "$@"
       fi
     done
     echo "bun isn't installed on the host" >&2
