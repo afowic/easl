@@ -1178,7 +1178,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
     func validate(_ item: NSMenuItem) -> Bool {
-        if hostBoardClosed, let action = item.action, responds(to: action), !Self.closedBoardActions.contains(action) { return false }
+        if hostBoardClosed, let action = item.action, !Self.closedBoardActions.contains(action) { return false }
         let selection = canvas.selection
         if remote != nil, let action = item.action, Self.localOnly.contains(action) { return false }
         switch item.action {
@@ -1271,7 +1271,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     private static let closedBoardActions: Set<Selector> = [
         #selector(zoomToFit(_:)), #selector(zoomToActual(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
-        #selector(leaveTile(_:)),
+        #selector(leaveTile(_:)), #selector(goToNextNeedsYou(_:)), #selector(AppDelegate.openBoard(_:)),
+        #selector(NSText.copy(_:)), #selector(NSText.selectAll(_:)),
     ]
 
     /// A text view with its own undo history holding the keyboard (a note being edited).
@@ -1378,6 +1379,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
             if flags == .command, ["a", "c"].contains(event.charactersIgnoringModifiers ?? "") { return false }
+            if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
+                _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
+                return true
+            }
             if flags.isEmpty || flags == .shift {
                 if [53, 115, 116, 119, 121, 123, 124, 125, 126].contains(event.keyCode) { return false }
             }
