@@ -6,6 +6,7 @@ from pathlib import Path
 import socket
 import subprocess
 import time
+from PIL import Image, ImageChops
 
 
 def main():
@@ -113,11 +114,16 @@ def main():
     panned = remote_state()
     expect("closed board pans", panned["viewport"]["rect"] != before["viewport"]["rect"],
            {"before": before["viewport"], "after": panned["viewport"]})
+    capture("closed-panned.png", panned["window"])
     input_event("shortcut", "-", "--mods", "cmd")
     time.sleep(0.4)
     zoomed = remote_state()
     expect("closed board zooms", zoomed["viewport"]["zoom"] < panned["viewport"]["zoom"], zoomed["viewport"])
     capture("closed-panned-zoomed.png", zoomed["window"])
+    with Image.open(args.out / "closed-panned.png") as panned_image, Image.open(args.out / "closed-panned-zoomed.png") as zoomed_image:
+        crop = (0, 300, panned_image.width, panned_image.height - 150)
+        difference = ImageChops.difference(panned_image.convert("RGB").crop(crop), zoomed_image.convert("RGB").crop(crop)).getbbox()
+    expect("closed board visibly zooms", difference is not None, {"pixelDifference": difference})
     input_event("shortcut", "n", "--mods", "cmd")
     input_event("key", "delete")
     input_event("text", "THIS EDIT MUST BE REFUSED")
@@ -129,6 +135,7 @@ def main():
     time.sleep(0.4)
     hidden_before = remote_state()
     input_event("shortcut", "j", "--mods", "cmd")
+    input_event("mainmenu", "View/Go to Next Needs-You")
     time.sleep(0.4)
     hidden_after = remote_state()
     expect("needs-you skips the hidden closed tab",
