@@ -36,7 +36,7 @@ struct HostLocalFile: Sendable {
         case .boardImage(let input), .boardAsset(let input):
             guard !input.isEmpty, !input.contains("\0"), !input.hasPrefix("~") else { throw HostFileError.refused }
             let inputPath: String
-            if input.hasPrefix("file:") {
+            if input.prefix(5).lowercased() == "file:" {
                 guard let url = URL(string: input), url.isFileURL,
                       url.host == nil || url.host == "" || url.host == "localhost" else { throw HostFileError.refused }
                 inputPath = url.path

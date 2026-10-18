@@ -96,6 +96,7 @@ func TestWorktreeVideoCreateAndReaimReadOriginalFileURIs(t *testing.T) {
 		w, h float64
 	}{
 		{clip, 640, 360},
+		{"FILE:" + clip[5:], 640, 360},
 		{"relative.mp4", 800, 600},
 	} {
 		props := map[string]any{"path": tc.path}
@@ -112,7 +113,7 @@ func TestWorktreeVideoCreateAndReaimReadOriginalFileURIs(t *testing.T) {
 	}
 	outside := filepath.Join(t.TempDir(), "outside.mp4")
 	write(outside, movie(640, 360))
-	for _, refused := range []string{uri(outside), "file://remote.example" + root + "/clip.mp4", "file://%zz" + root + "/clip.mp4"} {
+	for _, refused := range []string{uri(outside), "file://remote.example" + root + "/clip.mp4", "FILE://remote.example" + root + "/clip.mp4", "file://%zz" + root + "/clip.mp4"} {
 		write(filepath.Join(checkout, refused), movie(90, 160))
 		props := map[string]any{"path": refused}
 		created := idOf(f.result("object.create", map[string]any{"type": "video", "caller": caller, "props": props}))

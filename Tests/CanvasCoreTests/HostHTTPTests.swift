@@ -225,12 +225,13 @@ private final class ScratchHost {
         let ports = ((try? String(contentsOf: published, encoding: .utf8)) ?? "").split(separator: " ").compactMap { Int($0) }
         var failure = ""
         if !started || ports.count != 2 {
+            let wasRunning = server.isRunning
             if server.isRunning { server.terminate() }
             server.waitUntilExit()
             let reader = try FileHandle(forReadingFrom: diagnosticURL)
             let data = try reader.read(upToCount: 8192) ?? Data()
             try reader.close()
-            failure = "server exit \(server.terminationStatus): " + String(decoding: data, as: UTF8.self)
+            failure = "server \(server.processIdentifier) runningBeforeCleanup=\(wasRunning) exit \(server.terminationStatus): " + String(decoding: data, as: UTF8.self)
         }
         try #require(started && ports.count == 2, "the scratch server published its ports; \(failure)")
         self.fixture = fixture
@@ -287,6 +288,8 @@ private final class ScratchHost {
     }
 
     private static let upstream = #"""
+    import faulthandler
+    faulthandler.dump_traceback_later(10)
     import gzip
     import http.server
     import json
@@ -369,6 +372,7 @@ private final class ScratchHost {
     with open(ports + '.partial', 'w') as file:
         file.write(' '.join(str(server.server_address[1]) for server in servers))
     os.rename(ports + '.partial', ports)
+    faulthandler.cancel_dump_traceback_later()
     threading.Event().wait(120)
     """#
 }

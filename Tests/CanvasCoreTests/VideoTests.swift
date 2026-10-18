@@ -50,6 +50,7 @@ extension ApiRouterTests {
         try Data("checkout poster".utf8).write(to: checkout.appendingPathComponent("relative.png"))
         let cases: [(String, String, CGSize, Data)] = [
             (movie.absoluteString, poster.absoluteString, CGSize(width: 640, height: 360), posterBytes),
+            ("FILE:" + movie.absoluteString.dropFirst(5), "FILE:" + poster.absoluteString.dropFirst(5), CGSize(width: 640, height: 360), posterBytes),
             ("relative.mp4", "relative.png", CGSize(width: 800, height: 600), Data("checkout poster".utf8))
         ]
         for (path, image, dimensions, expectedPoster) in cases {
@@ -66,18 +67,11 @@ extension ApiRouterTests {
                 #expect(try await LocalVideo.naturalSize(path: storedPath, root: board.root) == dimensions)
                 let read = try await HostFiles.readLocal(HostFileRequest(source: .directory(board.root.path), policy: .boardAsset(storedPoster)))
                 #expect(read.data == expectedPoster)
-                if path == movie.absoluteString {
-                    #expect(storedPath == movie.absoluteString)
-                    #expect(storedPoster == poster.absoluteString)
-                } else {
-                    #expect(storedPath == checkout.appendingPathComponent(path).path)
-                    #expect(storedPoster == checkout.appendingPathComponent(image).path)
-                }
             }
         }
         let outside = dir.appendingPathComponent("outside.mp4")
         try VideoHeader.movie(width: 640, height: 360).write(to: outside)
-        for refused in [outside.absoluteString, "file://remote.example\(movie.path)", "file://%zz\(movie.path)"] {
+        for refused in [outside.absoluteString, "file://remote.example\(movie.path)", "FILE://remote.example\(movie.path)", "file://%zz\(movie.path)"] {
             try shadow(refused, bytes: VideoHeader.movie(width: 90, height: 160))
             for key in ["path", "poster"] {
                 var fields: [String: JSONValue] = ["path": .string(movie.absoluteString), "poster": .string(poster.absoluteString)]

@@ -99,7 +99,7 @@ extension Board {
             fields["path"] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
         case .video:
             for key in ["path", "poster"] {
-                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~"), !path.hasPrefix("file:") else { continue }
+                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~"), path.prefix(5).lowercased() != "file:" else { continue }
                 fields[key] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
             }
         case .changes, .note, .html:

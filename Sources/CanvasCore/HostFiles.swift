@@ -548,7 +548,7 @@ public struct HostFiles: Sendable {
       if (policy.kind === 'boardImage' || policy.kind === 'boardAsset') {
         let input = policy.path;
         if (typeof input !== 'string' || !input || input.includes('\0') || input.startsWith('~')) fail('refused');
-        if (input.startsWith('file:')) {
+        if (/^file:/i.test(input)) {
           try { input = require('node:url').fileURLToPath(input); }
           catch { fail('refused'); }
         } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) fail('refused');

@@ -968,7 +968,7 @@
     "beforeHandshakes": 1,
     "afterHandshakes": 0,
     "visibleWindows": 0,
-    "limits": "A finite owned HTTP endpoint counted real WebSocket handshake attempts. The production rule factory was used; the probe did not create a board window."
+    "limits": "A finite owned HTTP endpoint counted real WebSocket handshake attempts. The probe compiled copies matching the production patterns, not the app's factory symbol; it did not create a board window. The benchmark-range patterns compiled but were not a second handshake endpoint."
   },
   "finalInventoryAfterGif": {
     "roots": 10,

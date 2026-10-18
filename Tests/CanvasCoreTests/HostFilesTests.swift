@@ -162,7 +162,7 @@ struct HostFilesTests {
         let bytes = Data("board image".utf8)
         try fixture.write("image space.png", bytes)
         let image = fixture.root.appendingPathComponent("image space.png")
-        for path in ["image space.png", image.path, image.absoluteString] {
+        for path in ["image space.png", image.path, image.absoluteString, "FILE:" + image.absoluteString.dropFirst(5)] {
             let result = try await files.read(HostFileRequest(source: .directory(fixture.root.path), policy: .boardImage(path)))
             #expect(result.data == bytes)
         }

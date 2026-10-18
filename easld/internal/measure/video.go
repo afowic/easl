@@ -38,7 +38,7 @@ func VideoProblem(props map[string]any) string {
 }
 
 func VideoNaturalSize(path, root string) (float64, float64, error) {
-	if strings.HasPrefix(path, "file:") {
+	if len(path) >= 5 && strings.EqualFold(path[:5], "file:") {
 		value, err := url.Parse(path)
 		if err != nil || value.Opaque != "" || (value.Host != "" && value.Host != "localhost") {
 			return 0, 0, &Failure{"invalid_params", "video path refused"}
