@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import time
 from PIL import Image, ImageChops
 from lsp_gate import SOURCE, URL
@@ -270,7 +271,8 @@ def main():
 
         try:
             input_event("remote", args.host, board, args.host_home)
-            availability(False)
+            wait_for("The remote board did not become the selected tab", remote_state,
+                     lambda value: not value["closed"] and value["selected"])
             show_code()
             time.sleep(2)
             capture("code-open.png", remote_state()["window"])
@@ -361,14 +363,28 @@ def main():
             copy_code("closed code retains the literal cached source after accessibility Close")
             capture("code-closed-after-accessibility.png", remote_state()["window"])
         finally:
-            (control / "arm.json").unlink(missing_ok=True)
-            for token in tokens:
-                (control / (token + ".release")).touch()
-            call("board.open", {"root": args.root, "select": False})
-            existing = {item["id"] for item in call("board.get", {"board": board})["objects"]}
-            for identifier in sorted(created & existing):
-                call("object.delete", {"id": identifier})
-            args.out.joinpath("lsp-events.json").write_text(json.dumps(protocol_events(), indent=2) + "\n")
+            original_error = sys.exc_info()[1]
+            cleanup_error = None
+            try:
+                (control / "arm.json").unlink(missing_ok=True)
+                for token in tokens:
+                    (control / (token + ".release")).touch()
+                call("board.open", {"root": args.root, "select": False})
+                existing = {item["id"] for item in call("board.get", {"board": board})["objects"]}
+                for identifier in sorted(created & existing):
+                    call("object.delete", {"id": identifier})
+            except Exception as error:
+                cleanup_error = error
+            try:
+                args.out.joinpath("lsp-events.json").write_text(json.dumps(protocol_events(), indent=2) + "\n")
+            except Exception as error:
+                if original_error is None and cleanup_error is None:
+                    raise
+                print(f"Protocol evidence retention also failed: {error!r}", file=sys.stderr)
+            if cleanup_error is not None:
+                if original_error is None:
+                    raise cleanup_error
+                print(f"Host cleanup also failed: {cleanup_error!r}", file=sys.stderr)
 
     board = call("board.open", {"root": args.root, "select": False})["board"]
     existing = call("board.get", {"board": board})["objects"]

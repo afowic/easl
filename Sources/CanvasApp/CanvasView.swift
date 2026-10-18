@@ -2437,7 +2437,7 @@ final class CanvasView: NSScrollView {
             let closed = remote?.mirror.availability == .closed
             let scale = magnification
             for tile in tiles.values {
-                if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile) { continue }
+                if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile || tile.content is ChangesTile) { continue }
                 tile.setLive(shouldBeLive(tile, scale: scale))
                 tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }

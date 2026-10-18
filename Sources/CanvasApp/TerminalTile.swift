@@ -50,6 +50,9 @@ final class TerminalTile: NSView, TileContent {
         if closed {
             lastRemoteScreen = liveScreen()
             hostBoardClosed = true
+            referenceTask?.cancel()
+            referenceTask = nil
+            referenceGeneration = UUID()
             snapshotHistory = lastRemoteScreen
             showSnapshot(true)
             terminal.cancelImageInput()
@@ -511,7 +514,7 @@ final class TerminalTile: NSView, TileContent {
     /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
         await terminal.submitOrdered({ [self] in
-            guard !discarded, !endingSession, !board.isClosed else { return false }
+            guard !discarded, !endingSession, !hostBoardClosed, !board.isClosed else { return false }
             refreshProgram()
             if shell != nil, program == nil, let typing = ShellTyping.action(text) {
                 return terminal.performBindingAction(typing)
@@ -1112,6 +1115,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func resolveRemote(_ candidates: [TerminalReferences.Candidate], newTile: Bool) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         referenceTask?.cancel()
         let generation = UUID()
         referenceGeneration = generation
@@ -1127,7 +1131,7 @@ final class TerminalTile: NSView, TileContent {
             do {
                 let outcome = try await references.resolve(request)
                 guard let self, !Task.isCancelled, self.referenceGeneration == generation,
-                      !self.discarded, !self.board.isClosed else { return }
+                      !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                 switch outcome {
                 case .failure(let failure):
                     self.onNotice?(failure.message)
@@ -1137,14 +1141,14 @@ final class TerminalTile: NSView, TileContent {
                     if let test = candidate.reference.test, let bytes = resolved.pytestBytes {
                         let line = await offPool { PytestNode.line(of: test, in: String(decoding: bytes, as: UTF8.self)) } ?? 1
                         guard !Task.isCancelled, self.referenceGeneration == generation,
-                              !self.discarded, !self.board.isClosed else { return }
+                              !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                         lines = LineRange(start: line, end: line)
                     }
                     self.open(.init(file: resolved.path, lines: lines, runs: candidate.runs), newTile: newTile)
                 }
             } catch {
                 guard let self, !Task.isCancelled, self.referenceGeneration == generation,
-                      !self.discarded, !self.board.isClosed else { return }
+                      !self.discarded, !self.hostBoardClosed, !self.board.isClosed else { return }
                 self.onNotice?(HostReferenceOutcome.Failure.unavailable.message)
             }
         }
@@ -1173,6 +1177,7 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func open(_ hit: TerminalReferences.Hit, newTile: Bool) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         if let test = hit.test, !isRemote {
             // A pytest node id: its line is the test's `def`, read off the main thread.
             let file = hit.file
@@ -1202,6 +1207,7 @@ final class TerminalTile: NSView, TileContent {
     /// file path goes to the system, as `open` would. Remote file links use the host resolver
     /// instead and are never logged.
     func openLink(_ text: String) {
+        guard !hostBoardClosed, !discarded, !board.isClosed else { return }
         if isRemote {
             let url = URL(string: text)
             let parsed = TerminalReferences.reference(in: text, at: 0)

@@ -57,6 +57,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private weak var basePopover: NSPopover?
 
     private var isLive = true
+    private var hostBoardClosed = false
     private var needsLoad = true
     private var loadTask: Task<Void, Never>?
     private var generation = 0
@@ -989,6 +990,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// the commit of `side` (the base's merge-base for the old side, the head for the new), at
     /// the file's name there.
     private func openCode(file: Int, line: Int, side: DiffSide) {
+        guard !hostBoardClosed, !board.isClosed else { return }
         guard let set else { return }
         let changed = set.files[file]
         let pin = set.comparesCommits ? (side == .old ? set.base : set.head) : nil
@@ -1009,6 +1011,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// Marks a file Viewed for its current diff (folding it) or unmarks it (unfolding it):
     /// `props.viewed`, one ⌘Z step; entries for diffs that changed since are dropped with it.
     private func toggleViewed(_ file: Int) {
+        guard !hostBoardClosed, !board.isClosed else { return }
         guard let set else { return }
         let changed = set.files[file]
         let current = object.props["viewed"]
@@ -1042,6 +1045,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// refused, and against a base older than HEAD (`ChangeSet.includesCommits`) the patch is
     /// built from HEAD, so a hunk mixing committed and uncommitted lines loses only the latter.
     private func perform(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?) {
+        guard !hostBoardClosed, !board.isClosed else { return }
         if let git { return performOnHost(git, action, file: file, hunk: hunk, lines: lines) }
         guard !acting, let set, let repository = set.repository, set.files.indices.contains(file) else { return }
         let changed = set.files[file]
@@ -1123,7 +1127,18 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     // MARK: TileContent
 
+    func setHostBoardClosed(_ closed: Bool) {
+        guard hostBoardClosed != closed else { return }
+        hostBoardClosed = closed
+        if closed {
+            setLive(false)
+            dropDiscardQuestion()
+            needsDisplay = true
+        }
+    }
+
     func setLive(_ live: Bool) {
+        let live = live && !hostBoardClosed
         guard live != isLive else { return }
         isLive = live
         if live {
@@ -1305,7 +1320,7 @@ extension ChangesTile {
     }
 
     fileprivate func setBase(_ choice: ChangesBaseChoice) {
-        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true, choice.prop != spec.baseProp else { return }
+        guard !hostBoardClosed, !board.isClosed, choice.prop != spec.baseProp else { return }
         _ = try? board.update(object.id, props: .object(["base": .string(choice.prop)]))
     }
 
@@ -1313,7 +1328,7 @@ extension ChangesTile {
     /// Return compares with it, Esc or a click elsewhere leaves the base as it is. A name git
     /// doesn't know shows as the tile's notice, and the picker is still there to fix it.
     fileprivate func askForBase(below rect: NSRect) {
-        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
+        guard !hostBoardClosed, !board.isClosed else { return }
         let field = NSTextField(string: "")
         field.placeholderString = "commit, branch, or tag (HEAD~3, origin/main, v1.2)"
         field.font = .systemFont(ofSize: 12)

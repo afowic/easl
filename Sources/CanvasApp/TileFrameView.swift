@@ -496,10 +496,17 @@ final class TileFrameView: NSView {
                 note.setHostBoardClosed(true)
             } else if let code = content as? CodeTile {
                 code.setHostBoardClosed(true)
+            } else if let changes = content as? ChangesTile {
+                changes.setHostBoardClosed(true)
+            } else if let html = content as? HtmlTile {
+                html.setHostBoardClosed(true)
+                html.showSnapshot(true)
             } else {
                 content.showSnapshot(true)
             }
         } else {
+            (content as? HtmlTile)?.setHostBoardClosed(false)
+            (content as? ChangesTile)?.setHostBoardClosed(false)
             content.setLive(isLive)
             (content as? TerminalTile)?.setHostBoardClosed(false)
             (content as? NoteTile)?.setHostBoardClosed(false)
@@ -508,7 +515,7 @@ final class TileFrameView: NSView {
         }
         (content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
         if closed {
-            if !isLive || !(content is NoteTile || content is CodeTile || content is TerminalTile || content is QuestionTile) {
+            if !isLive || !(content is NoteTile || content is CodeTile || content is TerminalTile || content is QuestionTile || content is ChangesTile) {
                 requestCard()
             } else {
                 revealWhenReady()
@@ -581,7 +588,7 @@ final class TileFrameView: NSView {
         syncTitle()
         if hostBoardClosed {
             if contentLive {
-                let scale = isLive ? (window?.backingScaleFactor ?? 1) : Self.cardPixelsPerPoint
+                let scale = (isLive ? (window?.backingScaleFactor ?? 1) : Self.cardPixelsPerPoint) * zoom
                 let request = TileRenderRequest(size: content.bounds.size, scale: scale,
                                                 full: false, appearance: effectiveAppearance)
                 let image = request.image(of: content)
