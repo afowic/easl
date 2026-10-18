@@ -611,7 +611,7 @@ final class TileFrameView: NSView {
             Metrics.shared.span("card", "card.call.\(kind)", detail: objectID) {
                 cardTask = Task { [weak self, content] in
                     let image = await content.cardSnapshot()
-                    guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return nil }
+                    guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return }
                     self.cardTask = nil
                     DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
                     Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
@@ -621,7 +621,6 @@ final class TileFrameView: NSView {
                         self.cardTitle.isHidden = self.card.image != nil
                         self.showContent(false)
                     }
-                    return image
                 }
             }
         }
@@ -643,19 +642,21 @@ final class TileFrameView: NSView {
         guard !isLive, !contentLive else { return }
         invalidateCard()
         let request = cardRequest
-        let task = Task { [content] in await content.cardSnapshot() }
+        let task = Task { [weak self, content] in
+            let image = await content.cardSnapshot()
+            guard !Task.isCancelled, let self, self.cardRequest == request else { return }
+            self.cardTask = nil
+            guard !self.hostBoardClosed, !self.isLive, let image else { return }
+            self.card.image = self.cardImage(image)
+            self.card.isHidden = false
+            self.cardTitle.isHidden = true
+        }
         cardTask = task
-        let image = await withTaskCancellationHandler {
+        await withTaskCancellationHandler {
             await task.value
         } onCancel: {
             task.cancel()
         }
-        guard cardRequest == request else { return }
-        cardTask = nil
-        guard !Task.isCancelled, !task.isCancelled, !hostBoardClosed, !isLive, let image else { return }
-        card.image = cardImage(image)
-        card.isHidden = false
-        cardTitle.isHidden = true
     }
 
     /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its
@@ -665,7 +666,7 @@ final class TileFrameView: NSView {
     }
 
     private var cardRequest = 0
-    private var cardTask: Task<NSImage?, Never>?
+    private var cardTask: Task<Void, Never>?
 
     deinit {
         cardTask?.cancel()
