@@ -897,6 +897,8 @@ final class NoteTile: NSView, TileContent {
 /// A note is short; lay all of it out once per content change instead. Older SDKs do not expose
 /// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     /// The text's context menu leads with Mention: the block under the right-click.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = (super.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()

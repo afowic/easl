@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -70,8 +71,7 @@ def main():
 
     board = call("board.open", {"root": args.root, "select": False})["board"]
     existing = call("board.get", {"board": board})["objects"]
-    for obj in existing:
-        call("object.delete", {"id": obj["id"]})
+    assert existing == [], "Use a new, empty scratch board root"
     markdown = "# Closed board inspection\n\nCopy this closed-board text.\n\n" + "\n\n".join(f"Retained paragraph {n}." for n in range(1, 31))
     note = call("object.create", {"board": board, "type": "note", "props": {"markdown": markdown},
                                   "frame": {"x": 0, "y": 0, "w": 560, "h": 360}})["object"]
@@ -87,9 +87,10 @@ def main():
             time.sleep(0.2)
     input_event("shortcut", "0", "--mods", "cmd")
     time.sleep(0.5)
-    distant = call("object.create", {"board": board, "type": "note", "props": {"markdown": "Hidden closed-board attention target"},
-                                     "frame": {"x": 5000, "y": 5000, "w": 300, "h": 200}})["object"]
-    call("view.attention", {"id": distant["id"], "message": "Closed boards must not join the tour"})
+    call("object.create", {"board": board, "type": "question",
+                           "props": {"question": "Hidden closed-board question", "asker": {"name": "closed-board regression"},
+                                     "options": [{"id": "a", "label": "Keep unanswered"}], "keep": True},
+                           "frame": {"x": 5000, "y": 5000, "w": 300, "h": 200}})
     call("board.close", {"board": board})
     deadline = time.monotonic() + 10
     while not remote_state()["closed"]:
@@ -106,7 +107,12 @@ def main():
     input_event("shortcut", "a", "--mods", "cmd")
     input_event("shortcut", "c", "--mods", "cmd")
     selected = remote_state()
-    expect("closed note selects text to copy", any("Copy this closed-board text." in text for text in selected["selectedText"]), selected["selectedText"])
+    expected_text = "\n".join(["Closed board inspection", "Copy this closed-board text."] + [f"Retained paragraph {n}." for n in range(1, 31)])
+    expected_hash = hashlib.sha256(expected_text.encode()).hexdigest()
+    expect("closed note selects text to copy", selected["selectedTextHashes"] == [expected_hash], selected["selectedTextHashes"])
+    if selected["selectedTextHashes"] == [expected_hash]:
+        copied = subprocess.check_output(["pbpaste"])
+        expect("closed note copies its selected text", hashlib.sha256(copied).hexdigest() == expected_hash, {"matchesFixture": hashlib.sha256(copied).hexdigest() == expected_hash})
     input_event("scroll", x, y, 0, -80)
     input_event("scroll", 900, 400, -160, 0)
     input_event("drag", 900, 400, 1040, 450, "--middle")

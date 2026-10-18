@@ -25,6 +25,8 @@ The Swift navigation fixture builds with `--build-system native --enable-index-s
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
 
+`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. It kills the input link before delivering the PID notification and checks that the server is reaped. A second case checks byte-for-byte LSP forwarding. Both run through the Python discovery command above and need Bun, as the host launcher does.
+
 ## Rotating an omp lead
 
 `scripts/rotate-lead.ts` runs one guarded fresh restart and one out-of-band handoff through the existing easl CLI. It is a finite developer tool, not a scheduler:
@@ -126,6 +128,7 @@ scripts/dev.sh input text "hello"                   # insert into the first resp
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
+scripts/dev.sh input state                         # app.log: window, closed state, viewport, responder, and object/selection hashes; no source text
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
@@ -145,6 +148,14 @@ Client mode with two instances on one Mac: start the host, `EASL_DEV_HOME=/tmp/e
 Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-rate burst, e.g. `input scroll 950 220 -40 -15 --repeat 120`; a `magnify` burst is one gesture (began, changed…, ended). A `scroll` burst sends continuous (trackpad-precise) steps without a gesture phase: on macOS 26 NSScrollView tracks a real phased scroll itself, and a replayed phased gesture only moved the view by its first step. `--gesture` replays the burst as that phased gesture anyway, for views that own a gesture from its first event (a changes tile keeps a whole gesture, the board never pans in it). A horizontal-dominant step (`|dx| > |dy|`) pans even over a code tile or a terminal; a vertical one over a terminal pans only while the terminal has neither keyboard focus nor scrollback (a fresh shell; a full-screen TUI in the alternate screen). When the burst ends, `app.log` records `longest gap … before step …, mean lateness …`. The longest gap between two steps is the longest stall a person sees, and it is the number to compare before and after a performance change. `scripts/perf-replica.sh start <board-id|file> [app]` copies a real board (terminals dropped) into a scratch home to measure against. It launches unfocused on the current Space and uses yabai only to look up the window id. `[app]` runs a given bundle, so two frozen builds can be measured in turns.
 
 `magnify` is a real gesture event (CG type 29 with HID zoom type), so NSScrollView runs its own live magnification and the board's liveness pass runs at the end, exactly as for a trackpad pinch. Calling `setMagnification` per step instead measures a different thing. Live magnification anchors at the real pointer, so the replay moves the document back under the replayed point after each step. Put that point over empty board or a code tile: a note or terminal under it takes the gesture. On macOS 26 AppKit damps replayed steps after the first few (0.05 per step barely moves; `0.25 --repeat 45` goes from fit to 100% and `-0.25 --repeat 45` back out, rubber-banding at the limits).
+
+`Tests/RemoteClosedBoard/run.py` exercises a separate development viewer of a scratch host. It requires macOS, Pillow, the viewer checkout and home, a local Unix socket forwarding to the scratch host, its SSH target and home, and an empty scratch board root. It checks pan, native screenshot changes on zoom, selected text, edit refusal, the hidden closed tab's needs-you behavior, and host state after reopen. It captures only the viewer window by ID. Follow the machine's GUI policy before launching it.
+
+```sh
+python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DEV_HOME" \
+  --host-socket /tmp/owned-host.sock --host-home /tmp/owned-host-home --host deckbox \
+  --root /tmp/owned-empty-board --out /tmp/owned-proof
+```
 
 ### Performance probes
 

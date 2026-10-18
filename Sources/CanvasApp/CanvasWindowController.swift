@@ -1378,7 +1378,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 return true
             }
             let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-            if flags == .command, ["a", "c"].contains(event.charactersIgnoringModifiers ?? "") { return false }
+            if flags == .command, let key = event.charactersIgnoringModifiers, key == "a" || key == "c" {
+                let action = key == "a" ? #selector(NSText.selectAll(_:)) : #selector(NSText.copy(_:))
+                if let responder = window?.firstResponder,
+                   responder is CodeRowsView || responder is QuestionTile || (responder as? NSTextView)?.isEditable == false,
+                   responder.responds(to: action) {
+                    responder.perform(action, with: nil)
+                }
+                return true
+            }
             if Self.menuItem(for: event, in: NSApp.mainMenu) != nil {
                 _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
                 return true

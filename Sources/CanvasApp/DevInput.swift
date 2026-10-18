@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import CryptoKit
 
 /// Development input replay (`EASL_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
 /// Agents test the UI while the window sits on a Space nobody is viewing, where real HID input
@@ -153,6 +154,11 @@ enum DevInput {
             return Metrics.shared.span("dev", "dev.stall") { Thread.sleep(forTimeInterval: ms / 1000) }
         }
         if fields["kind"] == "state" {
+            func fingerprint(_ data: Data) -> String {
+                SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
             func selectedText(in view: NSView) -> [String] {
                 if let text = view as? NSTextView, !text.isHiddenOrHasHiddenAncestor {
                     return text.selectedRanges.compactMap { value in
@@ -173,8 +179,11 @@ enum DevInput {
                     "selected": .bool(window.tabGroup?.selectedWindow === window || window.tabGroup == nil),
                     "viewport": controller.canvas.viewport.json,
                     "responder": .string(window.firstResponder.map { String(describing: type(of: $0)) } ?? ""),
-                    "selectedText": .array(window.contentView.map { selectedText(in: $0).map(JSONValue.string) } ?? []),
-                    "objects": .array(controller.board.snapshot.objects.compactMap { try? JSONValue.encode($0) }),
+                    "selectedTextHashes": .array(window.contentView.map { selectedText(in: $0).map { .string(fingerprint(Data($0.utf8))) } } ?? []),
+                    "objects": .array(controller.board.snapshot.objects.sorted { $0.id < $1.id }.compactMap { object in
+                        guard let data = try? encoder.encode(object) else { return nil }
+                        return .object(["id": .string(object.id), "hash": .string(fingerprint(data))])
+                    }),
                 ])
             }
             if let data = try? JSONEncoder().encode(JSONValue.array(windows)) {

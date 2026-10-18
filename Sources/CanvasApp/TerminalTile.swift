@@ -1431,7 +1431,7 @@ final class TerminalTile: NSView, TileContent {
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
         if hostBoardClosed {
             let style = TerminalConfig.shared.style(for: effectiveAppearance)
-            let text = NSTextView(frame: bounds)
+            let text = ClosedTerminalTextView(frame: bounds)
             text.isEditable = false
             text.isSelectable = true
             text.isRichText = false
@@ -1626,5 +1626,16 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
     /// clipboard managers. A local terminal's copies are ordinary.
     var terminalClipboardWritesArePrivate: Bool {
         tile?.isRemote == true
+    }
+}
+
+private final class ClosedTerminalTextView: NSTextView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func copy(_ sender: Any?) {
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        NSPasteboard.general.clear(privately: true)
+        NSPasteboard.general.setString((string as NSString).substring(with: range), forType: .string)
     }
 }

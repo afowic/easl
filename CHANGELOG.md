@@ -43,6 +43,9 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Hovering a group's author mark no longer crashes easl while its tooltip appears.
+- Remote diagrams leave "Asking" and show late delegated failures after a zero-timeout reload returns. The last graph stays visible when its aim still matches. Requires the easld host update.
+- Host language servers stop when their viewer's SSH link ends, including before the viewer receives the host PID. The viewer-supplied launcher owns cleanup on Linux and macOS.
+- Host-closed boards allow panning, zooming, scrolling, and read-only text selection without enabling edits or removing the closed banner.
 
 ## 0.2.7
 
