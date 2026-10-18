@@ -2050,8 +2050,8 @@ final class BoardMirrorTests {
         #expect(mirror.drawingMachines == ["mch_01HOME"])
     }
 
-    @Test(arguments: ["move", "assignment", "destination", "incarnation", "online-read-failure", "offline-read-failure"])
-    func aMoveUsesTheLiveURLOnlyWhileItsPageAndDestinationRemainCurrent(_ transition: String) async throws {
+    @Test(arguments: ["assignment", "destination", "incarnation", "online-read-failure", "offline-read-failure"])
+    func aMoveCannotOutliveItsPageOrUseASavedURLAfterAFailedLiveRead(_ transition: String) async throws {
         let source = DrawingMachine(id: "mch_01SOURCE", host: "source")
         let destination = DrawingMachine(id: "mch_01DEST", host: "destination")
         let other = DrawingMachine(id: "mch_01OTHER", host: "other")
@@ -2099,15 +2099,9 @@ final class BoardMirrorTests {
         default: break
         }
         pending.withLock { $0 }?()
-        if transition == "move" {
-            #expect(await moving.value == nil)
-            try await eventually { DrawingMachine(host.objects[page.id]!.props) == destination }
-            #expect(host.objects[page.id]?.props["url"] == "https://page.example/live")
-        } else {
-            #expect(await moving.value == (transition == "assignment" ? "conflict" : "unavailable"))
-            #expect(host.objects[page.id]?.props["url"] == "https://page.example/saved")
-            #expect(DrawingMachine(host.objects[page.id]!.props) == (transition == "assignment" ? other : source))
-        }
+        #expect(await moving.value == (transition == "assignment" ? "conflict" : "unavailable"))
+        #expect(host.objects[page.id]?.props["url"] == "https://page.example/saved")
+        #expect(DrawingMachine(host.objects[page.id]!.props) == (transition == "assignment" ? other : source))
     }
 
     /// A delegated call that opens or drives a tile's page waits for the events easld sent before
