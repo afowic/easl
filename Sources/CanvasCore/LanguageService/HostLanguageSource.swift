@@ -96,7 +96,7 @@ final class HostLanguageSource: LanguageSource {
       stopped = true;
       process.stdin.unpipe(child.stdin);
       process.stdin.pause();
-      if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch {} }
+      if (child.pid) cp.spawnSync("/bin/kill", ["-KILL", "--", String(-child.pid)], { stdio: "ignore" });
     };
     process.stdin.on("end", stop);
     process.stdin.on("error", stop);
