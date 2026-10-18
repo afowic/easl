@@ -378,11 +378,11 @@ def main():
             try:
                 args.out.joinpath("lsp-events.json").write_text(json.dumps(protocol_events(), indent=2) + "\n")
             except Exception as error:
-                if original_error is None and cleanup_error is None:
+                if original_error is None and cleanup_error is None and not failures:
                     raise
                 print(f"Protocol evidence retention also failed: {error!r}", file=sys.stderr)
             if cleanup_error is not None:
-                if original_error is None:
+                if original_error is None and not failures:
                     raise cleanup_error
                 print(f"Host cleanup also failed: {cleanup_error!r}", file=sys.stderr)
 
@@ -507,7 +507,13 @@ def main():
     try:
         exercise_code()
     finally:
-        args.out.joinpath("observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+        original_error = sys.exc_info()[1]
+        try:
+            args.out.joinpath("observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+        except Exception as error:
+            if original_error is None and not failures:
+                raise
+            print(f"Observation retention also failed: {error!r}", file=sys.stderr)
     if failures:
         raise SystemExit("Failed: " + ", ".join(failures))
 
@@ -516,4 +522,10 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        end_session()
+        original_error = sys.exc_info()[1]
+        try:
+            end_session()
+        except Exception as error:
+            if original_error is None:
+                raise
+            print(f"Native session cleanup also failed: {error!r}", file=sys.stderr)

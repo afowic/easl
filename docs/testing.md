@@ -188,7 +188,7 @@ The runner writes observations, protocol evidence, native action receipts, and C
 
 ```sh
 python3 Tests/RemoteClosedBoard/run.py --checkout "$PWD" --viewer-home "$EASL_DEV_HOME" \
-  --host-socket "$EASL_DEV_REMOTE_HOME/easl.sock" --host-home "$EASL_DEV_REMOTE_HOME" --host easl-guest \
+  --host-socket "$G/host/easl.sock" --host-home "$G/host" --host easl-guest \
   --root "$FIXTURE" --fixture-directory "$FIXTURE" --out "$FIXTURE/proof"
 ```
 
