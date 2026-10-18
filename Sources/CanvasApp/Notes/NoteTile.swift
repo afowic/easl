@@ -213,7 +213,7 @@ final class NoteTile: NSView, TileContent {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live, window != nil else { return }
+        guard live, !display.isSelectable, window != nil else { return }
         if board.isRemote {
             resolveHost()
             return
@@ -898,6 +898,14 @@ final class NoteTile: NSView, TileContent {
 /// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func copy(_ sender: Any?) {
+        guard isSelectable else { return super.copy(sender) }
+        let range = selectedRange()
+        guard range.length > 0 else { return }
+        NSPasteboard.general.clear(privately: true)
+        NSPasteboard.general.setString((string as NSString).substring(with: range), forType: .string)
+    }
 
     /// The text's context menu leads with Mention: the block under the right-click.
     override func menu(for event: NSEvent) -> NSMenu? {

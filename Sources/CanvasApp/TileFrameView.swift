@@ -484,6 +484,12 @@ final class TileFrameView: NSView {
         updateTint()
     }
 
+    func hostBoardAvailabilityChanged() {
+        cardRequest += 1
+        if isLive { revealWhenReady() }
+        else { requestCard() }
+    }
+
     /// Longest a card covers content that never reports ready (a page whose script fails).
     static let revealLimit: TimeInterval = 2
 
@@ -542,6 +548,17 @@ final class TileFrameView: NSView {
 
     private func requestCard() {
         syncTitle()
+        if (window?.windowController as? CanvasWindowController)?.hostBoardClosed == true {
+            if contentLive {
+                let request = TileRenderRequest(size: content.bounds.size, scale: Self.cardPixelsPerPoint,
+                                                full: false, appearance: effectiveAppearance)
+                card.image = request.image(of: content).map { cardImage($0) }
+                card.isHidden = card.image == nil
+                cardTitle.isHidden = card.image != nil
+            }
+            showContent(false)
+            return
+        }
         let request = cardRequest
         let asked = DevPerf.mark()
         let kind = String(describing: type(of: content))
@@ -575,6 +592,7 @@ final class TileFrameView: NSView {
     /// model first (`cardSnapshot` reloads a model that isn't current), so it shows what the
     /// tile holds now.
     func refreshCard() async {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         guard !isLive, !contentLive else { return }
         let request = cardRequest
         let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in

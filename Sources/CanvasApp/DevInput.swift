@@ -168,6 +168,7 @@ enum DevInput {
                     }
                 }
                 if let rows = view as? CodeRowsView, let text = rows.selectedText { return [text] }
+                if let question = view as? QuestionTile, let text = question.selectedText { return [text] }
                 return view.subviews.flatMap { selectedText(in: $0) }
             }
             let windows: [JSONValue] = NSApp.windows.compactMap { window in

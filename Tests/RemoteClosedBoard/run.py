@@ -91,12 +91,16 @@ def main():
                            "props": {"question": "Hidden closed-board question", "asker": {"name": "closed-board regression"},
                                      "options": [{"id": "a", "label": "Keep unanswered"}], "keep": True},
                            "frame": {"x": 5000, "y": 5000, "w": 300, "h": 200}})
+    input_event("drag", 700, 600, -7300, 600, "--middle")
+    time.sleep(2)
     call("board.close", {"board": board})
     deadline = time.monotonic() + 10
     while not remote_state()["closed"]:
         if time.monotonic() >= deadline:
             raise RuntimeError("The viewer did not observe host close")
         time.sleep(0.1)
+    input_event("drag", 700, 600, 8700, 600, "--middle")
+    time.sleep(0.5)
     before = remote_state()
     capture("closed-before.png", before["window"])
     rect = before["viewport"]["rect"]
@@ -133,6 +137,9 @@ def main():
     input_event("shortcut", "n", "--mods", "cmd")
     input_event("key", "delete")
     input_event("text", "THIS EDIT MUST BE REFUSED")
+    input_event("key", "escape")
+    input_event("key", "delete")
+    input_event("mainmenu", "Edit/Select All")
     after_edit = remote_state()
     expect("closed board refuses edits", after_edit["objects"] == before["objects"], after_edit["objects"])
     tour_root = args.viewer_home.parent / "easl-followups-tour"

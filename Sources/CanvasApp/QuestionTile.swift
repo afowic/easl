@@ -264,7 +264,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         page.needsDisplay = true
     }
 
-    fileprivate var selectedText: String? {
+    var selectedText: String? {
         guard let selection, let text = painter?.question, NSMaxRange(selection) <= (text.string as NSString).length else { return nil }
         return (text.string as NSString).substring(with: selection)
     }
@@ -297,6 +297,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note. Closed: Return
     /// archives. Esc gives the keyboard back to the canvas.
     override func keyDown(with event: NSEvent) {
+        guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         guard modifiers.isEmpty else { return super.keyDown(with: event) }
         let open = spec.status == .open

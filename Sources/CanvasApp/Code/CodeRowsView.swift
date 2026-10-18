@@ -221,7 +221,7 @@ final class CodeRowsView: NSView {
 
     @objc func copy(_ sender: Any?) {
         guard let text = selectedText else { return }
-        NSPasteboard.general.clearContents()
+        NSPasteboard.general.clear(privately: inspectingClosedBoard)
         NSPasteboard.general.setString(text, forType: .string)
     }
 

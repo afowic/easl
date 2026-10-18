@@ -286,6 +286,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                     tile.content.setLive(false)
                 }
                 (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+                tile.hostBoardAvailabilityChanged()
             }
             let cover = ClosedBoardView(canvas: canvas, frame: container.bounds)
             cover.autoresizingMask = [.width, .height]
@@ -302,6 +303,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 (tile.content as? CodeTile)?.setHostBoardClosed(false)
                 if !(tile.content is TerminalTile) { tile.content.showSnapshot(false) }
                 (tile.content as? RemoteBrowserTile)?.hostBoardAvailabilityChanged()
+                tile.hostBoardAvailabilityChanged()
             }
         }
         banner.show(remote.mirror.state, availability: remote.mirror.availability, host: remote.host.name, problem: remote.mirror.problem)
@@ -1007,6 +1009,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Edit ▸ Select All reaching the board: a text field or view holding the keyboard (a browser
     /// tile's address, a filter, a note being edited) selects its own text; else every object.
     @objc func selectAllObjects(_ sender: Any?) {
+        guard !hostBoardClosed else { return }
         if let text = window?.firstResponder as? NSText { return text.selectAll(sender) }
         canvas.selectAll()
     }

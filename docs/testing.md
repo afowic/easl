@@ -25,7 +25,7 @@ The Swift navigation fixture builds with `--build-system native --enable-index-s
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
 
-`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. It kills the input link before delivering the PID notification and checks that the server is reaped. A second case checks byte-for-byte LSP forwarding. Both run through the Python discovery command above and need Bun, as the host launcher does.
+`scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. It kills the input link before delivering the PID notification and checks that the server is reaped. Other cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. They run through the Python discovery command above and need Bun, as the host launcher does.
 
 ## Rotating an omp lead
 

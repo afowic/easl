@@ -30,6 +30,7 @@ final class CodeTile: NSView, TileContent {
     private var flashTimer: Timer?
 
     private var isLive = true
+    private var hostBoardClosed = false
     private var needsLoad = true
     private var loadTask: Task<Void, Never>?
     private var anchorTask: Task<Void, Never>?
@@ -1033,15 +1034,26 @@ extension CodeTile {
 
 extension CodeTile {
     func setHostBoardClosed(_ closed: Bool) {
-        guard closed else { return }
+        guard hostBoardClosed != closed else { return }
+        let live = isLive
         setLive(false)
-        addSubview(rowsView)
-        addSubview(header)
+        hostBoardClosed = closed
+        setLive(live)
     }
 
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
+        if hostBoardClosed {
+            if live {
+                addSubview(rowsView)
+                addSubview(header)
+            } else {
+                rowsView.removeFromSuperview()
+                header.removeFromSuperview()
+            }
+            return
+        }
         if live {
             if watcherSuspended { watcher?.resume() }
             watcherSuspended = false

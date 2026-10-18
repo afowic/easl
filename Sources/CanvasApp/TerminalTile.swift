@@ -60,6 +60,7 @@ final class TerminalTile: NSView, TileContent {
             lastRemoteScreen = nil
             terminal.controller = TerminalConfig.shared.controller
         }
+        updateSurfaceVisibility()
     }
 
     func discard() {
@@ -1297,7 +1298,7 @@ final class TerminalTile: NSView, TileContent {
     /// change, and only occlusion stops it.
     private func updateSurfaceVisibility() {
         let shown = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
-        let wanted = isLive && shown
+        let wanted = isLive && shown && !hostBoardClosed
         if wanted != countedDrawable {
             countedDrawable = wanted
             UserIdleWatch.shared.terminalDrawable(wanted)

@@ -13,7 +13,7 @@ final class CanvasDocumentView: NSView {
     // nonisolated: AppKit asks on every coordinate transform, and the @objc thunk of a main-actor
     // override otherwise pays a runtime executor check each time.
     nonisolated override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { canvas?.remote?.mirror.availability != .closed }
     /// Canvas gestures work on the first click into an inactive window, like any canvas app.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -74,6 +74,7 @@ final class CanvasDocumentView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
 
     override func keyDown(with event: NSEvent) {
+        guard canvas?.remote?.mirror.availability != .closed else { return }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let plain = modifiers.isEmpty
         // Return hands the keyboard to the one selected tile (Esc in it hands it back).
@@ -634,7 +635,9 @@ final class CanvasView: NSScrollView {
         scheduleActivitySettle()
         refreshRings()
         // Selecting a marked object is the user acknowledging it.
-        for id in added where markers[id] != nil { board.clearAttention(id) }
+        if remote?.mirror.availability != .closed {
+            for id in added where markers[id] != nil { board.clearAttention(id) }
+        }
         // The keyboard never stays behind in a tile the selection left (`KeyboardFocus`).
         hand(KeyboardFocus.afterSelectionChange(ids, holder: keyboardHolder))
         onSelectionChange?()
@@ -2323,6 +2326,7 @@ final class CanvasView: NSScrollView {
     }
 
     private func didSee(_ id: ObjectID) {
+        guard remote?.mirror.availability != .closed else { return }
         if tiles[id]?.content is TerminalTile {
             seenLocally.insert(id)
             board.markSeen(id)
@@ -2426,14 +2430,16 @@ final class CanvasView: NSScrollView {
             objectsMoved()
         }
         // Mid-pinch, LOD flips wait for the gesture to end.
-        if !magnifying, remote?.mirror.availability != .closed {
+        if !magnifying {
+            let closed = remote?.mirror.availability == .closed
             let scale = magnification
             for tile in tiles.values {
+                if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile) { continue }
                 tile.setLive(shouldBeLive(tile, scale: scale))
                 tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }
             // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
-            if scale != settledMagnification {
+            if !closed, scale != settledMagnification {
                 settledMagnification = scale
                 for tile in tiles.values { (tile.content as? BrowserTile)?.zoomChanged() }
             }
