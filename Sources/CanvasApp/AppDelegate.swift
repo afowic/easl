@@ -1419,12 +1419,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.prompt = "Open Board"
-        panel.directoryURL = Self.configuredBoardDirectory ?? keyController?.board.root
+        let controller = keyController
+        panel.directoryURL = controller?.remote == nil
+            ? (Self.configuredBoardDirectory ?? controller?.board.root)
+            : controller?.board.root
         let chosen: (NSApplication.ModalResponse) -> Void = { [weak self, panel] response in
             guard response == .OK, let url = panel.url else { return }
             self?.open(root: url)
         }
-        if let window = keyController?.window {
+        if let window = controller?.window {
             panel.beginSheetModal(for: window, completionHandler: chosen)
         } else {
             panel.begin(completionHandler: chosen)

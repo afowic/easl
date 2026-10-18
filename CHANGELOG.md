@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Set `canvas.boardDirectory` in macOS user defaults to choose the default startup folder and the starting folder for Open Board… and the tab bar's + button. Explicit launch roots still win; existing boards and their storage stay where they are.
+- Set `canvas.boardDirectory` in macOS user defaults to choose the default startup folder and the starting folder for Open Board… and the tab bar's + button on local boards or with no board open. Remote boards retain their existing picker behavior. Explicit launch roots still win; existing boards and their storage stay where they are.
 - **Install updates while your Mac is idle.** Enable easl › Install Updates Automatically, off by default, to download and verify newer releases and install after 10 minutes without input anywhere in your login session. Updates reopen your local and remote tabs without taking focus or changing Spaces. Agents can check with `easl app.update check` or install immediately with `easl app.update install`. Both paths keep the manual updater's signature, Team ID, and Gatekeeper checks. Atomic bundle replacement keeps a complete app at its installed path if interrupted. Failures report why when you next look at easl. Failed board recovery offers Retry or Discard without replacing your normal reopen list on later launches.
 
 ## 0.2.8

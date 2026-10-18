@@ -58,7 +58,8 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
 5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
 To start in a different folder when opening easl from Finder, and use that folder as the starting
-point for File › Open Board… and the tab bar's + button, set a default board directory:
+point for File › Open Board… and the tab bar's + button on local boards or with no board open,
+set a default board directory:
 
 ```sh
 defaults write net.waldin.easl canvas.boardDirectory -string "$HOME/Developer"
@@ -67,6 +68,7 @@ defaults write net.waldin.easl canvas.boardDirectory -string "$HOME/Developer"
 Use an existing absolute path or a `~/` path. Restart easl after changing it. An explicit `EASL_ROOT`,
 command-line folder, or shell working directory still takes precedence at launch. The setting does
 not move existing boards, restrict which folders can open, or change where board data is stored.
+When a remote board is active, both pickers ignore this preference and retain their existing behavior.
 Unset it with `defaults delete net.waldin.easl canvas.boardDirectory`; missing directories, files and
 relative paths fall back to the usual home-folder launch and active-board picker behavior.
 
