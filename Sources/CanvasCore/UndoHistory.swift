@@ -211,7 +211,7 @@ public final class UndoHistory {
         return .object(props)
     }
 
-    static func rewriteObjects(in changes: inout [Change], _ transform: (CanvasObject) -> CanvasObject) {
+    nonisolated static func rewriteObjects(in changes: inout [Change], _ transform: (CanvasObject) -> CanvasObject) {
         for index in changes.indices {
             switch changes[index] {
             case .created(let object): changes[index] = .created(transform(object))
