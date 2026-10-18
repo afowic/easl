@@ -153,6 +153,15 @@ def main():
     after_edit = remote_state()
     expect("closed board refuses edits", after_edit["objects"] == before["objects"], after_edit["objects"])
     expect("closed menu Select All does not select board objects", after_edit["selectedObjects"] == before["selectedObjects"], after_edit["selectedObjects"])
+    before_terminal = remote_state()
+    input_event("shortcut", "t", "--mods", "cmd")
+    after_terminal = remote_state()
+    expect("closed New Terminal shortcut preserves the viewport, selection and focus",
+           after_terminal["closed"] and after_terminal["objects"] == before_terminal["objects"]
+           and after_terminal["selectedObjects"] == before_terminal["selectedObjects"]
+           and after_terminal["responder"] == before_terminal["responder"]
+           and after_terminal["viewport"] == before_terminal["viewport"],
+           {"before": before_terminal, "after": after_terminal})
     tour_root = args.viewer_home.parent / "easl-followups-tour"
     tour_root.mkdir(exist_ok=True)
     local = call("board.open", {"root": str(tour_root), "select": True}, str(args.viewer_home / "easl.sock"))["board"]
