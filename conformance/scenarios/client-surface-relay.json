@@ -4,7 +4,7 @@
     {"call":"object.create","params":{"board":"{{board}}","type":"browser","props":{"url":"about:blank","drawingMachine":{"id":"mch_drawer","host":"drawer"}},"frame":{"x":0,"y":0,"w":640,"h":480}},"save":"browser"},
     {
       "call":"client.attach","conn":"drawer",
-      "params":{"version":"{{schemaVersion}}","schema":"{{schemaHash}}","host":"drawer","identity":"mch_drawer","serves":["browser.call","surface.stream","surface.ack","surface.input","surface.answer","surface.stop"],"boards":["{{board}}"]},
+      "params":{"version":"{{schemaVersion}}","schema":"{{schemaHash}}","host":"drawer","identity":"mch_drawer","serves":["browser.call","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop"],"boards":["{{board}}"]},
       "replies":{
         "surface.stream":[{"result":{"stream":"str_A","size":{"w":640,"h":480},"scale":1}},{"result":{"stream":"str_B","size":{"w":640,"h":480},"scale":1}}],
         "surface.ack":[
@@ -40,6 +40,8 @@
     {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"command","seq":1,"name":"copy"}]},"expect":{"response.ok":true,"response.result.accepted":1,"response.result.text":"private selection","eventCount":0}},
     {"call":"surface.answer","conn":"b","params":{"stream":"{{b.stream}}","dialog":"dlg_B","accept":true},"expect":{"response.ok":true,"eventCount":0}},
     {"call":"object.update","params":{"id":"{{browser.object.id}}","props":{"drawingMachine":{"id":"mch_other","host":"other"}}},"expect":{"response.ok":true}},
-    {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"text","seq":2,"text":"must not move with the page"}]},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}}
+    {"call":"surface.input","conn":"b","params":{"stream":"{{b.stream}}","events":[{"kind":"text","seq":2,"text":"must not move with the page"}]},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
+    {"call":"surface.progress","conn":"observer","params":{"stream":"{{a.stream}}","frame":1,"offset":0},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}},
+    {"call":"surface.progress","conn":"b","params":{"stream":"{{b.stream}}","frame":1,"offset":16384},"expect":{"response.ok":false,"response.error.code":"not_found","eventCount":0}}
   ]
 }

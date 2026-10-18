@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "12e1925173019462"
+const SchemaHash = "61151ef03a4152c8"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -45,6 +45,10 @@ var Methods = map[string]ParamSpec{
 	"surface.ack": {
 		Accepted: []string{"stream", "frame"},
 		Required: []string{"stream", "frame"},
+	},
+	"surface.progress": {
+		Accepted: []string{"stream", "frame", "offset"},
+		Required: []string{"stream", "frame", "offset"},
 	},
 	"surface.input": {
 		Accepted: []string{"stream", "events"},
@@ -333,15 +337,7 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrameDamage: Changed raster region; unchanged sharp pixels remain installed.
-type SurfaceFrameDamage struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	W float64 `json:"w"`
-	H float64 `json:"h"`
-}
-
-// SurfaceFrame: Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
+// SurfaceFrame: Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. A settled image may receive one independent High444Predictive H264 IDR, bounded to 576 KiB and transported in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata, are assembled before decoding, and are never separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input supersedes refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
@@ -349,7 +345,7 @@ type SurfaceFrame struct {
 	Input int         `json:"input"`
 	Size  SurfaceSize `json:"size"`
 	Scale float64     `json:"scale"`
-	// One of "jpeg", "png", "h264", "patch".
+	// One of "jpeg", "png", "h264".
 	Format  string `json:"format"`
 	Data    string `json:"data"`
 	Width   int    `json:"width"`
@@ -357,14 +353,16 @@ type SurfaceFrame struct {
 	Back    bool   `json:"back"`
 	Forward bool   `json:"forward"`
 	Loading bool   `json:"loading"`
-	// A bounded idle refinement, supersedable by input; only patch frames use this flag.
+	// Independent full-resolution H264 idle IDR, supersedable by input and decoded with a separate reference session.
 	Refresh *bool `json:"refresh,omitempty"`
 	// First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame.
 	Supersedes *int `json:"supersedes,omitempty"`
-	// Full-resolution raster for region composition, independent of bounded video dimensions.
+	// Original raster dimensions, retained when a refresh pads each axis to an even minimum of 16 pixels.
 	Canvas *SurfaceSize `json:"canvas,omitempty"`
-	// Changed raster region; unchanged sharp pixels remain installed.
-	Damage *SurfaceFrameDamage `json:"damage,omitempty"`
+	// Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered.
+	Offset *int `json:"offset,omitempty"`
+	// Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata.
+	Total *int `json:"total,omitempty"`
 }
 
 // SurfaceFile: A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent.

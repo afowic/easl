@@ -62,7 +62,7 @@ func attachDrawer(t *testing.T, f *fixture, identity string) *diagramPeer {
 	t.Cleanup(peer.close)
 	reply := f.as(peer, "client.attach", map[string]any{
 		"version": float64(api.SchemaVersion), "schema": api.SchemaHash, "host": "home", "identity": identity,
-		"serves": []any{"browser.call", "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"},
+		"serves": []any{"browser.call", "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"},
 		"boards": []any{f.board.ID()},
 	})
 	if reply["ok"] != true {
@@ -191,6 +191,16 @@ func TestSurfaceStreamThroughEasldIsCheckedThenGoesToTheDrawingMac(t *testing.T)
 	if request["method"] != "surface.ack" || !reflect.DeepEqual(request["params"], map[string]any{"stream": "str_1", "frame": 0.0}) || reply["ok"] != true {
 		t.Fatalf("ack reached the Mac as %v and answered %v", request, reply)
 	}
+	params = map[string]any{"stream": "str_1", "frame": 1.0, "offset": 16384.0}
+	if code, _ := errorOf(f.as(observer, "surface.progress", params)); code != "not_found" {
+		t.Fatalf("another viewer's progress = %s", code)
+	}
+	progressed := f.onSurface(viewer, "surface.progress", params)
+	request = diagramMessage(t, drawer.incoming)
+	answerSurface(f, drawer, request, map[string]any{})
+	if reply := surfaceReply(t, progressed); request["method"] != "surface.progress" || !reflect.DeepEqual(request["params"], params) || reply["ok"] != true {
+		t.Fatalf("progress reached the Mac as %v and answered %v", request, reply)
+	}
 
 	dialog := `{"event":"surface.dialog","board":"` + board + `","data":{"stream":"str_1","dialog":"dlg_1","kind":"confirm","origin":"x"}}`
 	frame := `{"event":"surface.frame","board":"` + board + `","data":{"stream":"str_1","seq":1,"format":"h264","data":"RVNWMS8rAA==","opaque":"\/"}}`
@@ -312,5 +322,26 @@ func TestAStreamEndsWithTheLinkItWasOpenedOn(t *testing.T) {
 	}
 	if len(old.incoming) != 0 {
 		t.Fatalf("the old link was asked %v", <-old.incoming)
+	}
+}
+
+func TestSurfaceProgressChecksOnlyBoundedReceiptMetadata(t *testing.T) {
+	for _, offset := range []float64{0, 16384, 573440} {
+		params := map[string]any{"stream": "str_refresh", "frame": 7.0, "offset": offset}
+		if err := checkSurface("surface.progress", params); err != nil {
+			t.Fatalf("valid progress %v: %v", params, err)
+		}
+	}
+	for _, change := range []map[string]any{
+		{"stream": "obj_wrong"}, {"frame": 0.0}, {"frame": -1.0}, {"frame": 1.5},
+		{"offset": -16384.0}, {"offset": 1.0}, {"offset": 589824.0}, {"offset": "0"},
+	} {
+		params := map[string]any{"stream": "str_refresh", "frame": 7.0, "offset": 0.0}
+		for key, value := range change {
+			params[key] = value
+		}
+		if err := checkSurface("surface.progress", params); err == nil {
+			t.Fatalf("accepted malformed progress %v", params)
+		}
 	}
 }

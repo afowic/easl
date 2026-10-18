@@ -127,6 +127,7 @@
           "browser.call",
           "surface.stream",
           "surface.ack",
+          "surface.progress",
           "surface.input",
           "surface.answer",
           "surface.stop"
@@ -758,6 +759,42 @@
           "message": "stream <str:2> is not open on this connection"
         },
         "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.progress",
+      "method": "surface.progress",
+      "conn": "observer",
+      "request": {
+        "frame": 1,
+        "offset": 0,
+        "stream": "<str:1>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:1> is not open on this connection"
+        },
+        "id": "r6",
+        "ok": false
+      }
+    },
+    {
+      "step": "surface.progress",
+      "method": "surface.progress",
+      "conn": "b",
+      "request": {
+        "frame": 1,
+        "offset": 16384,
+        "stream": "<str:2>"
+      },
+      "response": {
+        "error": {
+          "code": "not_found",
+          "message": "stream <str:2> is not open on this connection"
+        },
+        "id": "r7",
         "ok": false
       }
     }

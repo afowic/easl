@@ -119,8 +119,13 @@ public struct SurfaceVideoFrame: Sendable {
     public let height: Int
 }
 
+public enum SurfaceVideoEncodingMode: Sendable {
+    case motion, refresh
+}
+
 public final class SurfaceVideoEncoder: @unchecked Sendable {
-    private static let maximumPacketBytes = 48 * 1024
+    private let mode: SurfaceVideoEncodingMode
+    private var maximumPacketBytes: Int { mode == .refresh ? 576 * 1024 : 48 * 1024 }
     private let lock = NSLock()
     private var session: VTCompressionSession?
     private var pool: CVPixelBufferPool?
@@ -131,7 +136,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     private var sequence: Int64 = 0
     private var epoch: TimeInterval = 0
 
-    public init() {}
+    public init(mode: SurfaceVideoEncodingMode = .motion) { self.mode = mode }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
 
     public static func fittedVideoPixels(width: Int, height: Int) -> (width: Int, height: Int) {
@@ -148,13 +153,28 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         sequence = 0
     }
 
-    public func encode(_ image: CGImage, width: Int, height: Int) throws -> SurfaceVideoFrame? {
+    private func discardUnpublishedReference() {
+        if mode == .motion { clear() }
+    }
+
+    /// Refresh preserves native pixels and pads each axis to an even minimum of 16; callers crop the original canvas.
+    /// Returns nil for cancellation, codec drops, or a refresh exceeding its 576 KiB budget.
+    public func encode(_ image: CGImage, width: Int, height: Int,
+                       isCancelled: () -> Bool = { false }) throws -> SurfaceVideoFrame? {
+        guard !isCancelled() else { return nil }
         lock.lock()
         defer { lock.unlock() }
         do {
+            guard !isCancelled() else { return nil }
             try videoDimensions(width, height)
-            var target = Self.fittedVideoPixels(width: width, height: height)
-            if session != nil, requestedWidth == width, requestedHeight == height {
+            if mode == .refresh, image.width != width || image.height != height {
+                throw SurfaceVideoError.invalidDimensions
+            }
+            var target = mode == .refresh ?
+                (width: max(16, (width + 1) / 2 * 2), height: max(16, (height + 1) / 2 * 2)) :
+                Self.fittedVideoPixels(width: width, height: height)
+            try videoDimensions(target.width, target.height)
+            if mode == .motion, session != nil, requestedWidth == width, requestedHeight == height {
                 target = (self.width, self.height)
             }
             for attempt in 0..<6 {
@@ -164,16 +184,25 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                     requestedWidth = width
                     requestedHeight = height
                 }
-                guard let sample = try encodeSample(image) else { return nil }
+                guard !isCancelled() else { discardUnpublishedReference(); return nil }
+                guard let sample = try encodeSample(image, isCancelled: isCancelled) else {
+                    if isCancelled() { discardUnpublishedReference() }
+                    return nil
+                }
+                guard !isCancelled() else { discardUnpublishedReference(); return nil }
                 if let packet = try packetFromSample(sample) {
+                    guard !isCancelled() else { discardUnpublishedReference(); return nil }
                     sequence += 1
                     return SurfaceVideoFrame(data: packet, width: self.width, height: self.height)
                 }
+                if mode == .refresh { return nil }
                 // This unpublished reference cannot precede a later predicted frame.
                 clear()
-                guard target.width > 16 || target.height > 16 else { throw SurfaceVideoError.invalidPacket }
+                guard target.width > 16 || target.height > 16 else {
+                    throw SurfaceVideoError.invalidPacket
+                }
                 let size = CMSampleBufferGetTotalSampleSize(sample)
-                let scale = min(0.75, max(0.25, sqrt(Double(Self.maximumPacketBytes) / Double(size)) * 0.85))
+                let scale = min(0.75, max(0.25, sqrt(Double(maximumPacketBytes) / Double(size)) * 0.85))
                 target = attempt == 4 ? (16, 16) :
                     (max(16, Int(Double(target.width) * scale) / 2 * 2),
                      max(16, Int(Double(target.height) * scale) / 2 * 2))
@@ -185,7 +214,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         }
     }
 
-    private func encodeSample(_ image: CGImage) throws -> CMSampleBuffer? {
+    private func encodeSample(_ image: CGImage, isCancelled: () -> Bool) throws -> CMSampleBuffer? {
         guard let session, let pool else { throw SurfaceVideoError.missingOutput }
         var buffer: CVPixelBuffer?
         try videoCheck(CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer))
@@ -197,13 +226,23 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                 bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: videoColorSpace,
                 bitmapInfo: videoBitmapInfo) else { throw SurfaceVideoError.missingOutput }
             context.setBlendMode(.copy)
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            if mode == .refresh {
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                context.interpolationQuality = .none
+                context.draw(image, in: CGRect(x: 0, y: height - image.height,
+                                              width: image.width, height: image.height))
+            } else {
+                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            }
         }
+        guard !isCancelled() else { return nil }
         let output = VideoOutput<CMSampleBuffer>()
         try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
             presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - epoch, preferredTimescale: 1_000_000),
             duration: .invalid,
-            frameProperties: sequence == 0 ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
+            frameProperties: mode == .refresh || sequence == 0 ?
+                [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
             infoFlagsOut: nil, outputHandler: { status, flags, sample in
                 output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
             }))
@@ -215,14 +254,23 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
             kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true,
             kCVPixelBufferIOSurfacePropertiesKey: [:]]
+        var specification: [CFString: Any] = [
+            kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
+            kVTVideoEncoderSpecification_EnableLowLatencyRateControl: mode == .motion]
+        if mode == .refresh { specification[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] = true }
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
-            codecType: kCMVideoCodecType_H264,
-            encoderSpecification: [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-                kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true] as CFDictionary,
+            codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &session))
         guard let session else { throw SurfaceVideoError.missingOutput }
-        let settings: [(CFString, CFTypeRef)] = [
+        let settings: [(CFString, CFTypeRef)] = mode == .refresh ? [
+            (kVTCompressionPropertyKey_ProfileLevel, "H264_High444Predictive_AutoLevel" as CFString),
+            (kVTCompressionPropertyKey_RealTime, kCFBooleanFalse),
+            (kVTCompressionPropertyKey_AllowTemporalCompression, kCFBooleanFalse),
+            (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse),
+            (kVTCompressionPropertyKey_ExpectedFrameRate, NSNumber(value: 1)),
+            (kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, kCFBooleanFalse),
+            (kVTCompressionPropertyKey_Quality, NSNumber(value: 1))] : [
             (kVTCompressionPropertyKey_RealTime, kCFBooleanTrue),
             (kVTCompressionPropertyKey_AllowTemporalCompression, kCFBooleanTrue),
             (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse),
@@ -261,9 +309,10 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         let size = CMBlockBufferGetDataLength(block)
         let total = 10 + parameters[0].count + parameters[1].count + size
         guard size > 0 else { throw SurfaceVideoError.invalidPacket }
-        guard total <= Self.maximumPacketBytes else { return nil }
+        guard total <= maximumPacketBytes else { return nil }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let keyframe = !(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
+        guard mode != .refresh || keyframe else { throw SurfaceVideoError.missingKeyframe }
         var packet = Data(capacity: total)
         packet.append(contentsOf: [69, 83, 86, 49, keyframe ? 1 : 0, 4])
         for parameter in parameters {

@@ -139,18 +139,16 @@
         "stream": { "$ref": "#/definitions/SurfaceStream" }, "seq": { "type": "integer", "minimum": 1 },
         "input": { "type": "integer", "minimum": 0, "description": "Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image." },
         "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 },
-        "format": { "enum": ["jpeg", "png", "h264", "patch"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
+        "format": { "enum": ["jpeg", "png", "h264"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
         "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
         "back": { "type": "boolean" }, "forward": { "type": "boolean" }, "loading": { "type": "boolean" },
-        "refresh": { "type": "boolean", "description": "A bounded idle refinement, supersedable by input; only patch frames use this flag." },
+        "refresh": { "type": "boolean", "description": "Independent full-resolution H264 idle IDR, supersedable by input and decoded with a separate reference session." },
         "supersedes": { "type": "integer", "minimum": 1, "description": "First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame." },
-        "canvas": { "$ref": "#/definitions/SurfaceSize", "description": "Full-resolution raster for region composition, independent of bounded video dimensions." },
-        "damage": { "type": "object", "required": ["x", "y", "w", "h"], "properties": {
-          "x": { "type": "number", "minimum": 0 }, "y": { "type": "number", "minimum": 0 },
-          "w": { "type": "number", "exclusiveMinimum": 0 }, "h": { "type": "number", "exclusiveMinimum": 0 }
-        }, "additionalProperties": false, "description": "Changed raster region; unchanged sharp pixels remain installed." }
+        "canvas": { "$ref": "#/definitions/SurfaceSize", "description": "Original raster dimensions, retained when a refresh pads each axis to an even minimum of 16 pixels." },
+        "offset": { "type": "integer", "minimum": 0, "maximum": 573440, "multipleOf": 16384, "description": "Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered." },
+        "total": { "type": "integer", "minimum": 1, "maximum": 589824, "description": "Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata." }
       }, "additionalProperties": false,
-      "description": "Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."
+      "description": "Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. A settled image may receive one independent High444Predictive H264 IDR, bounded to 576 KiB and transported in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata, are assembled before decoding, and are never separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input supersedes refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."
     },
     "SurfaceFile": {
       "type": "object", "required": ["name", "type", "data"],
@@ -1030,7 +1028,7 @@
   },
   "methods": {
     "surface.stream": {
-      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one active frame is outstanding, credits never accumulate. Acknowledge each frame only after decoding and presentation. JPEG remains the default and PNG requests remain full lossless images. Explicit h264 requests negotiate adaptive JPEG or ESV1 motion with bounded lossless ESP1 changed-region patches. Input may supersede only an idle refinement; the next frame declares the canceled sequence range. The first H264 frame of each new session and after resize is a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld relays requests to the exact attached drawingMachine and pins the stream to that attachment. It forwards frame payload bytes unchanged to the owning viewer. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
+      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one logical frame is outstanding, credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default and PNG requests remain full lossless images. Explicit h264 requests negotiate adaptive JPEG or predicted ESV1 motion plus a separate bounded High444Predictive idle IDR. Refresh transport uses ordered 16 KiB chunks and a two-chunk receipt window, not tiled image refinement. surface.progress never grants decode credit. Input may supersede only idle refresh; the next frame declares the canceled sequence range. New motion sessions and resizes start with a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards payload bytes unchanged to its owning viewer. Private-event hearing is captured at open. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
       "params": {
         "type": "object", "required": ["id"],
         "properties": { "id": { "type": "string", "pattern": "^obj_[0-9A-Za-z]+$" }, "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 2, "default": 1 }, "format": { "enum": ["jpeg", "png", "h264"], "default": "jpeg" } },
@@ -1044,6 +1042,11 @@
     "surface.ack": {
       "description": "On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging.",
       "params": { "type": "object", "required": ["stream", "frame"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "frame": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+      "result": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    "surface.progress": {
+      "description": "On the opening connection, receipt one validated refresh transport chunk by its starting byte offset. This releases at most one further 16 KiB chunk within a two-chunk window, never frame or decode credit. Duplicate receipts are ignored; unsent or misaligned offsets are invalid_params. Superseded refresh receipts are ignored. surface.ack remains required only after the complete logical frame is assembled, decoded and presented.",
+      "params": { "type": "object", "required": ["stream", "frame", "offset"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "frame": { "type": "integer", "minimum": 1 }, "offset": { "type": "integer", "minimum": 0, "maximum": 573440, "multipleOf": 16384 } }, "additionalProperties": false },
       "result": { "type": "object", "properties": {}, "additionalProperties": false }
     },
     "surface.input": {
@@ -2196,7 +2199,7 @@
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
           "identity": { "$ref": "#/definitions/Id", "description": "this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored)" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.progress, surface.input, surface.answer, surface.stop (others are ignored)" },
           "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards this client serves, in a window, tab, or background attachment, each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },

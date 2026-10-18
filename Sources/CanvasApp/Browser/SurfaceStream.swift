@@ -31,11 +31,17 @@ final class SurfaceStream {
     private let encoder = SurfaceImageEncoder()
     private let inputRevision = SurfaceInputRevision()
     private let delivery = DispatchQueue(label: "easl.surface.frames", qos: .userInitiated)
-    private var lastRefinement: Int?
-    private var acknowledgedRefinement: Int?
+    private var refinementTransfer: SurfaceRefreshTransmission?
     /// When it last accepted input (system uptime): the page's dialogs go to the latest.
     private(set) var lastInput: TimeInterval = 0
-    var closed = false
+    var closed = false {
+        didSet {
+            if closed {
+                inputRevision.advance()
+                refinementTransfer = nil
+            }
+        }
+    }
     /// Where the viewer's button is down, in web view points, and the keys it holds.
     var heldButton: NSPoint?
     weak var mouseTarget: NSView?
@@ -75,13 +81,11 @@ final class SurfaceStream {
         let mode = flow.mode
         let active = pending || delivered > fence || now - lastInput < 0.35
         let lastInput = lastInput
-        let acknowledged = acknowledgedRefinement
         let encoder = encoder, revision = inputRevision
         let result = await offPool {
             Result {
                 let frame = try encoder.capture(image, width: width, height: height, mode: mode, inputActive: active,
-                    lastInput: lastInput, forceState: forceState, acknowledgedRefinement: acknowledged,
-                    revision: revision, at: now)
+                    lastInput: lastInput, forceState: forceState, revision: revision, at: now)
                 return (frame, encoder.captureDelay)
             }
         }
@@ -96,7 +100,7 @@ final class SurfaceStream {
         case .stale:
             return
         case .granted:
-            acknowledgedRefinement = lastRefinement
+            refinementTransfer = nil
             if !started {
                 started = true
                 for line in pendingEvents { owner.send(line) }
@@ -121,8 +125,8 @@ final class SurfaceStream {
         accepted = last.seq
         lastInput = ProcessInfo.processInfo.systemUptime
         inputRevision.advance()
-        acknowledgedRefinement = nil
         _ = flow.supersedeRefinement()
+        refinementTransfer = nil
         let batch = enqueue(fresh)
         surface.inputArrived()
         var result: [String: JSONValue] = ["accepted": .number(Double(fresh.count))]
@@ -164,7 +168,7 @@ final class SurfaceStream {
     }
 
     func pageStateChanged(_ frame: SurfaceEvent.Frame) -> Bool {
-        lastSent.map { !samePageState(frame, $0) } ?? true
+        frame.input != fence || (lastSent.map { !samePageState(frame, $0) } ?? true)
     }
 
     private func samePageState(_ frame: SurfaceEvent.Frame, _ last: SurfaceEvent.Frame) -> Bool {
@@ -177,26 +181,56 @@ final class SurfaceStream {
         frame.width == last.width && frame.height == last.height && frame.format == last.format
     }
 
-    func send(_ source: SurfaceEvent.Frame, refinement: Int? = nil) -> Bool {
+    func send(_ source: SurfaceEvent.Frame) -> Bool {
         var frame = source
         if format != .h264, let last = lastSent, sameState(frame, last), frame.data == last.data { return false }
         frame.supersedes = flow.publish(frame.seq, refinement: frame.refresh, at: ProcessInfo.processInfo.systemUptime)
-        lastRefinement = refinement
         fence = frame.input
         lastSent = frame
         Metrics.shared.record("surface.frame", bytes: frame.data.count)
+        if frame.refresh {
+            do {
+                var transfer = try SurfaceRefreshTransmission(frame: frame)
+                let parts = transfer.start()
+                refinementTransfer = transfer
+                parts.forEach(deliver)
+            } catch {
+                surface.end(self, "surface encoding failed")
+                return false
+            }
+        } else {
+            refinementTransfer = nil
+            deliver(frame)
+        }
+        return true
+    }
+
+    func progress(_ frame: Int, offset: Int) throws {
+        guard let lastSent, frame <= lastSent.seq else {
+            throw ApiRouter.Failure("invalid_params", "refresh frame wasn't sent")
+        }
+        guard frame == lastSent.seq, var transfer = refinementTransfer else { return }
+        let parts: [SurfaceEvent.Frame]
+        do {
+            parts = try transfer.progress(offset: offset)
+        } catch {
+            throw ApiRouter.Failure("invalid_params", "refresh part wasn't sent")
+        }
+        refinementTransfer = transfer
+        parts.forEach(deliver)
+    }
+
+    private func deliver(_ frame: SurfaceEvent.Frame) {
         let owner = owner, board = board, revision = inputRevision
         let ticket = revision.value
-        let published = frame
         delivery.async {
-            guard !published.refresh || revision.value == ticket,
-                  let line = try? EventLine("surface.frame", board: board, published.json),
-                  !published.refresh || revision.value == ticket else { return }
+            guard !frame.refresh || revision.value == ticket,
+                  let line = try? EventLine("surface.frame", board: board, frame.json),
+                  !frame.refresh || revision.value == ticket else { return }
             if owner.send(line) {
                 Metrics.shared.record("surface.frameWire", bytes: line.data.count)
             }
         }
-        return true
     }
 
     /// Whether the stream's viewer hears `event` on the stream's board.

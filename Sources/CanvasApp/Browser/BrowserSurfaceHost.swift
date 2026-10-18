@@ -34,6 +34,9 @@ final class BrowserSurfaceHost: NSObject {
         case .ack(let stream, let frame):
             try owned(stream, by: peer).ack(frame)
             return .object([:])
+        case .progress(let stream, let frame, let offset):
+            try owned(stream, by: peer).progress(frame, offset: offset)
+            return .object([:])
         case .input(let stream, let events):
             return try await owned(stream, by: peer).input(events)
         case .answer(let id, let dialog, let answer):
@@ -333,7 +336,6 @@ final class BrowserSurface {
             let input = presented ? fence : stream.fence
             var frame = SurfaceEvent.Frame(stream: stream.id, seq: seq, input: input, size: size, scale: targetScale, format: stream.format,
                                            data: Data(), width: raster.width, height: raster.height, back: back, forward: forward, loading: loading)
-            var refinement: Int?
             if stream.format == .h264 {
                 let accepted = stream.accepted
                 do {
@@ -341,15 +343,13 @@ final class BrowserSurface {
                         forceState: stream.pageStateChanged(frame), at: ProcessInfo.processInfo.systemUptime)
                     nextDelay = min(nextDelay, delay)
                     guard let encoded else { continue }
-                    guard encoded.refinement == nil || stream.accepted == accepted else { continue }
+                    guard !encoded.refresh || stream.accepted == accepted else { continue }
                     frame.format = encoded.format
                     frame.data = encoded.data
                     frame.width = encoded.width
                     frame.height = encoded.height
                     frame.canvas = encoded.canvas
-                    frame.damage = encoded.damage
-                    frame.refresh = encoded.refinement != nil
-                    refinement = encoded.refinement
+                    frame.refresh = encoded.refresh
                 } catch {
                     end(stream, "surface encoding failed")
                     continue
@@ -364,11 +364,12 @@ final class BrowserSurface {
                 frame.data = data
             }
             guard !stream.closed, stream.next == seq else { continue }
-            guard frame.data.count <= (stream.format == .h264 ? SurfaceImageEncoder.motionBytes : Self.frameBytes) else {
+            let limit = frame.refresh ? SurfaceImageEncoder.refinementBytes : SurfaceImageEncoder.motionBytes
+            guard frame.data.count <= (stream.format == .h264 ? limit : Self.frameBytes) else {
                 end(stream, "frame too large")
                 continue
             }
-            if stream.send(frame, refinement: refinement) { active = true }
+            if stream.send(frame) { active = true }
         }
         Metrics.shared.record("surface.capture", ms: (ProcessInfo.processInfo.systemUptime - started) * 1000)
         interval = active ? Self.frameInterval : min(interval * 2, Self.idleInterval, nextDelay)

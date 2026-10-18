@@ -311,8 +311,7 @@
       },
       "response": {
         "error": {
-          "code": "invalid_params",
-          "message": "frame 1 wasn't sent; the latest is 0"
+          "code": "invalid_params"
         },
         "id": "r7",
         "ok": false

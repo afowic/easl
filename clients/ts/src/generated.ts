@@ -110,7 +110,7 @@ export type SurfaceInputEvent = {
   url: string;
 };
 
-/** Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay. */
+/** Private in-memory surface frame. JPEG and PNG requests retain full images. Native h264 streams measure the first three decoded motion acknowledgements, then use JPEG on fast links or bounded predicted ESV1 video on constrained links, regardless of host topology. Motion is bounded to 256 KiB JPEG or 48 KiB H264. A settled image may receive one independent High444Predictive H264 IDR, bounded to 576 KiB and transported in ordered 16 KiB chunks with at most two unreceipted chunks. Chunks share one frame sequence and all metadata, are assembled before decoding, and are never separate images or pixel regions. surface.progress grants transport capacity only; surface.ack follows complete decode and presentation. Input supersedes refresh without waiting; the next frame declares the canceled range. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay. */
 export type SurfaceFrame = {
   stream: SurfaceStream;
   seq: number;
@@ -118,26 +118,23 @@ export type SurfaceFrame = {
   input: number;
   size: SurfaceSize;
   scale: number;
-  format: "jpeg" | "png" | "h264" | "patch";
+  format: "jpeg" | "png" | "h264";
   data: string;
   width: number;
   height: number;
   back: boolean;
   forward: boolean;
   loading: boolean;
-  /** A bounded idle refinement, supersedable by input; only patch frames use this flag. */
+  /** Independent full-resolution H264 idle IDR, supersedable by input and decoded with a separate reference session. */
   refresh?: boolean;
   /** First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame. */
   supersedes?: number;
-  /** Full-resolution raster for region composition, independent of bounded video dimensions. */
+  /** Original raster dimensions, retained when a refresh pads each axis to an even minimum of 16 pixels. */
   canvas?: SurfaceSize;
-  /** Changed raster region; unchanged sharp pixels remain installed. */
-  damage?: {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  };
+  /** Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered. */
+  offset?: number;
+  /** Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata. */
+  total?: number;
 };
 
 /** A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent. */
@@ -1027,6 +1024,13 @@ export type SurfaceAckParams = {
   frame: number;
 };
 export type SurfaceAckResult = Record<string, unknown>;
+
+export type SurfaceProgressParams = {
+  stream: SurfaceStream;
+  frame: number;
+  offset: number;
+};
+export type SurfaceProgressResult = Record<string, unknown>;
 
 export type SurfaceInputParams = {
   stream: SurfaceStream;
@@ -2085,7 +2089,7 @@ export type ClientAttachParams = {
   host?: string;
   /** this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call */
   identity?: Id;
-  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored) */
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.progress, surface.input, surface.answer, surface.stop (others are ignored) */
   serves: string[];
   /** the boards this client serves, in a window, tab, or background attachment, each open on the server; default none */
   boards?: Id[];
@@ -2171,10 +2175,12 @@ export type TextMeasureResult = {
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
   surface: {
-    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one active frame is outstanding, credits never accumulate. Acknowledge each frame only after decoding and presentation. JPEG remains the default and PNG requests remain full lossless images. Explicit h264 requests negotiate adaptive JPEG or ESV1 motion with bounded lossless ESP1 changed-region patches. Input may supersede only an idle refinement; the next frame declares the canceled sequence range. The first H264 frame of each new session and after resize is a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld relays requests to the exact attached drawingMachine and pins the stream to that attachment. It forwards frame payload bytes unchanged to the owning viewer. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
+    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one logical frame is outstanding, credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default and PNG requests remain full lossless images. Explicit h264 requests negotiate adaptive JPEG or predicted ESV1 motion plus a separate bounded High444Predictive idle IDR. Refresh transport uses ordered 16 KiB chunks and a two-chunk receipt window, not tiled image refinement. surface.progress never grants decode credit. Input may supersede only idle refresh; the next frame declares the canceled sequence range. New motion sessions and resizes start with a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards payload bytes unchanged to its owning viewer. Private-event hearing is captured at open. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
+    /** On the opening connection, receipt one validated refresh transport chunk by its starting byte offset. This releases at most one further 16 KiB chunk within a two-chunk window, never frame or decode credit. Duplicate receipts are ignored; unsent or misaligned offsets are invalid_params. Superseded refresh receipts are ignored. surface.ack remains required only after the complete logical frame is assembled, decoded and presented. */
+    progress(params: SurfaceProgressParams): Promise<SurfaceProgressResult>;
     /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
     input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
     /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. An accepted file selection cannot be empty. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Cancellation preserves the input's prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files. */
@@ -2335,6 +2341,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     surface: {
       stream: (params: SurfaceStreamParams) => call("surface.stream", params ?? {}, []) as Promise<SurfaceStreamResult>,
       ack: (params: SurfaceAckParams) => call("surface.ack", params ?? {}, []) as Promise<SurfaceAckResult>,
+      progress: (params: SurfaceProgressParams) => call("surface.progress", params ?? {}, []) as Promise<SurfaceProgressResult>,
       input: (params: SurfaceInputParams) => call("surface.input", params ?? {}, []) as Promise<SurfaceInputResult>,
       answer: (params: SurfaceAnswerParams) => call("surface.answer", params ?? {}, []) as Promise<SurfaceAnswerResult>,
       stop: (params: SurfaceStopParams) => call("surface.stop", params ?? {}, []) as Promise<SurfaceStopResult>,
@@ -2428,7 +2435,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];
