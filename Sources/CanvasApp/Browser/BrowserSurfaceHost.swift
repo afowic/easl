@@ -316,7 +316,7 @@ final class BrowserSurface {
         let presented = await Self.presented(webView)
         let size = webView.bounds.size
         let fitted = Self.fittedScale(for: size)
-        let scale = min(targets.lazy.map(\.scale).max() ?? 1, fitted)
+        let scale = min(streams.lazy.map(\.scale).max() ?? 1, fitted)
         let configuration = WKSnapshotConfiguration()
         configuration.afterScreenUpdates = false
         configuration.snapshotWidth = NSNumber(value: Double(size.width * scale / window.backingScaleFactor))
@@ -338,7 +338,7 @@ final class BrowserSurface {
             }
         }
         var images: [Variant: Data] = [:]
-        var sent = false
+        var active = false
         for (stream, fence) in zip(targets, fences) {
             guard !stream.closed, let seq = stream.next else { continue }
             let targetScale = min(stream.scale, fitted)
@@ -362,7 +362,12 @@ final class BrowserSurface {
                 let encoder = stream.video
                 let encoded = await offPool { Result { try encoder.encode(pixels, width: variant.width, height: variant.height) } }
                 switch encoded {
-                case .success(let data): frame.data = data
+                case .success(let data):
+                    guard let data else {
+                        active = true
+                        continue
+                    }
+                    frame.data = data
                 case .failure:
                     end(stream, "video encoding failed")
                     continue
@@ -383,10 +388,10 @@ final class BrowserSurface {
                 end(stream, "frame too large")
                 continue
             }
-            if stream.send(frame, version: stream.format == .h264 ? imageVersion : nil) { sent = true }
+            if stream.send(frame, version: stream.format == .h264 ? imageVersion : nil) { active = true }
         }
         Metrics.shared.record("surface.capture", ms: (ProcessInfo.processInfo.systemUptime - started) * 1000)
-        interval = sent ? Self.frameInterval : min(interval * 2, Self.idleInterval)
+        interval = active ? Self.frameInterval : min(interval * 2, Self.idleInterval)
     }
 
     private func idle() {

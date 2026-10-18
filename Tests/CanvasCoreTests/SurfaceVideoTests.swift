@@ -60,9 +60,9 @@ struct SurfaceVideoTests {
     @Test func encodedChangesAreVisibleAndImagesRemainImmutable() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        let first = try encoder.encode(image(), width: 64, height: 64)
+        let first = try #require(try encoder.encode(image(), width: 64, height: 64))
         let black = try decoder.decode(first, width: 64, height: 64)
-        let second = try encoder.encode(image(red: true), width: 64, height: 64)
+        let second = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
         let red = try decoder.decode(second, width: 64, height: 64)
         #expect(black.width == 64 && black.height == 64)
         let blackPixel = try center(black)
@@ -75,21 +75,21 @@ struct SurfaceVideoTests {
     @Test func resizingAndNewStreamsProduceRecoverableKeyframes() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        _ = try decoder.decode(encoder.encode(image(), width: 64, height: 64), width: 64, height: 64)
-        let resized = try encoder.encode(image(width: 96, height: 80, red: true), width: 96, height: 80)
+        _ = try decoder.decode(#require(try encoder.encode(image(), width: 64, height: 64)), width: 64, height: 64)
+        let resized = try #require(try encoder.encode(image(width: 96, height: 80, red: true), width: 96, height: 80))
         for consumer in [decoder, SurfaceVideoDecoder()] {
             let decoded = try consumer.decode(resized, width: 96, height: 80)
             #expect(decoded.width == 96 && decoded.height == 80)
             #expect(try center(decoded)[0] > 220)
         }
-        let restarted = try SurfaceVideoEncoder().encode(image(), width: 64, height: 64)
+        let restarted = try #require(try SurfaceVideoEncoder().encode(image(), width: 64, height: 64))
         #expect(try center(SurfaceVideoDecoder().decode(restarted, width: 64, height: 64)).allSatisfy { $0 < 30 })
     }
 
     @Test func predictedFirstFrameAndForgedKeyframeAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
-        let first = try encoder.encode(image(), width: 64, height: 64)
-        let predicted = try encoder.encode(image(), width: 64, height: 64)
+        let first = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64))
         #expect(predicted[4] == 0)
         let decoder = SurfaceVideoDecoder()
         #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 64, height: 64) }
@@ -104,8 +104,8 @@ struct SurfaceVideoTests {
 
     @Test func malformedPacketsResetTheDecoderAndKeyframesRecover() throws {
         let encoder = SurfaceVideoEncoder()
-        let keyframe = try encoder.encode(image(), width: 64, height: 64)
-        let predicted = try encoder.encode(image(), width: 64, height: 64)
+        let keyframe = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64))
         var malformed = [Data(), Data(keyframe.prefix(9)), Data(keyframe.dropLast()),
                          Data(repeating: 0, count: 8 * 1024 * 1024 + 1)]
         for (index, value) in [(0, UInt8(0)), (4, 2), (5, 3), (6, 255), (7, 255), (10, 0x68)] {
@@ -134,7 +134,7 @@ struct SurfaceVideoTests {
     @Test func invalidAndMismatchedDimensionsAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
         let source = try image()
-        let packet = try encoder.encode(source, width: 64, height: 64)
+        let packet = try #require(try encoder.encode(source, width: 64, height: 64))
         for (width, height) in [(0, 64), (-1, 64), (Int.max, Int.max), (2001, 2000), (64, 80)] {
             let decoder = SurfaceVideoDecoder()
             #expect(throws: (any Error).self) { try decoder.decode(packet, width: width, height: height) }
@@ -147,7 +147,7 @@ struct SurfaceVideoTests {
 
     @Test func oversizedParameterSetDimensionsAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
-        let original = try encoder.encode(image(), width: 64, height: 64)
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
         func golomb(_ value: Int) -> String {
             let binary = String(value + 1, radix: 2)
             return String(repeating: "0", count: binary.count - 1) + binary
@@ -175,8 +175,8 @@ struct SurfaceVideoTests {
             let fitted = SurfaceVideoEncoder.fittedVideoPixels(width: width, height: height)
             #expect(fitted.width == expectedWidth && fitted.height == expectedHeight)
             let encoder = SurfaceVideoEncoder()
-            let packet = try encoder.encode(image(width: fitted.width, height: fitted.height),
-                width: fitted.width, height: fitted.height)
+            let packet = try #require(try encoder.encode(image(width: fitted.width, height: fitted.height),
+                width: fitted.width, height: fitted.height))
             let decoded = try SurfaceVideoDecoder().decode(packet, width: fitted.width, height: fitted.height)
             #expect(decoded.width == expectedWidth && decoded.height == expectedHeight)
             #expect(try center(decoded).allSatisfy { $0 < 30 })
@@ -193,10 +193,10 @@ struct SurfaceVideoTests {
     @Test func predictedConfigurationChangesRequireAKeyframe() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        let original = try encoder.encode(image(), width: 64, height: 64)
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
         _ = try decoder.decode(original, width: 64, height: 64)
-        let resized = try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)
-        let predicted = try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)
+        let resized = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80))
+        let predicted = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80))
         #expect(predicted[4] == 0)
         #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 96, height: 80) }
         let recovered = try decoder.decode(resized, width: 96, height: 80)

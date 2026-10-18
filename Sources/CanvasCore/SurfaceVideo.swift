@@ -44,18 +44,19 @@ private let videoBitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageA
 private final class VideoOutput<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private let ready = DispatchSemaphore(value: 0)
-    private var result: Result<Value, Error>?
+    private var result: Result<Value?, Error>?
 
     func finish(status: OSStatus, dropped: Bool, value: Value?) {
         lock.lock()
         if status != noErr { result = .failure(SurfaceVideoError.status(status)) }
-        else if dropped || value == nil { result = .failure(SurfaceVideoError.missingOutput) }
+        else if dropped { result = .success(nil) }
         else if let value { result = .success(value) }
+        else { result = .failure(SurfaceVideoError.missingOutput) }
         lock.unlock()
         ready.signal()
     }
 
-    func wait() throws -> Value {
+    func wait() throws -> Value? {
         guard ready.wait(timeout: .now() + 2) == .success else { throw SurfaceVideoError.timeout }
         lock.lock()
         defer { lock.unlock() }
@@ -156,7 +157,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         sequence = 0
     }
 
-    public func encode(_ image: CGImage, width: Int, height: Int) throws -> Data {
+    public func encode(_ image: CGImage, width: Int, height: Int) throws -> Data? {
         lock.lock()
         defer { lock.unlock() }
         do {
@@ -186,7 +187,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                 infoFlagsOut: nil, outputHandler: { status, flags, sample in
                     output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
                 }))
-            let sample = try output.wait()
+            guard let sample = try output.wait() else { return nil }
             let packet = try packetFromSample(sample)
             sequence += 1
             return packet
@@ -330,7 +331,7 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
                 outputHandler: { status, flags, image, _, _ in
                     output.finish(status: status, dropped: flags.contains(.frameDropped), value: image)
                 }))
-            let pixel = try output.wait()
+            guard let pixel = try output.wait() else { throw SurfaceVideoError.missingOutput }
             guard CVPixelBufferGetWidth(pixel) == width, CVPixelBufferGetHeight(pixel) == height,
                   CVPixelBufferGetPixelFormatType(pixel) == kCVPixelFormatType_32BGRA else {
                 throw SurfaceVideoError.invalidDimensions
