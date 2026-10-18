@@ -158,7 +158,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     }
 
     /// Refresh preserves native pixels and pads each axis to an even minimum of 16; callers crop the original canvas.
-    /// Returns nil for cancellation, codec drops, or a refresh exceeding its 576 KiB budget.
+    /// Returns nil for cancellation, codec drops, or a refresh exceeding its padded-pixel or 576 KiB budget.
     public func encode(_ image: CGImage, width: Int, height: Int,
                        isCancelled: () -> Bool = { false }) throws -> SurfaceVideoFrame? {
         guard !isCancelled() else { return nil }
@@ -173,6 +173,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             var target = mode == .refresh ?
                 (width: max(16, (width + 1) / 2 * 2), height: max(16, (height + 1) / 2 * 2)) :
                 Self.fittedVideoPixels(width: width, height: height)
+            if mode == .refresh, target.width > 4_000_000 / target.height { return nil }
             try videoDimensions(target.width, target.height)
             if mode == .motion, session != nil, requestedWidth == width, requestedHeight == height {
                 target = (self.width, self.height)

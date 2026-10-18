@@ -96,7 +96,7 @@ struct SurfaceImageDecoderTests {
         let source = try image()
         let sharp = try #require(try SurfaceVideoEncoder(mode: .refresh).encode(source, width: 65, height: 67))
         let video = SurfaceVideoDecoder(), refreshVideo = SurfaceVideoDecoder()
-        for canvas in [CGSize.zero, CGSize(width: -1, height: 67), CGSize(width: .infinity, height: 67),
+        for canvas in [CGSize.zero, CGSize(width: -1, height: 67), CGSize(width: CGFloat.infinity, height: 67),
                        CGSize(width: 65.5, height: 67), CGSize(width: 63, height: 67),
                        CGSize(width: 65, height: 65), CGSize(width: 67, height: 67),
                        CGSize(width: 4_000_001, height: 1)] {

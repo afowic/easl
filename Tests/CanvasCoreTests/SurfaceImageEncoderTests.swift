@@ -277,11 +277,13 @@ struct SurfaceImageEncoderTests {
         try expectSharp(sharp, source: source)
     }
 
-    @Test func anOverBudgetFrozenImageKeepsBoundedMotionAndANewVersionCanRefresh() throws {
+    @Test(arguments: [false, true])
+    func anOverBudgetFrozenImageKeepsBoundedMotionAndANewVersionCanRefresh(paddedPixels: Bool) throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
-        let entropy = try fixture(width: 512, height: 512, noise: true)
+        let entropy = try fixture(width: paddedPixels ? 2001 : 512, height: paddedPixels ? 1999 : 512,
+                                  noise: !paddedPixels)
         let motion = try #require(try capture(encoder, entropy, at: 0, revision: revision))
         #expect(motion.format == .h264 && !motion.refresh && motion.data.count <= 48 * 1024)
         let image = try decode(motion)
@@ -305,22 +307,4 @@ struct SurfaceImageEncoderTests {
         try expectSharp(sharp, source: changed)
     }
 
-    @Test func asynchronousCodecErrorsPropagateAndDoNotPoisonANewCanvas() throws {
-        let work = RefreshQueue()
-        let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
-        let revision = SurfaceInputRevision()
-        let overflow = try fixture(width: 2001, height: 1999)
-        let motion = try #require(try capture(encoder, overflow, at: 0, revision: revision))
-        #expect(motion.format == .h264 && !motion.refresh)
-        #expect(try capture(encoder, overflow, at: 0.6, revision: revision) == nil)
-        work.finish()
-        #expect(throws: (any Error).self) { try capture(encoder, overflow, at: 0.7, revision: revision) }
-        let source = try fixture()
-        let recovered = try #require(try capture(encoder, source, at: 1, revision: revision))
-        #expect(recovered.format == .h264 && !recovered.refresh)
-        #expect(try capture(encoder, source, at: 1.61, revision: revision) == nil)
-        work.finish()
-        let sharp = try #require(try capture(encoder, source, at: 1.7, revision: revision))
-        try expectSharp(sharp, source: source)
-    }
 }

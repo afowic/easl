@@ -309,10 +309,9 @@ struct SurfaceVideoTests {
         #expect(try #require(maximumError) <= 4)
     }
 
-    @Test func refreshRejectsPaddedPixelOverflowAndDimensionMismatch() throws {
+    @Test func refreshRejectsSourceDimensionMismatch() throws {
         let refresh = SurfaceVideoEncoder(mode: .refresh)
-        let source = try image(width: 2001, height: 1999)
-        #expect(throws: (any Error).self) { try refresh.encode(source, width: 2001, height: 1999) }
-        #expect(throws: (any Error).self) { try refresh.encode(source, width: 2000, height: 1999) }
+        let source = try image(width: 65, height: 67)
+        #expect(throws: (any Error).self) { try refresh.encode(source, width: 64, height: 67) }
     }
 }

@@ -226,7 +226,10 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             observed = nil
             motionVersion = nil
             guard let jpeg = Self.jpeg(source) else { throw SurfaceImageEncodingError.missingOutput }
-            guard jpeg.data != lastJPEG || canvas != lastJPEGCanvas || forceState else { return nil }
+            guard jpeg.data != lastJPEG || canvas != lastJPEGCanvas || forceState else {
+                if !inputActive { captureDelay = 1 }
+                return nil
+            }
             lastJPEG = jpeg.data
             lastJPEGCanvas = canvas
             captureDelay = 1.0 / 30
@@ -262,7 +265,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             return SurfaceImageEncoding(format: .h264, data: encoded.data, width: encoded.width, height: encoded.height,
                                         canvas: canvas, refresh: true)
         }
-        captureDelay = refresh.start(image: source, key: key, revision: revision) ? 1.0 / 30 : 0.1
+        captureDelay = refresh.start(image: source, key: key, revision: revision) ? 1.0 / 30 : 1
         return nil
     }
 

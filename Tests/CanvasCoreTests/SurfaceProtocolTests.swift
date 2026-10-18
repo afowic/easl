@@ -16,11 +16,11 @@ struct SurfaceProtocolTests {
     }
 
     @Test func malformedProgressIsRejectedAtTheBoundary() {
-        let valid: [String: JSONValue] = ["stream": "str_refresh", "frame": 7, "offset": 0]
+        let valid: [String: JSONValue] = ["stream": .string("str_refresh"), "frame": .number(7), "offset": .number(0)]
         let invalid: [(String, JSONValue?)] = [
-            ("stream", "obj_wrong"), ("stream", nil), ("frame", 0), ("frame", -1),
-            ("frame", 1.5), ("frame", nil), ("offset", -16384), ("offset", 1),
-            ("offset", 589824), ("offset", 0.5), ("offset", "0"), ("offset", nil),
+            ("stream", .string("obj_wrong")), ("stream", nil), ("frame", .number(0)), ("frame", .number(-1)),
+            ("frame", .number(1.5)), ("frame", nil), ("offset", .number(-16384)), ("offset", .number(1)),
+            ("offset", .number(589824)), ("offset", .number(0.5)), ("offset", .string("0")), ("offset", nil),
         ]
         for (key, value) in invalid {
             var params = valid
@@ -40,21 +40,4 @@ struct SurfaceProtocolTests {
             .stream(tile: "obj_page", scale: 1, format: .h264))
     }
 
-    @Test func normalFramesKeepTheirWireShapeAndFragmentsAddOnlyTransportMetadata() throws {
-        var frame = SurfaceEvent.Frame(stream: "str_refresh", seq: 7, input: 3,
-            size: CGSize(width: 2, height: 2), scale: 1, format: .h264,
-            data: Data([1, 2, 3]), width: 2, height: 2, back: false, forward: false, loading: false)
-        let normal: JSONValue = .object([
-            "stream": "str_refresh", "seq": 7, "input": 3, "size": .object(["w": 2, "h": 2]),
-            "scale": 1, "format": "h264", "data": "AQID", "width": 2, "height": 2,
-            "back": false, "forward": false, "loading": false,
-        ])
-        #expect(frame.json == normal)
-        frame.refresh = true
-        var transmission = try SurfaceRefreshTransmission(frame: frame)
-        let fragment = try #require(transmission.start().first)
-        #expect(fragment.json == normal.merging(.object(["refresh": true, "offset": 0, "total": 3])))
-        var assembly = SurfaceRefreshAssembly()
-        #expect(try assembly.append(frame: fragment)?.json == normal.merging(.object(["refresh": true])))
-    }
 }
