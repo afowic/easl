@@ -1313,7 +1313,8 @@ final class BoardMirrorTests {
     }
 
     /// The host's socket served as `easld` fronts it from now on.
-    func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil) throws {
+    func serveEasld(_ easld: Easld, refusingHtml failure: Locked<String?>? = nil,
+                    browser: (@Sendable (JSONValue, SocketServer.Connection) -> JSONValue?)? = nil) throws {
         server.stop()
         let router = router
         server = SocketServer(path: socket) { request, connection in
@@ -1350,6 +1351,8 @@ final class BoardMirrorTests {
                 return nil
             case "client.list"?:
                 return easld.list(id, on: connection)
+            case "browser.call"? where browser != nil:
+                return browser?(request, connection)
             case "browser.report"?:
                 var update: [String: JSONValue] = ["id": params["id"] ?? .null, "props": .object(["url": params["url"] ?? .null])]
                 if let caller = params["caller"] { update["caller"] = caller }
@@ -1552,6 +1555,66 @@ final class BoardMirrorTests {
         try serveEasld(easld)
         try await eventually { mirror.drawingMachineChoices == [DrawingMachine(id: "mch_01HOME", host: "home")] }
         #expect(mirror.drawingMachines == ["mch_01HOME"])
+    }
+
+    @Test(arguments: ["move", "assignment", "destination", "incarnation", "online-read-failure", "offline-read-failure"])
+    func aMoveUsesTheLiveURLOnlyWhileItsPageAndDestinationRemainCurrent(_ transition: String) async throws {
+        let source = DrawingMachine(id: "mch_01SOURCE", host: "source")
+        let destination = DrawingMachine(id: "mch_01DEST", host: "destination")
+        let other = DrawingMachine(id: "mch_01OTHER", host: "other")
+        let page = host.create(type: .browser, props: .object(["url": "https://page.example/saved", "drawingMachine": source.json]))
+        let easld = Easld()
+        easld.clients = [client(source.id, serving: host.id), client(destination.id, serving: host.id)]
+        let pending = Locked<(@Sendable () -> Void)?>(nil)
+        let fails = transition.hasSuffix("read-failure")
+        try serveEasld(easld, browser: { request, connection in
+            let reply: JSONValue = fails
+                ? .object(["id": request["id"] ?? .null, "ok": false, "error": .object(["code": "unavailable", "message": "read failed"])])
+                : .object(["id": request["id"] ?? .null, "ok": true, "result": .object(["url": "https://page.example/live"])])
+            pending.withLock { $0 = { connection.send(reply) } }
+            return nil
+        })
+        let (mirror, board) = try await mirror()
+        defer { mirror.close() }
+        mirror.serve(window(), as: identity)
+        try await eventually { mirror.drawingMachines?.contains(source.id) == true }
+        let move = try mirror.drawingMove(page.id, to: destination)
+        let moving = Task { @MainActor () -> String? in
+            do {
+                try await mirror.moveDrawing(move)
+                return nil
+            } catch {
+                return (error as? ApiRouter.Failure)?.code
+            }
+        }
+        try await eventually { pending.withLock { $0 != nil } }
+        switch transition {
+        case "assignment":
+            try host.update(page.id, props: .object(["drawingMachine": other.json]))
+            try await eventually { DrawingMachine(board.objects[page.id]!.props) == other }
+        case "destination":
+            easld.announce([client(source.id, serving: host.id)], board: host.id)
+            try await eventually { mirror.drawingMachines == [source.id] }
+        case "incarnation":
+            try registry.close(host.id)
+            try await eventually { mirror.availability == .closed }
+            _ = registry.open(root: host.root)
+            try await eventually { mirror.availability == .open }
+        case "offline-read-failure":
+            easld.announce([client(destination.id, serving: host.id)], board: host.id)
+            try await eventually { mirror.drawingMachines == [destination.id] }
+        default: break
+        }
+        pending.withLock { $0 }?()
+        if transition == "move" {
+            #expect(await moving.value == nil)
+            try await eventually { DrawingMachine(host.objects[page.id]!.props) == destination }
+            #expect(host.objects[page.id]?.props["url"] == "https://page.example/live")
+        } else {
+            #expect(await moving.value == (transition == "assignment" ? "conflict" : "unavailable"))
+            #expect(host.objects[page.id]?.props["url"] == "https://page.example/saved")
+            #expect(DrawingMachine(host.objects[page.id]!.props) == (transition == "assignment" ? other : source))
+        }
     }
 
     /// A delegated call that opens or drives a tile's page waits for the events easld sent before

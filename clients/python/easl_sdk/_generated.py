@@ -83,7 +83,8 @@ class SurfaceDialog(TypedDict):
 class SurfaceNotice(TypedDict):
     """surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused."""
     stream: Required["SurfaceStream"]
-    kind: Required[Literal["closed", "download", "refused"]]
+    kind: Required[Literal["closed", "dialogClosed", "download", "refused"]]
+    dialog: NotRequired[str]
     reason: NotRequired[str]
     name: NotRequired[str]
     state: NotRequired[str]

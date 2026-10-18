@@ -437,29 +437,34 @@ final class CanvasView: NSScrollView {
     }
 
     private func moveDrawing(of id: ObjectID, to machine: DrawingMachine) {
-        guard let object = board.objects[id], object.type == .browser, let window,
-              remote?.host.server == .easld, DrawingMachine(object.props)?.id != machine.id else { return }
-        let previous = DrawingMachine(object.props)
+        guard let object = board.objects[id], object.type == .browser, let window, let remote,
+              remote.host.server == .easld, DrawingMachine(object.props)?.id != machine.id else { return }
+        let move: BoardMirror.DrawingMove
+        do {
+            move = try remote.mirror.drawingMove(id, to: machine)
+        } catch {
+            showNotice(BoardMirror.reason(error))
+            return
+        }
         let label = machine.host.isEmpty ? machine.id : machine.host
         let alert = NSAlert()
         alert.messageText = "Draw this page on \(label)?"
-        alert.informativeText = "The page reloads at its current URL in \(label)'s own browser profile. Cookies, logins, and unsaved page state are not copied."
+        let reload = move.sourceOffline
+            ? "The drawing Mac is offline. The page reloads at its last saved URL"
+            : "The page reloads at its current URL"
+        alert.informativeText = "\(reload) in \(label)'s own browser profile. Cookies, logins, and unsaved page state are not copied."
         alert.addButton(withTitle: "Move")
         alert.addButton(withTitle: "Cancel")
+        let moveBoard = board
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
-            guard let current = self.board.objects[id], DrawingMachine(current.props)?.id == previous?.id else {
-                self.showNotice("The drawing machine changed while this choice was open.")
-                return
-            }
-            guard self.remote?.mirror.drawingMachineChoices?.contains(where: { $0.id == machine.id }) == true else {
-                self.showNotice("\(label) is no longer attached to this board.")
-                return
-            }
-            do {
-                _ = try self.board.update(id, props: .object(["drawingMachine": machine.json]))
-            } catch {
-                self.showNotice(error.localizedDescription)
+            Task { @MainActor [weak self] in
+                guard let self, self.remote === remote, self.board === moveBoard else { return }
+                do {
+                    try await remote.mirror.moveDrawing(move)
+                } catch {
+                    self.showNotice(BoardMirror.reason(error))
+                }
             }
         }
     }

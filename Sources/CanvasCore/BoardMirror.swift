@@ -109,6 +109,78 @@ public final class BoardMirror: BoardHost {
     public var onDrawingMachines: (() -> Void)?
     private var presenceHeard = 0
 
+    /// A confirmed move belongs to this board incarnation and this browser assignment.
+    public struct DrawingMove {
+        fileprivate let board: Board
+        fileprivate let generation: Int
+        fileprivate let object: CanvasObject
+        fileprivate let destination: DrawingMachine
+        public let sourceOffline: Bool
+    }
+
+    public func drawingMove(_ id: ObjectID, to destination: DrawingMachine) throws -> DrawingMove {
+        guard !ended, availability == .open, let board, let object = board.objects[id], object.type == .browser else {
+            throw ApiRouter.Failure("unavailable", "This browser's board is no longer open.")
+        }
+        guard let machines = drawingMachines, machines.contains(destination.id) else {
+            throw ApiRouter.Failure("unavailable", "\(destination.host) is no longer attached to this board.")
+        }
+        let sourceOffline = DrawingMachine(object.props).map { !machines.contains($0.id) } ?? true
+        return DrawingMove(board: board, generation: generation, object: object, destination: destination, sourceOffline: sourceOffline)
+    }
+
+    /// Reads the drawing Mac once, then moves the page and its explicit URL in one normal write.
+    public func moveDrawing(_ move: DrawingMove) async throws {
+        func current() throws -> CanvasObject {
+            try requireCurrent(move.generation)
+            guard availability == .open, board === move.board,
+                  let object = board?.objects[move.object.id], object.type == .browser,
+                  object.createdAt == move.object.createdAt, object.rev == move.object.rev,
+                  DrawingMachine(object.props)?.id == DrawingMachine(move.object.props)?.id else {
+                throw ApiRouter.Failure("conflict", "The browser changed while this move was being confirmed.")
+            }
+            guard drawingMachines?.contains(move.destination.id) == true else {
+                throw ApiRouter.Failure("unavailable", "\(move.destination.host) is no longer attached to this board.")
+            }
+            return object
+        }
+        let object = try current()
+        let source = DrawingMachine(object.props)
+        let sourceOnline = source.map { drawingMachines?.contains($0.id) == true } ?? false
+        let url: String
+        if sourceOnline {
+            let result: JSONValue
+            do {
+                result = try await connection.request("browser.call", .object([
+                    "id": .string(object.id), "method": .string("browser.url.get"), "params": .object([:]),
+                ]))
+            } catch {
+                _ = try current()
+                if let source, drawingMachines?.contains(source.id) == false {
+                    throw ApiRouter.Failure("unavailable", "The drawing Mac went offline. Choose Move again to reload the last saved URL.")
+                }
+                throw ApiRouter.Failure("unavailable", "Could not read the page's current URL. \(Self.reason(error))")
+            }
+            _ = try current()
+            guard let liveURL = result["url"]?.string, !liveURL.isEmpty else {
+                throw ApiRouter.Failure("unavailable", "The drawing Mac returned no current URL.")
+            }
+            url = liveURL
+        } else {
+            guard move.sourceOffline else {
+                throw ApiRouter.Failure("unavailable", "The drawing Mac went offline. Choose Move again to reload the last saved URL.")
+            }
+            guard let savedURL = object.props["url"]?.string else {
+                throw ApiRouter.Failure("unavailable", "This browser has no saved URL to reload.")
+            }
+            url = savedURL
+        }
+        _ = try current()
+        _ = try move.board.update(object.id, props: .object([
+            "url": .string(url), "drawingMachine": move.destination.json,
+        ]))
+    }
+
     /// Where this viewer's `client.attach` stands on the board's link.
     public enum Attachment: Equatable, Sendable {
         /// The link isn't online: the next one attaches.

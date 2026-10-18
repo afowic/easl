@@ -120,7 +120,9 @@ export type SurfaceDialog = {
 /** surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused. */
 export type SurfaceNotice = {
   stream: SurfaceStream;
-  kind: "closed" | "download" | "refused";
+  kind: "closed" | "dialogClosed" | "download" | "refused";
+  /** Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes. */
+  dialog?: string;
   reason?: string;
   name?: string;
   state?: string;

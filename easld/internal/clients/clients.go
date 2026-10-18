@@ -462,10 +462,9 @@ func (r *Registry) OpenSurface(c *Client, identity, board string, params map[str
 	return r.call(context.Background(), c, "", "surface.stream", params, deadline, &opening{identity, board, events, late})
 }
 
-// StopSurface is surface.stop of stream on c. It waits for the answer as long as c's link lasts:
-// the stream ends with the link anyway, so a stop is never given up on.
-func (r *Registry) StopSurface(c *Client, stream string) *Failure {
-	_, failure := r.call(context.Background(), c, "", "surface.stop", map[string]any{"stream": stream}, untilClosed, nil)
+// StopSurface waits while c still shows board. Closing the board ends its producer streams.
+func (r *Registry) StopSurface(c *Client, board, stream string) *Failure {
+	_, failure := r.call(context.Background(), c, board, "surface.stop", map[string]any{"stream": stream}, untilClosed, nil)
 	return failure
 }
 
@@ -528,6 +527,13 @@ func (r *Registry) call(ctx context.Context, c *Client, board, method string, pa
 		r.mu.Lock()
 		_, waiting := r.pending[id]
 		if waiting {
+			select {
+			case <-c.conn.Done():
+				delete(r.pending, id)
+				r.mu.Unlock()
+				return nil, disconnected
+			default:
+			}
 			pending.late = open.late
 		}
 		r.mu.Unlock()

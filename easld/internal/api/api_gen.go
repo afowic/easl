@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 1
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "4d6af23969a0e4d8"
+const SchemaHash = "46b3d43f08a49d06"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -332,8 +332,10 @@ type SurfaceDialog struct {
 // SurfaceNotice: surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused.
 type SurfaceNotice struct {
 	Stream SurfaceStream `json:"stream"`
-	// One of "closed", "download", "refused".
-	Kind   string  `json:"kind"`
+	// One of "closed", "dialogClosed", "download", "refused".
+	Kind string `json:"kind"`
+	// Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes.
+	Dialog *string `json:"dialog,omitempty"`
 	Reason *string `json:"reason,omitempty"`
 	Name   *string `json:"name,omitempty"`
 	State  *string `json:"state,omitempty"`

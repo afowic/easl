@@ -243,13 +243,21 @@ func TestBoardCloseEndsStreamsAndReopeningRevivesNone(t *testing.T) {
 	opened := f.onSurface(viewer, "surface.stream", map[string]any{"id": page})
 	request := diagramMessage(t, drawer.incoming)
 	f.result("board.close", map[string]any{"board": f.board.ID()})
-	expectSurfaceStop(t, drawer, "str_1")
 	f.result("board.open", map[string]any{"root": f.board.Root()})
 	answerSurface(f, drawer, request, map[string]any{"stream": "str_2"})
-	if code, message := errorOf(surfaceReply(t, opened)); code != "unavailable" || message != page+"'s stream ended as it opened: board closed" {
-		t.Fatalf("the open answered %s %q", code, message)
+	if code, _ := errorOf(surfaceReply(t, opened)); code != "unavailable" {
+		t.Fatalf("the open answered %s", code)
 	}
-	expectSurfaceStop(t, drawer, "str_2")
+	for _, stream := range []string{"str_1", "str_2"} {
+		done := f.onSurface(viewer, "surface.ack", map[string]any{"stream": stream, "frame": 0.0})
+		if code, _ := errorOf(surfaceReply(t, done)); code != "not_found" {
+			t.Fatalf("reopened board revived %s: %s", stream, code)
+		}
+		f.router.surfaces.Push(drawer, []byte(surfaceFrame(f.board.ID(), stream)))
+	}
+	if len(viewer.relayed()) != 0 {
+		t.Fatal("reopened board relayed a retired stream")
+	}
 	if got := viewer.closed(); !reflect.DeepEqual(got, map[string]any{"str_1": "board closed"}) {
 		t.Fatalf("closed notices %v", got)
 	}

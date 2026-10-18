@@ -352,6 +352,24 @@ func TestAnEndedStreamHearsAndTakesNothingMore(t *testing.T) {
 	}
 }
 
+func TestBoardClosureEndsCleanupWithoutClosingDrawingConnection(t *testing.T) {
+	r := newRelay(t)
+	viewer := newLink(t)
+	r.live(viewer, r.page, "str_closed", Events...)
+	viewer.hangUp()
+	stop := r.drawer.request(t)
+	r.macs.RemoveBoard(r.page.Board.ID())
+	r.macs.Answer(r.drawer, map[string]any{"id": stop["id"], "ok": false, "error": map[string]any{"code": "unavailable", "message": "board closed"}})
+	select {
+	case retried := <-r.drawer.sent:
+		t.Fatalf("closed board kept receiving cleanup: %v", retried)
+	case <-time.After(600 * time.Millisecond):
+	}
+	if !r.drawer.IsOpen() {
+		t.Fatal("closing one board disconnected its drawing client")
+	}
+}
+
 // An open the Mac answers after easld gave up on it is stopped on the Mac, never left driven.
 func TestAnOpenTheMacAnswersLateIsStopped(t *testing.T) {
 	r := newRelay(t)

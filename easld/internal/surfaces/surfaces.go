@@ -109,7 +109,7 @@ func (s *Registry) Open(lock sync.Locker, k Key, viewer Viewer, hears []string, 
 	lock.Unlock()
 	result, failure := s.clients.OpenSurface(drawer, k.Machine, k.Board.ID(), params, hears, s.OpenDeadline, func(late any) {
 		if id := streamID(late); id != "" {
-			s.stop(drawer, id)
+			s.stop(drawer, k.Board.ID(), id)
 		}
 	})
 	lock.Lock()
@@ -132,7 +132,7 @@ func (s *Registry) Open(lock sync.Locker, k Key, viewer Viewer, hears []string, 
 		ended = viewerLeft
 	}
 	if ended != Holds {
-		go s.stop(drawer, id)
+		go s.stop(drawer, k.Board.ID(), id)
 		return nil, &clients.Failure{Code: api.CodeUnavailable, Message: k.Tile + "'s stream ended as it opened: " + string(ended)}
 	}
 	st.id = id
@@ -164,7 +164,7 @@ func (s *Registry) Forward(viewer Viewer, method string, params map[string]any) 
 		return result, nil
 	case method == "surface.stop":
 		if failure.Code != api.CodeNotFound {
-			go s.stop(st.drawer, id)
+			go s.stop(st.drawer, st.key.Board.ID(), id)
 		}
 		return map[string]any{"stopped": true}, nil
 	case failure.Code == api.CodeNotFound && method != "surface.answer":
@@ -203,7 +203,7 @@ func (s *Registry) Recheck(boardID string) {
 			st.viewer.Send(map[string]any{"event": "surface.notice", "board": boardID,
 				"data": map[string]any{"stream": id, "kind": "closed", "reason": string(reason)}})
 		}
-		go s.stop(st.drawer, id)
+		go s.stop(st.drawer, st.key.Board.ID(), id)
 	}
 }
 
@@ -269,22 +269,31 @@ func (s *Registry) watch(viewer Viewer) {
 		for id, st := range s.live {
 			if st.viewer == viewer {
 				delete(s.live, id)
-				go s.stop(st.drawer, id)
+				go s.stop(st.drawer, st.key.Board.ID(), id)
 			}
 		}
 	}()
 }
 
-func (s *Registry) stop(drawer *clients.Client, id string) {
+func (s *Registry) stop(drawer *clients.Client, board, id string) {
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
-		failure := s.clients.StopSurface(drawer, id)
+		failure := s.clients.StopSurface(drawer, board, id)
 		if failure == nil || failure.Code == api.CodeNotFound {
 			return
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		if timer == nil {
+			timer = time.NewTimer(250 * time.Millisecond)
+		} else {
+			timer.Reset(250 * time.Millisecond)
+		}
 		select {
 		case <-drawer.Done():
-			timer.Stop()
 			return
 		case <-timer.C:
 		}

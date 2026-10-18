@@ -290,7 +290,7 @@ public enum SurfaceEvent {
     }
 
     public enum NoticeKind: String, Sendable {
-        case closed, download, refused
+        case closed, dialogClosed, download, refused
     }
 
     public static func size(_ size: CGSize) -> JSONValue {
@@ -309,11 +309,13 @@ public enum SurfaceEvent {
         return .object(data)
     }
 
-    public static func notice(stream: String, kind: NoticeKind, reason: String? = nil, name: String? = nil, state: String? = nil) -> JSONValue {
+    public static func notice(stream: String, kind: NoticeKind, reason: String? = nil, name: String? = nil, state: String? = nil,
+                              dialog: String? = nil) -> JSONValue {
         var data: [String: JSONValue] = ["stream": .string(stream), "kind": .string(kind.rawValue)]
         if let reason { data["reason"] = .string(reason) }
         if let name { data["name"] = .string(name) }
         if let state { data["state"] = .string(state) }
+        if let dialog { data["dialog"] = .string(dialog) }
         return .object(data)
     }
 }

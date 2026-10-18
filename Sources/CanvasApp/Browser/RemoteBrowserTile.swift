@@ -1087,16 +1087,17 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             self.dialogSheets[dialog.id] = nil
-            guard generation == self.streamEpoch else { return }
+            guard generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
             guard response == .OK else { return self.complete(dialog, accept: false) }
             let urls = DevInput.chosen(in: panel)
             self.runStreamTask { [weak self] in
+                guard self?.streamEpoch == generation, self?.streamID == dialog.stream, self?.dialogs[dialog.id] == false else { return }
                 do {
                     let files = try await Task.detached(priority: .userInitiated) { try Self.readFiles(urls) }.value
-                    guard let self, generation == self.streamEpoch else { return }
+                    guard let self, generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
                     self.complete(dialog, accept: true, files: files)
                 } catch {
-                    guard let self, generation == self.streamEpoch else { return }
+                    guard let self, generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
                     self.complete(dialog, accept: false)
                     self.setNotice("Upload cancelled. \(error.localizedDescription)")
                 }
@@ -1135,16 +1136,16 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
         let generation = streamEpoch
         runStreamTask { [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
             do {
                 _ = try await connection.request("surface.answer", params, timeout: .seconds(8))
-                guard generation == self.streamEpoch else { return }
+                guard generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
                 self.dialogs[dialog.id] = true
             } catch let failure as EaslConnection.Failure where failure.code == "invalid_params" {
-                guard generation == self.streamEpoch else { return }
+                guard generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
                 self.reopen(dialog)
             } catch {
-                guard generation == self.streamEpoch else { return }
+                guard generation == self.streamEpoch, dialog.stream == self.streamID, self.dialogs[dialog.id] == false else { return }
                 if dialog.kind == "file" { self.setNotice("Upload was not completed. Check the page before trying again.") }
                 self.dialogs[dialog.id] = true
             }
@@ -1192,6 +1193,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func receive(_ notice: HostNotice) {
         guard notice.stream == streamID || notice.stream == stashed?.stream else { return }
         switch notice.kind {
+        case "dialogClosed":
+            guard notice.stream == streamID, let id = notice.dialog, dialogs[id] == false else { return }
+            dialogs[id] = true
+            if let dialog = dialogSheets.removeValue(forKey: id) {
+                dialog.parent.endSheet(dialog.sheet, returnCode: .cancel)
+            }
         case "download":
             setNotice(downloadLine(notice))
         case "refused":
@@ -1430,6 +1437,7 @@ private struct HostDialog {
 private struct HostNotice {
     var stream: String
     var kind: String
+    var dialog: String?
     var reason: String?
     var name: String?
     var state: String?
@@ -1473,7 +1481,10 @@ private enum SurfaceWire {
 
     static func notice(_ data: JSONValue) -> HostNotice? {
         guard let stream = data["stream"]?.string, let kind = data["kind"]?.string else { return nil }
-        return HostNotice(stream: stream, kind: kind, reason: data["reason"]?.string, name: data["name"]?.string, state: data["state"]?.string)
+        let dialog = data["dialog"]?.string
+        guard kind != "dialogClosed" || (dialog?.isEmpty == false) else { return nil }
+        return HostNotice(stream: stream, kind: kind, dialog: dialog, reason: data["reason"]?.string,
+                          name: data["name"]?.string, state: data["state"]?.string)
     }
 
     static func decode(_ payload: String) -> (CGImage?, Int) {

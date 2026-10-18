@@ -131,7 +131,8 @@
     "SurfaceNotice": {
       "type": "object", "required": ["stream", "kind"],
       "properties": {
-        "stream": { "$ref": "#/definitions/SurfaceStream" }, "kind": { "enum": ["closed", "download", "refused"] },
+        "stream": { "$ref": "#/definitions/SurfaceStream" }, "kind": { "enum": ["closed", "dialogClosed", "download", "refused"] },
+        "dialog": { "type": "string", "minLength": 1, "description": "Required for dialogClosed. The invalidated dialog id on this stream. The viewer dismisses its picker without sending an answer or file bytes." },
         "reason": { "type": "string" }, "name": { "type": "string" }, "state": { "type": "string" }
       }, "additionalProperties": false,
       "description": "surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused."
