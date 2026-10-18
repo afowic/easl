@@ -26,6 +26,79 @@ extension ApiRouterTests {
         #expect(object.type == .video)
         #expect(object.props == .object(["path": "clip.mp4", "poster": "poster.png", "loop": .bool(true), "muted": .bool(false), "autoplay": .bool(false), "startTime": .number(2.5), "title": "Edited", "key": "demo"]))
     }
+
+    @Test func worktreeVideoCreateAndReaimReadOriginalFileURIs() async throws {
+        _ = try await TempRepo.run(["init", "-q", "-b", "main"], in: board.root)
+        _ = try await TempRepo.run(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "seed"], in: board.root)
+        let checkout = dir.appendingPathComponent("feature")
+        _ = try await TempRepo.run(["worktree", "add", "-q", "-b", "video-feature", checkout.path], in: board.root)
+        let caller = board.create(type: .terminal, props: .object(["cwd": .string(checkout.path)])).id
+        let client = try connect()
+        let movie = board.root.appendingPathComponent("clip space.mp4")
+        let poster = board.root.appendingPathComponent("poster space.png")
+        try VideoHeader.movie(width: 640, height: 360).write(to: movie)
+        let posterBytes = Data("original poster".utf8)
+        try posterBytes.write(to: poster)
+        func shadow(_ path: String, bytes: Data) throws {
+            let file = checkout.appendingPathComponent(path).standardizedFileURL
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try bytes.write(to: file)
+        }
+        try shadow(movie.absoluteString, bytes: VideoHeader.movie(width: 90, height: 160))
+        try shadow(poster.absoluteString, bytes: Data("shadow poster".utf8))
+        try VideoHeader.movie(width: 800, height: 600).write(to: checkout.appendingPathComponent("relative.mp4"))
+        try Data("checkout poster".utf8).write(to: checkout.appendingPathComponent("relative.png"))
+        let cases: [(String, String, CGSize, Data)] = [
+            (movie.absoluteString, poster.absoluteString, CGSize(width: 640, height: 360), posterBytes),
+            ("relative.mp4", "relative.png", CGSize(width: 800, height: 600), Data("checkout poster".utf8))
+        ]
+        for (path, image, dimensions, expectedPoster) in cases {
+            let props: JSONValue = .object(["path": .string(path), "poster": .string(image)])
+            let created = try await call(client, "object.create", ["board": .string(board.id), "caller": .string(caller), "type": "video", "props": props])
+            let id = try #require(created["result"]?["object"]?["id"]?.string)
+            let other = try await call(client, "object.create", ["board": .string(board.id), "type": "video", "props": .object(["path": "before.mp4"])])
+            let updatedID = try #require(other["result"]?["object"]?["id"]?.string)
+            _ = try await call(client, "object.update", ["id": .string(updatedID), "caller": .string(caller), "props": props])
+            for tile in [id, updatedID] {
+                let stored = try board.object(tile).props
+                let storedPath = try #require(stored["path"]?.string)
+                let storedPoster = try #require(stored["poster"]?.string)
+                #expect(try await LocalVideo.naturalSize(path: storedPath, root: board.root) == dimensions)
+                let read = try await HostFiles.readLocal(HostFileRequest(source: .directory(board.root.path), policy: .boardAsset(storedPoster)))
+                #expect(read.data == expectedPoster)
+                if path == movie.absoluteString {
+                    #expect(storedPath == movie.absoluteString)
+                    #expect(storedPoster == poster.absoluteString)
+                } else {
+                    #expect(storedPath == checkout.appendingPathComponent(path).path)
+                    #expect(storedPoster == checkout.appendingPathComponent(image).path)
+                }
+            }
+        }
+        let outside = dir.appendingPathComponent("outside.mp4")
+        try VideoHeader.movie(width: 640, height: 360).write(to: outside)
+        for refused in [outside.absoluteString, "file://remote.example\(movie.path)", "file://%zz\(movie.path)"] {
+            try shadow(refused, bytes: VideoHeader.movie(width: 90, height: 160))
+            for key in ["path", "poster"] {
+                var fields: [String: JSONValue] = ["path": .string(movie.absoluteString), "poster": .string(poster.absoluteString)]
+                fields[key] = .string(refused)
+                let props = JSONValue.object(fields)
+                let created = try await call(client, "object.create", ["board": .string(board.id), "caller": .string(caller), "type": "video", "props": props])
+                let id = try #require(created["result"]?["object"]?["id"]?.string)
+                let other = try await call(client, "object.create", ["board": .string(board.id), "type": "video", "props": .object(["path": .string(movie.absoluteString)])])
+                let reaimed = try #require(other["result"]?["object"]?["id"]?.string)
+                _ = try await call(client, "object.update", ["id": .string(reaimed), "caller": .string(caller), "props": props])
+                for tile in [id, reaimed] {
+                    let stored = try board.object(tile).props
+                    let original = try #require(stored[key]?.string)
+                    #expect(original == refused)
+                    await #expect(throws: HostFileError.refused) {
+                        try await HostFiles.readLocal(HostFileRequest(source: .directory(board.root.path), policy: .boardAsset(original)))
+                    }
+                }
+            }
+        }
+    }
 }
 
 @MainActor

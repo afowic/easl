@@ -216,8 +216,6 @@ public struct HostFiles: Sendable {
         return result.output
     }
 
-    /// Runs `body` in one of the master's file sessions, the bound every host program's ssh
-    /// client shares, given back on every exit.
     func session<T: Sendable>(_ body: () async throws -> T) async throws -> T {
         do {
             if let master {
@@ -239,7 +237,6 @@ public struct HostFiles: Sendable {
         }
     }
 
-    /// How `program` runs on the host: the short launcher's ssh command and its stdin frame.
     func invocation(_ program: HostProgram, request: Data) -> (executable: String, arguments: [String], input: Data) {
         (route.executable, route.ssh(Self.command), program.frame + request)
     }
@@ -608,9 +605,7 @@ public struct HostFiles: Sendable {
       else {
         pendingReads = [];
         const prepared = req.requests.map(request => readRequest({ ...request, bytes: false, range: null }));
-        let reads;
-        try { reads = readFiles(pendingReads); }
-        catch (e) { reads = pendingReads.map(() => ({ ok: false, code: e.code || 'unreadable', message: e.message })); }
+        const reads = readFiles(pendingReads);
         result = prepared.map(reply => reply.pending == null ? reply : { root: reply.root, ...reads[reply.pending] });
       }
     } else result = readRequest(req);

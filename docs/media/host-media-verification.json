@@ -889,5 +889,91 @@
   "inventoryLimits": "Snapshots of ten per-instance roots. They do not exclude transient writes or unscanned global paths. Native captures are verification artifacts, not a content cache.",
   "gui": "Own unfocused window-ID captures with open -g -n after the hidden launch failed to render. No Space placement, activation or focus operations.",
   "largeClipLimit": "The high-bitrate stress fixture buffered before the decoded seek frames appeared. Read totals include both players through shutdown; they are not a complete WebKit RSS measurement.",
-  "inventoryNamespace": "final-viewer-home"
+  "inventoryNamespace": "final-viewer-home",
+  "gifRendererHead": "6e0c67a1a40d4e5f8c651e139738db456d016384",
+  "gifFrames": {
+    "local": {
+      "captures": [
+        "final-renderer-local-gif-0.png",
+        "final-renderer-local-gif-2.png"
+      ],
+      "crop": [
+        1730,
+        540,
+        2420,
+        740
+      ],
+      "sha256": [
+        "f8188627fafd3328ca75a2f35a7c3de2139146c4883ac5df80bdea3d13e29418",
+        "a161dd55d2f6e1fc201ce1db2baa444dd6a42ba6319ac5f22533a6f69429af8f"
+      ],
+      "firstPixel": [
+        [
+          18,
+          33,
+          229
+        ],
+        [
+          211,
+          55,
+          38
+        ]
+      ]
+    },
+    "remote": {
+      "captures": [
+        "final-renderer-remote-gif-clean-0.png",
+        "final-renderer-remote-gif-clean-1.png"
+      ],
+      "crop": [
+        400,
+        580,
+        1080,
+        780
+      ],
+      "sha256": [
+        "6fe262febe9d34ca87760096a2fb3fcf2f09cf6a677fbfb7d94ebca66fb145a2",
+        "2096cdee39f5fd479e6f898aef743613b0bffb14ba45a1e68660180f83f64876"
+      ],
+      "firstPixel": [
+        [
+          17,
+          36,
+          230
+        ],
+        [
+          207,
+          54,
+          37
+        ]
+      ]
+    }
+  },
+  "localNativeSeek": {
+    "pathForm": "absolute file URI",
+    "earlySeconds": 2,
+    "lateSeconds": 10.5,
+    "earlyFrame": 48,
+    "lateFrame": 252,
+    "captures": [
+      "host-media-local-first.webp",
+      "host-media-local-seek.webp"
+    ],
+    "playingCapture": "final-renderer-local-playing.png"
+  },
+  "privateSocketSmoke": {
+    "engine": "WebKit on home, background-only activation-prohibited process",
+    "ownedEndpointRange": "100.64.0.0/10",
+    "noRulesHandshakes": 1,
+    "beforeHandshakes": 1,
+    "afterHandshakes": 0,
+    "visibleWindows": 0,
+    "limits": "A finite owned HTTP endpoint counted real WebSocket handshake attempts. The production rule factory was used; the probe did not create a board window."
+  },
+  "finalInventoryAfterGif": {
+    "roots": 10,
+    "files": 168,
+    "markerOrSourceMatches": 0,
+    "scanErrors": 0
+  }
 }

@@ -811,8 +811,6 @@ final class HtmlTile: NSView, TileContent {
 }
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
-    /// Top-level navigation stays on this tile. Remote subframes use host grants,
-    /// never a browser or external-open fallback on the viewing Mac.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
         let isMain = action.targetFrame?.isMainFrame ?? true
@@ -840,7 +838,6 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         nil
     }
 
-    /// A clicked local page link opens beside its source; Option uses the default browser.
     private func followed(_ action: WKNavigationAction, in webView: WKWebView) -> Bool {
         guard !board.isRemote, let url = action.request.url, WebLink.isWeb(url),
               let click = (webView as? HtmlWebView)?.recentClick() else { return false }

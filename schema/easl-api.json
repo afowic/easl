@@ -1406,7 +1406,7 @@
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
           "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
-          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640)" },
+          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false

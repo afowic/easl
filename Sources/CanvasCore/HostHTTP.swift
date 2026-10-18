@@ -28,9 +28,9 @@ public enum HostHTTPEvent: Sendable {
 
 extension HostFiles {
     /// Fetches `request` on the host with Python's standard-library HTTP client: no proxy,
-    /// cookies or credentials, only the range forwarded, and each redirect followed only to an
-    /// authority `allow` permits. `receive` gets the head, then body chunks of at most 64 KiB;
-    /// the host is read for the next chunk only after `receive` returns.
+    /// cookies or credentials, only the range forwarded. Redirects must stay same-origin and
+    /// match `allow`. `receive` gets the head, then body chunks of at most 64 KiB; the host is
+    /// read for the next chunk only after `receive` returns.
     public func http(_ request: HostHTTPRequest, allow: [String], receive: @escaping @Sendable (HostHTTPEvent) async throws -> Void) async throws {
         let rules = HostNetworkPolicy.rules(allow: allow)
         guard HostHTTP.methods.contains(request.method), HostNetworkPolicy.permits(request.url, rules: rules),
@@ -79,9 +79,6 @@ enum HostHTTP {
         var limit: Int?
     }
 
-    /// Bun only starts Python, which inherits stdout, so the body never passes through Bun.
-    /// Python writes one JSON head line, then the body, reading upstream only as fast as the
-    /// blocking stdout drains.
     static let program = HostProgram(#"""
     const python = String.raw`
     import http.client
@@ -279,8 +276,6 @@ enum HostHTTP {
     """#)
 }
 
-/// One fetch's ssh client. Output is polled, so cancellation never waits for the remote end
-/// to close it, and the next chunk is read only once `receive` has taken the last one.
 private final class HostHTTPClient: @unchecked Sendable {
     private let command: (executable: String, arguments: [String], input: Data)
     private let process = Process()
@@ -289,7 +284,6 @@ private final class HostHTTPClient: @unchecked Sendable {
     private let lock = NSLock()
     private var started = false
     private var cancelled = false
-    // Only `read`, `drainErrors` and `finish` use these, one call after another.
     private let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: HostHTTP.chunk, alignment: 1)
     private var polls = [pollfd](repeating: pollfd(), count: 2)
     private var errorsOpen = true
@@ -359,7 +353,6 @@ private final class HostHTTPClient: @unchecked Sendable {
         }
     }
 
-    /// Delivers the head, then each chunk as it is read: false when output ended before a head.
     private func pump(initialURL: URL, rules: [HostNetworkRule], receive: @Sendable (HostHTTPEvent) async throws -> Void) async throws -> Bool {
         guard let first = try await headLine() else { return false }
         guard let head = try? JSONDecoder().decode(HostHTTP.Head.self, from: first.line) else { throw HostHTTP.invalid }
@@ -380,7 +373,6 @@ private final class HostHTTPClient: @unchecked Sendable {
         }
     }
 
-    /// The JSON head line and the body bytes read with it; nil when output ended first.
     private func headLine() async throws -> (line: Data, rest: Data)? {
         var pending = Data()
         while true {
@@ -397,7 +389,6 @@ private final class HostHTTPClient: @unchecked Sendable {
         try await offPool { Result { try self.read() } }.get()
     }
 
-    /// At most one chunk of output, empty at its end, draining errors meanwhile.
     private func read() throws -> Data {
         let fd = output.fileHandleForReading.fileDescriptor
         while true {
@@ -426,8 +417,6 @@ private final class HostHTTPClient: @unchecked Sendable {
         }
     }
 
-    /// Ends the client unless it finished on its own, then reaps it: its exit status. Closing
-    /// output first gives a remote writer still blocked on it EPIPE.
     private func finish(ending: Bool) -> Int32 {
         if ending { RemoteProcesses.stop(process) }
         try? output.fileHandleForReading.close()

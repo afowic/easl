@@ -1385,7 +1385,7 @@ export type ObjectMeasureParams = {
   type: ObjectType;
   /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
-  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640) */
+  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640) */
   width?: number;
   caller?: Id;
 };

@@ -180,8 +180,6 @@ private func eventually(_ condition: () -> Bool) async throws -> Bool {
     return true
 }
 
-/// The HostFiles fixture launcher behind a real master, so fetches hold bounded file sessions,
-/// and a finite scratch server with one allowlisted port and one that is never allowed.
 @MainActor
 private final class ScratchHost {
     static let size = 300_000
@@ -212,20 +210,29 @@ private final class ScratchHost {
         let processes = RemoteProcesses()
         let master = HostMaster(route: HostRoute(target: "fixture", controlPath: ssh.arguments[1], executable: ssh.executable), processes: processes)
         let server = Process()
+        let diagnosticURL = fixture.directory.appendingPathComponent("server.stderr")
+        try Data().write(to: diagnosticURL)
+        let diagnostic = try FileHandle(forWritingTo: diagnosticURL)
         server.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         server.arguments = ["python3", "-I", "-S", "-B", "-c", Self.upstream, fixture.directory.path, String(Self.size), String(Self.largeBytes)]
         server.standardInput = FileHandle.nullDevice
         server.standardOutput = FileHandle.nullDevice
-        server.standardError = FileHandle.nullDevice
+        server.standardError = diagnostic
         try server.run()
+        try diagnostic.close()
         let published = fixture.directory.appendingPathComponent("ports")
-        let started = try await eventually { FileManager.default.fileExists(atPath: published.path) }
+        let started = try await eventually { FileManager.default.fileExists(atPath: published.path) || !server.isRunning }
         let ports = ((try? String(contentsOf: published, encoding: .utf8)) ?? "").split(separator: " ").compactMap { Int($0) }
+        var failure = ""
         if !started || ports.count != 2 {
-            server.terminate()
+            if server.isRunning { server.terminate() }
             server.waitUntilExit()
+            let reader = try FileHandle(forReadingFrom: diagnosticURL)
+            let data = try reader.read(upToCount: 8192) ?? Data()
+            try reader.close()
+            failure = "server exit \(server.terminationStatus): " + String(decoding: data, as: UTF8.self)
         }
-        try #require(started && ports.count == 2, "the scratch server published its ports")
+        try #require(started && ports.count == 2, "the scratch server published its ports; \(failure)")
         self.fixture = fixture
         self.processes = processes
         self.master = master

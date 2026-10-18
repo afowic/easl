@@ -226,7 +226,7 @@ func (b *Board) InCallersCheckout(props map[string]any, typ model.ObjectType, ca
 	case model.Video:
 		for _, key := range []string{"path", "poster"} {
 			path, ok := fields[key].(string)
-			if ok && path != "" && !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "~") {
+			if ok && path != "" && !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "~") && !strings.HasPrefix(path, "file:") {
 				fields[key] = store.Standardized(filepath.Join(checkout, path))
 			}
 		}

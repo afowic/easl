@@ -12,10 +12,13 @@ enum HtmlRuleLists {
         try await compile(HtmlKit.networkRules(allow: hosts))
     }
 
-    /// Fixed rules contain no board hostnames, including the connection-hint block.
     static func remote() async throws -> WKContentRuleList {
         var patterns = ["^https?:", "^file:", "^wss?://\\[", "^wss?://0\\.", "^wss?://127\\.",
                         "^wss?://10\\.", "^wss?://192\\.168\\.", "^wss?://169\\.254\\.",
+                        // WebKit content rules do not support alternation.
+                        "^wss?://100\\.6[4-9]\\.", "^wss?://100\\.[7-9][0-9]\\.",
+                        "^wss?://100\\.1[01][0-9]\\.", "^wss?://100\\.12[0-7]\\.",
+                        "^wss?://198\\.1[89]\\.",
                         "^wss?://([a-z0-9-]+\\.)*localhost\\.?[:/]",
                         "^wss?://([a-z0-9-]+\\.)*local\\.?[:/]", "^wss?://[a-z0-9-]+(:[0-9]+)?/"]
         patterns += (16...31).map { "^wss?://172\\.\($0)\\." }
@@ -392,8 +395,6 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
-/// The page's one native channel. Host URL grants also serve known proxy subframes;
-/// filesystem and state messages remain restricted to the tile's top-level document.
 @MainActor
 final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     /// As `HtmlSchemeHandler.tile`.

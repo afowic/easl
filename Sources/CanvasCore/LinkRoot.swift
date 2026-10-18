@@ -82,12 +82,13 @@ extension Board {
 
     /// The props of a tile `caller` creates, or (`existing`: the tile's props) re-aims, with its
     /// relative paths meaning the caller's checkout when it works in another worktree of the
-    /// board's repository (`callerCheckout`), as for a note's links: a code, image or diagram
-    /// tile's relative `path` becomes absolute there (not a code tile's that reads a `ref` or
+    /// board's repository (`callerCheckout`), as for a note's links: code, image, video and
+    /// diagram paths and video posters become absolute there (not code with a `ref` or
     /// `pinnedCommit`), as does a question's relative `context` path, and a changes tile created
     /// without `root`, `ref` or `head`, or a note or HTML tile created without `root`, gets that
     /// checkout as its `root`. From the board's own checkout, or without a caller, the props are
     /// as given.
+    /// Video file URIs keep their original identity instead of being rebased.
     public func inCallersCheckout(_ props: JSONValue, type: ObjectType, caller: ObjectID?, existing: JSONValue? = nil) -> JSONValue {
         guard var fields = props.object, let checkout = callerCheckout(for: caller) else { return props }
         let merged = (existing ?? .object([:])).merging(props)
@@ -98,7 +99,7 @@ extension Board {
             fields["path"] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
         case .video:
             for key in ["path", "poster"] {
-                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~") else { continue }
+                guard let path = fields[key]?.string, !path.isEmpty, !path.hasPrefix("/"), !path.hasPrefix("~"), !path.hasPrefix("file:") else { continue }
                 fields[key] = .string(URL(fileURLWithPath: checkout).appendingPathComponent(path).standardizedFileURL.path)
             }
         case .changes, .note, .html:
