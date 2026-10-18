@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "e759b57ac1a38e7c"
+const SchemaHash = "b326af2d2a76de42"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -333,7 +333,15 @@ type SurfaceSize struct {
 // SurfaceInputEvent is a union of JSON objects (variants: "mouse", "scroll", "key", "text", "compose", "unmark", "focus", "command", "command", "navigate"); decode it as a generic map.
 type SurfaceInputEvent = map[string]any
 
-// SurfaceFrame: surface.frame data held in memory, never persisted or broadcast. JPEG and PNG carry a full current page image. H264 carries a bounded ESV1 packet, opaque to easld, and may be followed by a full PNG when idle. The first H264 frame of a new session and the first after resize are keyframes. A missing sequence or decoding failure requires a fresh stream. Only the subscribed owning connection receives it.
+// SurfaceFrameDamage: Changed raster region; unchanged sharp pixels remain installed.
+type SurfaceFrameDamage struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+// SurfaceFrame: Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first decoded acknowledgement, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay.
 type SurfaceFrame struct {
 	Stream SurfaceStream `json:"stream"`
 	Seq    int           `json:"seq"`
@@ -341,7 +349,7 @@ type SurfaceFrame struct {
 	Input int         `json:"input"`
 	Size  SurfaceSize `json:"size"`
 	Scale float64     `json:"scale"`
-	// One of "jpeg", "png", "h264".
+	// One of "jpeg", "png", "h264", "patch".
 	Format  string `json:"format"`
 	Data    string `json:"data"`
 	Width   int    `json:"width"`
@@ -349,6 +357,14 @@ type SurfaceFrame struct {
 	Back    bool   `json:"back"`
 	Forward bool   `json:"forward"`
 	Loading bool   `json:"loading"`
+	// A bounded idle refinement, supersedable by input; only patch frames use this flag.
+	Refresh *bool `json:"refresh,omitempty"`
+	// First sequence in a consecutive range of canceled refinements ending immediately before this frame. This never skips a video reference frame.
+	Supersedes *int `json:"supersedes,omitempty"`
+	// Full-resolution raster for region composition, independent of bounded video dimensions.
+	Canvas *SurfaceSize `json:"canvas,omitempty"`
+	// Changed raster region; unchanged sharp pixels remain installed.
+	Damage *SurfaceFrameDamage `json:"damage,omitempty"`
 }
 
 // SurfaceFile: A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent.

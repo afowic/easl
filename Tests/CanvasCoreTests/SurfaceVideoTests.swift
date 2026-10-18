@@ -4,37 +4,6 @@ import Testing
 import CanvasCore
 
 struct SurfaceVideoTests {
-    @Test func sharpRefreshWaitsForDecodedAcknowledgementAndNewActivity() {
-        #expect(!SurfaceVideoRefresh.isDue(at: 1, lastChange: 0, lastInput: 0, lastVideoAck: 1))
-        #expect(!SurfaceVideoRefresh.isDue(at: 1.34, lastChange: 0, lastInput: 0, lastVideoAck: 1))
-        #expect(SurfaceVideoRefresh.isDue(at: 1.35, lastChange: 0, lastInput: 0, lastVideoAck: 1))
-        #expect(SurfaceVideoRefresh.isDue(at: 1.36, lastChange: 0, lastInput: 0, lastVideoAck: 1))
-        #expect(!SurfaceVideoRefresh.isDue(at: 1.4, lastChange: 0, lastInput: 1.2, lastVideoAck: 1))
-        #expect(!SurfaceVideoRefresh.isDue(at: 1.6, lastChange: 1.4, lastInput: 1.2, lastVideoAck: 1))
-        #expect(SurfaceVideoRefresh.isDue(at: 1.76, lastChange: 1.4, lastInput: 1.2, lastVideoAck: 1))
-    }
-
-    @Test func sharpPixelsSurviveInputThatDoesNotChangeThePage() {
-        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: false, inputChanged: true,
-            pageStateChanged: false, isDue: false, canVideo: true) == nil)
-    }
-
-    @Test func chromeChangesReuseTheSharpRepresentation() {
-        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: false, inputChanged: true,
-            pageStateChanged: true, isDue: false, canVideo: true) == .png)
-    }
-
-    @Test func changedPixelsAndQuietMotionChooseTheirRepresentations() {
-        #expect(SurfaceVideoRefresh.frame(after: .png, pixelsChanged: true, inputChanged: true,
-            pageStateChanged: false, isDue: false, canVideo: true) == .video)
-        #expect(SurfaceVideoRefresh.frame(after: .video, pixelsChanged: false, inputChanged: false,
-            pageStateChanged: false, isDue: true, canVideo: true) == .png)
-        #expect(SurfaceVideoRefresh.frame(after: .video, pixelsChanged: false, inputChanged: false,
-            pageStateChanged: false, isDue: false, canVideo: true) == nil)
-        #expect(SurfaceVideoRefresh.frame(after: nil, pixelsChanged: false, inputChanged: false,
-            pageStateChanged: false, isDue: false, canVideo: false) == .png)
-    }
-
     private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -62,9 +31,9 @@ struct SurfaceVideoTests {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
         let first = try #require(try encoder.encode(image(), width: 64, height: 64))
-        let black = try decoder.decode(first, width: 64, height: 64)
+        let black = try decoder.decode(first.data, width: first.width, height: first.height)
         let second = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
-        let red = try decoder.decode(second, width: 64, height: 64)
+        let red = try decoder.decode(second.data, width: second.width, height: second.height)
         #expect(black.width == 64 && black.height == 64)
         let blackPixel = try center(black)
         let redPixel = try center(red)
@@ -76,21 +45,22 @@ struct SurfaceVideoTests {
     @Test func resizingAndNewStreamsProduceRecoverableKeyframes() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        _ = try decoder.decode(#require(try encoder.encode(image(), width: 64, height: 64)), width: 64, height: 64)
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
+        _ = try decoder.decode(original.data, width: original.width, height: original.height)
         let resized = try #require(try encoder.encode(image(width: 96, height: 80, red: true), width: 96, height: 80))
         for consumer in [decoder, SurfaceVideoDecoder()] {
-            let decoded = try consumer.decode(resized, width: 96, height: 80)
+            let decoded = try consumer.decode(resized.data, width: resized.width, height: resized.height)
             #expect(decoded.width == 96 && decoded.height == 80)
             #expect(try center(decoded)[0] > 220)
         }
         let restarted = try #require(try SurfaceVideoEncoder().encode(image(), width: 64, height: 64))
-        #expect(try center(SurfaceVideoDecoder().decode(restarted, width: 64, height: 64)).allSatisfy { $0 < 30 })
+        #expect(try center(SurfaceVideoDecoder().decode(restarted.data, width: restarted.width, height: restarted.height)).allSatisfy { $0 < 30 })
     }
 
     @Test func predictedFirstFrameAndForgedKeyframeAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
-        let first = try #require(try encoder.encode(image(), width: 64, height: 64))
-        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let first = try #require(try encoder.encode(image(), width: 64, height: 64)).data
+        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         #expect(predicted[4] == 0)
         let decoder = SurfaceVideoDecoder()
         #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 64, height: 64) }
@@ -105,8 +75,8 @@ struct SurfaceVideoTests {
 
     @Test func malformedPacketsResetTheDecoderAndKeyframesRecover() throws {
         let encoder = SurfaceVideoEncoder()
-        let keyframe = try #require(try encoder.encode(image(), width: 64, height: 64))
-        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let keyframe = try #require(try encoder.encode(image(), width: 64, height: 64)).data
+        let predicted = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         var malformed = [Data(), Data(keyframe.prefix(9)), Data(keyframe.dropLast()),
                          Data(repeating: 0, count: 8 * 1024 * 1024 + 1)]
         for (index, value) in [(0, UInt8(0)), (4, 2), (5, 3), (6, 255), (7, 255), (10, 0x68)] {
@@ -135,7 +105,7 @@ struct SurfaceVideoTests {
     @Test func invalidAndMismatchedDimensionsAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
         let source = try image()
-        let packet = try #require(try encoder.encode(source, width: 64, height: 64))
+        let packet = try #require(try encoder.encode(source, width: 64, height: 64)).data
         for (width, height) in [(0, 64), (-1, 64), (Int.max, Int.max), (2001, 2000), (64, 80)] {
             let decoder = SurfaceVideoDecoder()
             #expect(throws: (any Error).self) { try decoder.decode(packet, width: width, height: height) }
@@ -148,7 +118,7 @@ struct SurfaceVideoTests {
 
     @Test func oversizedParameterSetDimensionsAreRejected() throws {
         let encoder = SurfaceVideoEncoder()
-        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         func golomb(_ value: Int) -> String {
             let binary = String(value + 1, radix: 2)
             return String(repeating: "0", count: binary.count - 1) + binary
@@ -178,7 +148,7 @@ struct SurfaceVideoTests {
             let encoder = SurfaceVideoEncoder()
             let packet = try #require(try encoder.encode(image(width: fitted.width, height: fitted.height),
                 width: fitted.width, height: fitted.height))
-            let decoded = try SurfaceVideoDecoder().decode(packet, width: fitted.width, height: fitted.height)
+            let decoded = try SurfaceVideoDecoder().decode(packet.data, width: packet.width, height: packet.height)
             #expect(decoded.width == expectedWidth && decoded.height == expectedHeight)
             #expect(try center(decoded).allSatisfy { $0 < 30 })
         }
@@ -194,14 +164,76 @@ struct SurfaceVideoTests {
     @Test func predictedConfigurationChangesRequireAKeyframe() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         _ = try decoder.decode(original, width: 64, height: 64)
-        let resized = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80))
-        let predicted = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80))
+        let resized = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
+        let predicted = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
         #expect(predicted[4] == 0)
         #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 96, height: 80) }
         let recovered = try decoder.decode(resized, width: 96, height: 80)
         #expect(recovered.width == 96 && recovered.height == 80)
         #expect(try center(recovered).allSatisfy { $0 < 30 })
+    }
+
+    private func noise(width: Int, height: Int, seed: UInt64) throws -> CGImage {
+        var state = seed
+        var pixels = Data(count: width * height * 4)
+        pixels.withUnsafeMutableBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            for offset in stride(from: 0, to: bytes.count, by: 4) {
+                state ^= state << 13
+                state ^= state >> 7
+                state ^= state << 17
+                bytes[offset] = UInt8(truncatingIfNeeded: state)
+                bytes[offset + 1] = UInt8(truncatingIfNeeded: state >> 8)
+                bytes[offset + 2] = UInt8(truncatingIfNeeded: state >> 16)
+                bytes[offset + 3] = 255
+            }
+        }
+        let provider = try #require(CGDataProvider(data: pixels as CFData))
+        return try #require(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+    }
+
+    @Test func entropyChangesAndFrozenNoiseStayBoundedAndDecodable() throws {
+        let encoder = SurfaceVideoEncoder()
+        let decoder = SurfaceVideoDecoder()
+        let width = 1536
+        let height = 1024
+        let original = try #require(try encoder.encode(image(width: width, height: height),
+            width: width, height: height))
+        let preserved = try decoder.decode(original.data, width: original.width, height: original.height)
+        let black = try center(preserved)
+        let frozen = try noise(width: width, height: height, seed: 0x123456789abcdef)
+        var previous: SurfaceVideoFrame?
+        var frozenPredictedFrames = 0
+        for index in 0..<8 {
+            let source = index < 3 ? try noise(width: width, height: height, seed: UInt64(index + 1)) : frozen
+            guard let frame = try encoder.encode(source, width: width, height: height) else { continue }
+            #expect(frame.data.count <= 48 * 1024)
+            #expect(frame.width >= 16 && frame.height >= 16)
+            #expect(frame.width % 2 == 0 && frame.height % 2 == 0)
+            #expect(frame.width <= width && frame.height <= height)
+            let decoded = try decoder.decode(frame.data, width: frame.width, height: frame.height)
+            #expect(decoded.width == frame.width && decoded.height == frame.height)
+            if index == 0 || previous?.width != frame.width || previous?.height != frame.height {
+                let fresh = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
+                #expect(fresh.width == frame.width && fresh.height == frame.height)
+            }
+            if index >= 3, frame.data[4] == 0 { frozenPredictedFrames += 1 }
+            previous = frame
+        }
+        #expect(frozenPredictedFrames > 0)
+        #expect(try center(preserved) == black)
+    }
+
+    @Test func oddRequestedDimensionsReportEvenDecodablePixels() throws {
+        let frame = try #require(try SurfaceVideoEncoder().encode(image(width: 65, height: 67), width: 65, height: 67))
+        #expect(frame.width == 64 && frame.height == 66)
+        #expect(frame.data.count <= 48 * 1024)
+        let decoded = try SurfaceVideoDecoder().decode(frame.data, width: frame.width, height: frame.height)
+        #expect(decoded.width == 64 && decoded.height == 66)
     }
 }

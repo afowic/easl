@@ -1,6 +1,5 @@
 import AppKit
 import CanvasCore
-import ImageIO
 import UniformTypeIdentifiers
 
 /// A remote board's browser tile whose page this Mac doesn't run. The Mac that runs it keeps the
@@ -41,6 +40,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var stashed: HostFrame?
     private var lastAcked = 0
     private var video = SurfaceVideoDecoder()
+    private var canvasImage: CGImage?
+    private var decodingRefinement: Int?
     private var pageSize: CGSize?
     private var image: NSImage?
     private var linkStatus: String?
@@ -286,6 +287,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         stashed = nil
         lastAcked = 0
         video = SurfaceVideoDecoder()
+        canvasImage = nil
+        decodingRefinement = nil
         nextSeq = 0
         opening = false
         outbound.removeAll()
@@ -487,8 +490,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             stashed = frame
         case .waiting where frame.seq == lastAcked + 1:
             beginDecode(frame)
+        case .waiting where frame.supersedes.map({ $0 <= lastAcked + 1 }) == true && frame.seq > lastAcked + 1:
+            beginDecode(frame)
         case .waiting where frame.seq > lastAcked + 1:
             restartStream(reason: "Missed a frame from \(remote.host.name)")
+        case .decoding(let seq) where decodingRefinement == seq && frame.supersedes.map({ $0 <= seq }) == true && frame.seq > seq:
+            beginDecode(frame)
         case .decoding(let seq) where frame.seq > seq:
             restartStream(reason: "Missed a frame from \(remote.host.name)")
         case .waiting, .decoding, .idle:
@@ -498,12 +505,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     private func beginDecode(_ frame: HostFrame) {
         credit = .decoding(frame.seq)
+        decodingRefinement = frame.refresh ? frame.seq : nil
         let generation = streamEpoch
         let stream = frame.stream
         let video = video
+        let previous = canvasImage
         runStreamTask { [weak self] in
             let decoded = await offPool {
-                DecodedFrame(SurfaceWire.decode(frame, video: video))
+                DecodedFrame(SurfaceWire.decode(frame, video: video, previous: previous))
             }
             guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
             self.finishDecode(frame, decoded)
@@ -516,6 +525,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
             return
         }
+        canvasImage = cg
+        decodingRefinement = nil
         let sizeChanged = pageSize != frame.size
         pageSize = frame.size
         if chrome.canGoBack != frame.back { chrome.canGoBack = frame.back }
@@ -1445,6 +1456,10 @@ private struct HostFrame: Sendable {
     var format: SurfaceFormat
     var width: Int
     var height: Int
+    var refresh: Bool
+    var supersedes: Int?
+    var canvas: CGSize
+    var damage: CGRect?
 }
 
 private struct HostDialog {
@@ -1469,7 +1484,7 @@ private struct HostNotice {
     var state: String?
 }
 
-/// CGImage is immutable after `CGImageSource` returns it, so the box can cross the decode task.
+/// The decoded CGImage is immutable and can cross the decode task boundary.
 private final class DecodedFrame: @unchecked Sendable {
     let image: CGImage?
     let bytes: Int
@@ -1495,8 +1510,27 @@ private enum SurfaceWire {
               let width = integer(data["width"]), let height = integer(data["height"]),
               width > 0, height > 0, width <= SurfaceEvent.Frame.maxPixels / height,
               let back = data["back"]?.bool, let forward = data["forward"]?.bool, let loading = data["loading"]?.bool else { return nil }
+        let refresh = data["refresh"]?.bool ?? false
+        guard data["refresh"] == nil || data["refresh"]?.bool != nil, !refresh || format == .patch else { return nil }
+        let supersedes = integer(data["supersedes"])
+        guard data["supersedes"] == nil || supersedes.map({ $0 > 0 && $0 < seq }) == true else { return nil }
+        var canvas = CGSize(width: width, height: height)
+        if let value = data["canvas"] {
+            guard let cw = integer(value["w"]), let ch = integer(value["h"]),
+                  cw > 0, ch > 0, cw <= SurfaceEvent.Frame.maxPixels / ch else { return nil }
+            canvas = CGSize(width: cw, height: ch)
+        }
+        var damage: CGRect?
+        if let value = data["damage"] {
+            guard let x = value["x"]?.number, let y = value["y"]?.number,
+                  let w = value["w"]?.number, let h = value["h"]?.number,
+                  x.isFinite, y.isFinite, w.isFinite, h.isFinite,
+                  x >= 0, y >= 0, w > 0, h > 0, x + w <= canvas.width, y + h <= canvas.height else { return nil }
+            damage = CGRect(x: x, y: y, width: w, height: h)
+        }
         return HostFrame(stream: stream, seq: seq, input: input, size: CGSize(width: w, height: h),
-                         back: back, forward: forward, loading: loading, payload: payload, format: format, width: width, height: height)
+                         back: back, forward: forward, loading: loading, payload: payload, format: format, width: width, height: height,
+                         refresh: refresh, supersedes: supersedes, canvas: canvas, damage: damage)
     }
 
     static func dialog(_ data: JSONValue) -> HostDialog? {
@@ -1516,19 +1550,18 @@ private enum SurfaceWire {
                           name: data["name"]?.string, state: data["state"]?.string)
     }
 
-    static func decode(_ frame: HostFrame, video: SurfaceVideoDecoder) -> (CGImage?, Int) {
-        guard frame.payload.utf8.count <= ((16 << 20) + 2) / 3 * 4,
-              let data = Data(base64Encoded: frame.payload), data.count <= 16 << 20 else { return (nil, 0) }
-        if frame.format == .h264 {
-            return (try? video.decode(data, width: frame.width, height: frame.height), data.count)
+    static func decode(_ frame: HostFrame, video: SurfaceVideoDecoder, previous: CGImage?) -> (CGImage?, Int) {
+        let limit: Int
+        switch frame.format {
+        case .patch: limit = frame.refresh ? SurfaceImageEncoder.refinementBytes : SurfacePatchPacket.maximumBytes
+        case .h264: limit = 48 * 1024
+        case .jpeg: limit = SurfaceImageEncoder.motionBytes
+        case .png: limit = 16 << 20
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-              width == frame.width, height == frame.height,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return (nil, data.count) }
-        return (image, data.count)
+        guard frame.payload.utf8.count <= (limit + 2) / 3 * 4,
+              let data = Data(base64Encoded: frame.payload), data.count <= limit else { return (nil, 0) }
+        return (try? SurfaceImageDecoder.decode(data, format: frame.format, width: frame.width, height: frame.height,
+            canvas: frame.canvas, damage: frame.damage, previous: previous, video: video), data.count)
     }
 
     static func plain(_ value: Any) -> String {

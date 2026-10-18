@@ -69,19 +69,23 @@ class SurfaceSize(TypedDict):
 SurfaceInputEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 class SurfaceFrame(TypedDict):
-    """surface.frame data held in memory, never persisted or broadcast. JPEG and PNG carry a full current page image. H264 carries a bounded ESV1 packet, opaque to easld, and may be followed by a full PNG when idle. The first H264 frame of a new session and the first after resize are keyframes. A missing sequence or decoding failure requires a fresh stream. Only the subscribed owning connection receives it."""
+    """Private in-memory surface frame. Explicit JPEG and PNG requests retain full images. Native h264 streams measure the first decoded acknowledgement, then use JPEG on fast links or bounded ESV1 video on constrained links. ESP1 patch batches restore only changed regions losslessly. Motion packets are bounded to 256 KiB JPEG or 48 KiB H264; input deltas are at most 48 KiB and idle refinements 8 KiB before base64. Input supersedes an outstanding idle refinement without waiting for its acknowledgement; the next frame declares the canceled range. No published video reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."""
     stream: Required["SurfaceStream"]
     seq: Required[int]
     input: Required[int]
     size: Required["SurfaceSize"]
     scale: Required[float]
-    format: Required[Literal["jpeg", "png", "h264"]]
+    format: Required[Literal["jpeg", "png", "h264", "patch"]]
     data: Required[str]
     width: Required[int]
     height: Required[int]
     back: Required[bool]
     forward: Required[bool]
     loading: Required[bool]
+    refresh: NotRequired[bool]
+    supersedes: NotRequired[int]
+    canvas: NotRequired["SurfaceSize"]
+    damage: NotRequired[dict[str, Any]]
 
 class SurfaceFile(TypedDict):
     """A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent."""
@@ -484,7 +488,7 @@ class SurfaceApi:
         self._call = call
 
     def stream(self, *, id: str, scale: float | None = None, format: Literal["jpeg", "png", "h264"] | None = None) -> dict[str, Any]:
-        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Acknowledge each frame only after decoding and presentation. JPEG remains the default and PNG requests remain full lossless images. Explicit h264 requests receive bounded ESV1 packets during motion and may receive full PNG refreshes when idle. The first H264 frame of each new session and after resize is a keyframe. Reopen a fresh stream after a missing sequence or decoding failure. Easld relays requests to the exact attached drawingMachine and pins the stream to that attachment. It forwards frame payload bytes unchanged to the owning viewer. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay."""
+        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one active frame is outstanding, credits never accumulate. Acknowledge each frame only after decoding and presentation. JPEG remains the default and PNG requests remain full lossless images. Explicit h264 requests negotiate adaptive JPEG or ESV1 motion with bounded lossless ESP1 changed-region patches. Input may supersede only an idle refinement; the next frame declares the canceled sequence range. The first H264 frame of each new session and after resize is a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld relays requests to the exact attached drawingMachine and pins the stream to that attachment. It forwards frame payload bytes unchanged to the owning viewer. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay."""
         params = {"id": id, "scale": scale, "format": format}
         return self._call("surface.stream", params, [])
 

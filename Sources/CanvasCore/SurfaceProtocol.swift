@@ -28,7 +28,7 @@ public enum SurfaceRequest: Sendable, Equatable {
             let scale = try p.number("scale") ?? 1
             guard scale > 0, scale <= Self.maxScale else { throw Self.invalid("scale must be above 0 and at most \(Self.maxScale)") }
             let format = try p.string("format", optional: true).map { name in
-                guard let parsed = SurfaceFormat(rawValue: name) else { throw Self.invalid("format must be jpeg, png or h264") }
+                guard let parsed = SurfaceFormat(rawValue: name), parsed != .patch else { throw Self.invalid("format must be jpeg, png or h264") }
                 return parsed
             } ?? .jpeg
             self = .stream(tile: tile, scale: scale, format: format)
@@ -67,6 +67,7 @@ public enum SurfaceRequest: Sendable, Equatable {
 public enum SurfaceFormat: String, Sendable, Equatable {
     case jpeg, png
     case h264 = "h264"
+    case patch
 }
 
 /// One `SurfaceInputEvent`: its sequence number on its stream and what it does.
@@ -269,6 +270,10 @@ public enum SurfaceEvent {
         public var back: Bool
         public var forward: Bool
         public var loading: Bool
+        public var refresh = false
+        public var supersedes: Int?
+        public var canvas: CGSize?
+        public var damage: CGRect?
 
         public init(stream: String, seq: Int, input: Int, size: CGSize, scale: Double, format: SurfaceFormat, data: Data, width: Int, height: Int,
                     back: Bool, forward: Bool, loading: Bool) {
@@ -277,12 +282,20 @@ public enum SurfaceEvent {
         }
 
         public var json: JSONValue {
-            .object([
+            var value: [String: JSONValue] = [
                 "stream": .string(stream), "seq": .number(Double(seq)), "input": .number(Double(input)),
                 "size": SurfaceEvent.size(size), "scale": .number(scale), "format": .string(format.rawValue),
                 "data": .string(data.base64EncodedString()), "width": .number(Double(width)), "height": .number(Double(height)),
                 "back": .bool(back), "forward": .bool(forward), "loading": .bool(loading),
-            ])
+            ]
+            if refresh { value["refresh"] = .bool(true) }
+            if let supersedes { value["supersedes"] = .number(Double(supersedes)) }
+            if let canvas { value["canvas"] = SurfaceEvent.size(canvas) }
+            if let damage {
+                value["damage"] = .object(["x": .number(damage.minX), "y": .number(damage.minY),
+                    "w": .number(damage.width), "h": .number(damage.height)])
+            }
+            return .object(value)
         }
     }
 
