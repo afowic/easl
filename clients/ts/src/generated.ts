@@ -129,7 +129,9 @@ export type SurfaceFrame = {
 
 /** A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent. */
 export type SurfaceFile = {
+  /** 1 to 1024 UTF-8 bytes. */
   name: string;
+  /** At most 256 UTF-8 bytes. */
   type: string;
   /** Last modification time in milliseconds since the Unix epoch. */
   modified?: number;
@@ -2160,9 +2162,9 @@ export interface CanvasApi {
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
-    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
+    /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
     input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
-    /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files. */
+    /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 0 or 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. An accepted empty files array clears the input; cancellation preserves its prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files. */
     answer(params: SurfaceAnswerParams): Promise<SurfaceAnswerResult>;
     /** Stop the opening connection's stream and cancel its capture work. Never delete or release the host page; its existing driven-lease policy takes over. Another connection cannot control this stream. */
     stop(params: SurfaceStopParams): Promise<SurfaceStopResult>;

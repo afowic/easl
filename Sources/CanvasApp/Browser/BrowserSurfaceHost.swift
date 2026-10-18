@@ -437,14 +437,20 @@ final class BrowserSurface {
     private func native(for stream: SurfaceStream, mouse: Bool, key: Bool,
                         _ body: @escaping @MainActor (BrowserSurface, BrowserTile, WKWebView) -> Void) async -> Bool {
         guard let expectedPage = tile?.webView, tile?.surface === self, !stream.closed,
-              await Self.setSurfaceRelay(true, in: expectedPage) else { return false }
+              await Self.setSurfaceRelay(true, in: expectedPage) else {
+            end(stream, "page input unavailable")
+            return false
+        }
         let page = try? await SurfaceEventQueue.run { [weak self] () -> WKWebView? in
             guard let self, !stream.closed, let tile = self.tile, tile.surface === self,
                   let webView = tile.webView, webView === expectedPage else { return nil }
             body(self, tile, webView)
             return webView
         }
-        guard let page else { return false }
+        guard let page else {
+            end(stream, "page input unavailable")
+            return false
+        }
         stream.mousePending = stream.mousePending || mouse
         stream.keyPending = stream.keyPending || key
         if stream.mousePending, await Self.processed("_doAfterProcessingAllPendingMouseEvents:", by: page) == true { stream.mousePending = false }

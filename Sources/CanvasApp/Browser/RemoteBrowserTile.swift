@@ -1229,7 +1229,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         switch reason {
         case "menu": return "Host blocked a context menu"
         case "select": return "Host blocked a select menu"
-        case "upload": return "The page's file picker could not be relayed."
+        case "native upload": return "The page's file picker could not be relayed."
+        case "folder upload": return "Folder uploads aren't available on a streamed page."
+        case "upload in a frame": return "Uploads from a frame aren't available on a streamed page."
         case "media": return "Host refused the camera or microphone"
         case "certificate": return "Host refused a client certificate"
         case "app link": return "Host refused an app link"
@@ -1242,6 +1244,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func closedLine(_ reason: String?) -> String {
         switch reason {
         case "drawing machine offline": return DrawingMachine.status(of: object.props, attached: [])
+        case "page input unavailable": return "The drawing Mac couldn't prepare the page for input"
         case "drawing moved": return "The page moved to another Mac"
         case "tile closed": return "Host closed this tile"
         case "board closed": return "Host closed the board"

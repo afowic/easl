@@ -39,9 +39,15 @@ final class DrawingMachineControl: NSPopUpButton {
 
     private func rebuild() {
         removeAllItems()
-        let label = current.map { $0.host.isEmpty ? $0.id : $0.host } ?? "No drawing Mac"
-        let offline = canSwitch && machines.map { choices in !choices.contains { $0.id == current?.id } } == true
-        addItem(withTitle: "Draws on \(label)\(offline ? " (offline)" : "")")
+        let label: String
+        if let current {
+            let host = current.host.isEmpty ? current.id : current.host
+            let offline = canSwitch && machines?.contains(where: { $0.id == current.id }) == false
+            label = "Draws on \(host)\(offline ? " (offline)" : "")"
+        } else {
+            label = "No drawing Mac"
+        }
+        addItem(withTitle: label)
         guard let menu else { return }
         menu.addItem(.separator())
         if canSwitch {
