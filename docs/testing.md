@@ -323,8 +323,9 @@ To check new-board creation, use the same isolated instance and disposable direc
    under a remote-titled window. Existing folders must remain selectable, and the starting
    directory must retain its previous remote-board behavior. Cancel both pickers.
 3. Initialize a disposable Git repository and open its root as a board. With that local board
-   active, create and open a child folder through each picker entry point. Both child folders
-   must select the repository's board (same board ID and repository root), not independent boards.
+   active, create and open a child folder inside that repository's root through each picker entry
+   point. Both child folders must select the repository's board (same board ID and repository
+   root), not independent boards.
 
 Stop the isolated instance and remove only these disposable directories.
 
