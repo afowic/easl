@@ -22,6 +22,17 @@
   },
   "definitions": {
     "ViewerId": { "type": "string", "pattern": "^vw_[A-Za-z0-9_-]{8,64}$", "description": "A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns." },
+    "RemoteUpdateSession": {
+      "type": "object",
+      "required": ["session", "kind", "board", "tile"],
+      "properties": {
+        "session": { "type": "string", "description": "Live remote connection or stream identity." },
+        "kind": { "enum": ["browser", "board", "terminal"] },
+        "board": { "$ref": "#/definitions/Id" },
+        "tile": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "ComposerReceipt": {
       "type": "object",
       "required": ["receipt", "event", "viewer", "terminal", "ids"],
@@ -139,11 +150,16 @@
         "stream": { "$ref": "#/definitions/SurfaceStream" }, "seq": { "type": "integer", "minimum": 1 },
         "input": { "type": "integer", "minimum": 0, "description": "Conservative host app-queue watermark. Pending mouse/key processing checks hold it back until confirmed, and missing checks leave it unconfirmed. Direct text, scroll and commands have no WebKit processing check; this field does not guarantee their effects are visible in the image." },
         "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 },
-        "format": { "enum": ["jpeg", "png"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
+        "format": { "enum": ["jpeg", "png", "h264"] }, "data": { "type": "string", "minLength": 1, "contentEncoding": "base64" },
         "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
-        "back": { "type": "boolean" }, "forward": { "type": "boolean" }, "loading": { "type": "boolean" }
+        "back": { "type": "boolean" }, "forward": { "type": "boolean" }, "loading": { "type": "boolean" },
+        "refresh": { "type": "boolean", "description": "High-quality H264 refresh in the continuing video reference chain. Input can supersede it, forcing the next video frame to start with an independent keyframe." },
+        "supersedes": { "type": "integer", "minimum": 1, "description": "First sequence in a consecutive range of canceled refreshes ending immediately before this frame. The next H264 frame resets prediction with an independent keyframe. Published motion frames cannot be skipped." },
+        "canvas": { "$ref": "#/definitions/SurfaceSize", "description": "Original raster dimensions. Native-size H264 rounds each dimension up to an even number with a minimum of 16, pads the bottom and right edges, and crops decoded output to this canvas." },
+        "offset": { "type": "integer", "minimum": 0, "maximum": 573440, "multipleOf": 16384, "description": "Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered." },
+        "total": { "type": "integer", "minimum": 1, "maximum": 589824, "description": "Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata." }
       }, "additionalProperties": false,
-      "description": "surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it."
+      "description": "Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of topology. H264 motion is bounded to 48 KiB. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. Small later changes predict from that sharp reference. Large active input resumes warm motion with an independent keyframe. Periodic keyframe scheduling is disabled. Every sharp IDR uses refresh transport and never retries at motion quality. Cumulative changes beyond 1% rearm settling. Real-page RGB gates are in docs/testing.md. Refresh uses ordered 16 KiB chunks with one outstanding chunk. Each validated surface.progress receipt releases at most one next chunk, never frame credit. Chunks share one frame sequence and metadata and assemble into one complete ESV1 packet before decoding. They are not images or pixel regions. surface.ack follows complete decode and presentation. Input cancels refresh without waiting. The next frame declares the canceled range and independently resets prediction. Source writers skip untouched canceled refresh lines. Easld removes only queued same-board and same-stream refresh chunks in that range. Partial lines finish intact. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."
     },
     "SurfaceFile": {
       "type": "object", "required": ["name", "type", "data"],
@@ -444,6 +460,21 @@
       },
       "additionalProperties": false
     },
+    "VideoProps": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "description": "video file on the board's host, board-relative or an allowed absolute path" },
+        "poster": { "type": "string", "description": "optional poster image on the board's host" },
+        "loop": { "type": "boolean" },
+        "muted": { "type": "boolean" },
+        "autoplay": { "type": "boolean" },
+        "startTime": { "type": "number", "minimum": 0, "description": "initial playback position in seconds" },
+        "title": { "type": "string" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
+      },
+      "additionalProperties": false
+    },
     "DiagramProps": {
       "type": "object",
       "description": "A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.",
@@ -653,7 +684,7 @@
       "description": "any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured)"
     },
     "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
-    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"] },
+    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "image", "video", "diagram", "question", "shape", "arrow", "group"] },
     "CanvasObject": {
       "type": "object",
       "required": ["id", "type", "frame", "z", "rev", "createdBy", "createdAt", "updatedAt", "props"],
@@ -668,7 +699,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -1023,10 +1054,10 @@
   },
   "methods": {
     "surface.stream": {
-      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
+      "description": "Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0. No frame event precedes surface.ack frame 0. At most one logical frame is outstanding and credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default. Explicit PNG remains lossless. Explicit h264 negotiates adaptive JPEG or predicted ESV1 motion with a bounded sharp H264 reference. Refresh uses ordered 16 KiB chunks with one outstanding chunk, and surface.progress never grants decode credit. Input may supersede only refresh. The next frame declares its canceled range and independently resets prediction. New video sessions, resizes, and motion resumption after sharp prediction require a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards image bytes unchanged to the owning viewer. Private-event hearing is captured at open. Reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay.",
       "params": {
         "type": "object", "required": ["id"],
-        "properties": { "id": { "type": "string", "pattern": "^obj_[0-9A-Za-z]+$" }, "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 2, "default": 1 }, "format": { "enum": ["jpeg", "png"], "default": "jpeg" } },
+        "properties": { "id": { "type": "string", "pattern": "^obj_[0-9A-Za-z]+$" }, "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 2, "default": 1 }, "format": { "enum": ["jpeg", "png", "h264"], "default": "jpeg" } },
         "additionalProperties": false
       },
       "result": {
@@ -1037,6 +1068,11 @@
     "surface.ack": {
       "description": "On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging.",
       "params": { "type": "object", "required": ["stream", "frame"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "frame": { "type": "integer", "minimum": 0 } }, "additionalProperties": false },
+      "result": { "type": "object", "properties": {}, "additionalProperties": false }
+    },
+    "surface.progress": {
+      "description": "On the opening connection, receipt one validated refresh chunk by its starting byte offset. The source sends the next 16 KiB chunk only after this receipt, with at most one chunk outstanding. This grants neither frame nor decode credit. Duplicate receipts do nothing. Unsent or misaligned offsets are invalid_params. Superseded refresh receipts do nothing. surface.ack follows assembly, decode, and presentation of the complete logical frame.",
+      "params": { "type": "object", "required": ["stream", "frame", "offset"], "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "frame": { "type": "integer", "minimum": 1 }, "offset": { "type": "integer", "minimum": 0, "maximum": 573440, "multipleOf": 16384 } }, "additionalProperties": false },
       "result": { "type": "object", "properties": {}, "additionalProperties": false }
     },
     "surface.input": {
@@ -1107,13 +1143,16 @@
       },
       "result": {
         "type": "object",
-        "required": ["currentVersion", "availableVersion", "installPending", "phase", "error"],
+        "required": ["currentVersion", "availableVersion", "installPending", "phase", "error", "deferred", "interruptions", "warning"],
         "properties": {
           "currentVersion": { "type": "string" },
           "availableVersion": { "type": ["string", "null"], "description": "The latest feed version, including one that is not newer; null when unknown." },
           "installPending": { "type": "boolean", "description": "An update is downloading, verifying, waiting in verified staging, or installing." },
           "phase": { "type": "string", "description": "The app updater's current phase." },
-          "error": { "type": ["string", "null"], "description": "The update failure reason, including a retained failure from the previous install; null without a failure." }
+          "error": { "type": ["string", "null"], "description": "The update failure reason, including a retained failure from the previous install; null without a failure." },
+          "deferred": { "type": ["string", "null"], "description": "remote viewer active when automatic installation is deferred for recent remote activity, otherwise null; explicit install still proceeds." },
+          "interruptions": { "type": "array", "items": { "$ref": "#/definitions/RemoteUpdateSession" }, "description": "Live remote sessions that installing now can interrupt." },
+          "warning": { "type": ["string", "null"], "description": "Human-readable interruption warning for explicit installation, otherwise null." }
         },
         "additionalProperties": false
       }
@@ -1430,7 +1469,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -1453,7 +1492,7 @@
           "frame": { "$ref": "#/definitions/FramePatch" },
           "z": { "type": "number", "description": "stacking order, back to front; objects with larger values draw above objects with smaller values" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
           "step": { "type": "integer", "minimum": 1, "description": "The viewer's gesture id; writes with the same id form one undo step." },
           "caller": { "$ref": "#/definitions/Id" }
@@ -1503,8 +1542,8 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
-          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -2201,8 +2240,22 @@
       },
       "result": { "type": "object", "properties": {} }
     },
+    "viewer.activity": {
+      "description": "Optional Mac app host report from a remote board viewer on its board event connection. Requires a subscription to object.updated on this open board. input false registers an attached viewer without resetting idle time; true reports actual user input, never background API requests, terminal output or refreshes. A terminal names the tile receiving real keyboard, paste or drop input through its SSH/zmx attachment. Sessions end when the connection, board or terminal ends. Viewers coalesce reports with a trailing report so the final input keeps its full idle-protection window. Unknown-method errors on older servers disable this optional reporting without affecting viewing or input. Not forwarded by easld.",
+      "params": {
+        "type": "object",
+        "required": ["board", "input"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "input": { "type": "boolean" },
+          "terminal": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "properties": {} }
+    },
     "client.attach": {
-      "description": "Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls and browser object.reload instead go only to the tile's persisted drawingMachine identity. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock.",
+      "description": "Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls, browser object.reload and view.render targeting one browser instead go only to the tile's persisted drawingMachine identity. A singleton target list also names one browser. Multi-object render lists and rectangles stay on the viewer's compositor, including streamed browsers owned elsewhere. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock.",
       "params": {
         "type": "object",
         "required": ["version", "schema", "serves"],
@@ -2212,7 +2265,7 @@
           "app": { "type": "string", "description": "the client's easl version, e.g. \"0.2.0\", for messages" },
           "host": { "type": "string", "description": "the machine it runs on, for messages" },
           "identity": { "$ref": "#/definitions/Id", "description": "this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call" },
-          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored)" },
+          "serves": { "type": "array", "items": { "type": "string" }, "description": "the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.progress, surface.input, surface.answer, surface.stop (others are ignored)" },
           "boards": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "the boards this client serves, in a window, tab, or background attachment, each open on the server; default none" },
           "focused": { "$ref": "#/definitions/Id", "description": "the board its user is looking at now (the key window's selected tab), one of `boards`; the client focused last on a board serves that board first" }
         },

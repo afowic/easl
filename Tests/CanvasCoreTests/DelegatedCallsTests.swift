@@ -3,10 +3,6 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
-/// A remote board's window answering its easld's delegated calls (`DelegatedCalls`). Its
-/// terminal's surface is `screen`: a prompt goes onto it as the agent's input line, and the
-/// agent's `reply` follows. It draws renders as `drawing`, its tiles of `hostPictures` show only
-/// the host's picture, and its WebKit lays a page out as `page` lays it out.
 @MainActor
 final class DelegatedCallsTests {
     final class NoHost: BoardHost {
@@ -21,7 +17,6 @@ final class DelegatedCallsTests {
     var screen = ["$ omp", "> ready"]
     var reply: [String] = []
     var view: ViewState?
-    var hostPictures: Set<ObjectID> = []
     var drawing = RenderOutput(image: Data([0x89, 0x50, 0x4E, 0x47]), format: .png, width: 40, height: 30,
                                canvasRect: Frame(x: 0, y: 0, w: 20, h: 15), scale: 2, objects: [])
     /// What the window was asked to draw, in order.
@@ -52,7 +47,6 @@ final class DelegatedCallsTests {
                 output.format = format
                 return output
             },
-            hostPicture: { [unowned self] id in hostPictures.contains(id) },
             measureHTML: { [unowned self] props, width in
                 laidOut.append(width)
                 return page(props, width)
@@ -187,15 +181,6 @@ final class DelegatedCallsTests {
         ]))
     }
 
-    @Test func aHostBrowserPictureCannotBeRenderedByTheViewer() async throws {
-        tile("obj_note", .note, at: 0)
-        tile("obj_browser", .browser, at: 400)
-        hostPictures = ["obj_browser"]
-        let calls = delegated()
-        let named = await answer(calls, "view.render", .object(["board": "brd_host", "target": ["obj_note", "obj_browser"], "inline": .bool(true)]))
-        #expect(code(named) == "unavailable")
-    }
-
     @Test func aViewerRefusesFileDelivery() async throws {
         tile("obj_note", .note, at: 0)
         let calls = delegated()
@@ -261,8 +246,10 @@ final class DelegatedCallsTests {
         #expect(code(await answer(calls, "surface.stream", .object(["id": "obj_gone"]))) == "not_found")
         #expect(code(await answer(calls, "surface.ack", .object(["stream": "str_1"]))) == "invalid_params")
         _ = try await answer(calls, "surface.ack", .object(["stream": "str_1", "frame": 0])).get()
-        #expect(streamed.map { $0.request } == [.stream(tile: "obj_page", scale: 2, format: .jpeg), .ack(stream: "str_1", frame: 0)])
-        #expect(streamed.map { $0.heard } == [["surface.frame", "surface.dialog"], []])
+        _ = try await answer(calls, "surface.progress", .object(["stream": "str_1", "frame": 1, "offset": 16384])).get()
+        #expect(streamed.map { $0.request } == [.stream(tile: "obj_page", scale: 2, format: .jpeg), .ack(stream: "str_1", frame: 0),
+                                               .progress(stream: "str_1", frame: 1, offset: 16384)])
+        #expect(streamed.map { $0.heard } == [["surface.frame", "surface.dialog"], [], []])
         #expect(streamed.allSatisfy { !$0.open }, "a call that came on no link can push nothing")
     }
 }

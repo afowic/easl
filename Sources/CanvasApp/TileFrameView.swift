@@ -206,6 +206,12 @@ final class TileFrameView: NSView {
         layoutParts()
     }
 
+    /// A drag moves the tile by its origin alone.
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        content.alignToPixels()
+    }
+
     /// Moves the tile and zooms its content in one step, so the content never lays out at a size
     /// in between.
     func place(_ rect: NSRect, zoom: CGFloat) {
@@ -216,6 +222,7 @@ final class TileFrameView: NSView {
             applyZoom()
             updateZoomControl()
         }
+        content.alignToPixels()
     }
 
     /// The content at `zoom` in the body: laid out at the body divided by the zoom.
@@ -224,6 +231,7 @@ final class TileFrameView: NSView {
         let natural = NSSize(width: body.width / zoom, height: body.height / zoom)
         if abs(zoomView.bounds.width - natural.width) > 0.001 || abs(zoomView.bounds.height - natural.height) > 0.001 { zoomView.setBoundsSize(natural) }
         if content.frame.size != zoomView.bounds.size || content.frame.origin != .zero { content.frame = NSRect(origin: .zero, size: zoomView.bounds.size) }
+        content.alignToPixels()
     }
 
     private func layoutParts() {
@@ -253,7 +261,7 @@ final class TileFrameView: NSView {
         // tooltip has the path.
         switch object.type {
         case .code: titleLabel.toolTip = object.props["path"]?.string.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
-        case .image: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
+        case .image, .video: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
         default: titleLabel.toolTip = nil
         }
         z = object.z
@@ -459,6 +467,7 @@ final class TileFrameView: NSView {
         case .html: return props["title"]?.string ?? "HTML"
         // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
+        case .video: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"]?.string.map { ($0 as NSString).lastPathComponent } ?? "Video"
         case .diagram: return DiagramSpec.title(props)
         // Who asks; a terminal asking is named in the body (its header's name).
         case .question:
@@ -519,12 +528,16 @@ final class TileFrameView: NSView {
             } else if let html = content as? HtmlTile {
                 html.setHostBoardClosed(true)
                 html.showSnapshot(true)
+            } else if let video = content as? VideoTile {
+                video.setHostBoardClosed(true)
+                video.showSnapshot(true)
             } else {
                 content.showSnapshot(true)
             }
         } else {
             (content as? HtmlTile)?.setHostBoardClosed(false)
             (content as? ChangesTile)?.setHostBoardClosed(false)
+            (content as? VideoTile)?.setHostBoardClosed(false)
             content.setLive(isLive)
             (content as? TerminalTile)?.setHostBoardClosed(false)
             (content as? NoteTile)?.setHostBoardClosed(false)

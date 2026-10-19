@@ -38,6 +38,12 @@ def _snake_case_hints(cls: type[_Api]) -> type[_Api]:
 
 ViewerId = str
 
+class RemoteUpdateSession(TypedDict):
+    session: Required[str]
+    kind: Required[Literal["browser", "board", "terminal"]]
+    board: Required["Id"]
+    tile: Required[Any]
+
 class ComposerReceipt(TypedDict):
     receipt: Required["Id"]
     event: Required[Literal["composer.returned", "composer.submitted"]]
@@ -69,19 +75,24 @@ class SurfaceSize(TypedDict):
 SurfaceInputEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 class SurfaceFrame(TypedDict):
-    """surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it."""
+    """Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of topology. H264 motion is bounded to 48 KiB. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. Small later changes predict from that sharp reference. Large active input resumes warm motion with an independent keyframe. Periodic keyframe scheduling is disabled. Every sharp IDR uses refresh transport and never retries at motion quality. Cumulative changes beyond 1% rearm settling. Real-page RGB gates are in docs/testing.md. Refresh uses ordered 16 KiB chunks with one outstanding chunk. Each validated surface.progress receipt releases at most one next chunk, never frame credit. Chunks share one frame sequence and metadata and assemble into one complete ESV1 packet before decoding. They are not images or pixel regions. surface.ack follows complete decode and presentation. Input cancels refresh without waiting. The next frame declares the canceled range and independently resets prediction. Source writers skip untouched canceled refresh lines. Easld removes only queued same-board and same-stream refresh chunks in that range. Partial lines finish intact. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay."""
     stream: Required["SurfaceStream"]
     seq: Required[int]
     input: Required[int]
     size: Required["SurfaceSize"]
     scale: Required[float]
-    format: Required[Literal["jpeg", "png"]]
+    format: Required[Literal["jpeg", "png", "h264"]]
     data: Required[str]
     width: Required[int]
     height: Required[int]
     back: Required[bool]
     forward: Required[bool]
     loading: Required[bool]
+    refresh: NotRequired[bool]
+    supersedes: NotRequired[int]
+    canvas: NotRequired["SurfaceSize"]
+    offset: NotRequired[int]
+    total: NotRequired[int]
 
 class SurfaceFile(TypedDict):
     """A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent."""
@@ -244,6 +255,16 @@ class ImageProps(TypedDict):
     title: NotRequired[str]
     key: NotRequired["ObjectKey"]
 
+class VideoProps(TypedDict):
+    path: Required[str]
+    poster: NotRequired[str]
+    loop: NotRequired[bool]
+    muted: NotRequired[bool]
+    autoplay: NotRequired[bool]
+    startTime: NotRequired[float]
+    title: NotRequired[str]
+    key: NotRequired["ObjectKey"]
+
 class DiagramProps(TypedDict):
     """A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`."""
     kind: NotRequired[Literal["calls"]]
@@ -318,7 +339,7 @@ class Size(TypedDict):
     w: Required[float]
     h: Required[float]
 
-ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "question", "shape", "arrow", "group"]
+ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "video", "diagram", "question", "shape", "arrow", "group"]
 
 class CanvasObject(TypedDict):
     id: Required["Id"]
@@ -483,8 +504,8 @@ class SurfaceApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def stream(self, *, id: str, scale: float | None = None, format: Literal["jpeg", "png"] | None = None) -> dict[str, Any]:
-        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay."""
+    def stream(self, *, id: str, scale: float | None = None, format: Literal["jpeg", "png", "h264"] | None = None) -> dict[str, Any]:
+        """Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0. No frame event precedes surface.ack frame 0. At most one logical frame is outstanding and credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default. Explicit PNG remains lossless. Explicit h264 negotiates adaptive JPEG or predicted ESV1 motion with a bounded sharp H264 reference. Refresh uses ordered 16 KiB chunks with one outstanding chunk, and surface.progress never grants decode credit. Input may supersede only refresh. The next frame declares its canceled range and independently resets prediction. New video sessions, resizes, and motion resumption after sharp prediction require a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards image bytes unchanged to the owning viewer. Private-event hearing is captured at open. Reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay."""
         params = {"id": id, "scale": scale, "format": format}
         return self._call("surface.stream", params, [])
 
@@ -492,6 +513,11 @@ class SurfaceApi:
         """On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging."""
         params = {"stream": stream, "frame": frame}
         return self._call("surface.ack", params, [])
+
+    def progress(self, *, stream: "SurfaceStream", frame: int, offset: int) -> dict[str, Any]:
+        """On the opening connection, receipt one validated refresh chunk by its starting byte offset. The source sends the next 16 KiB chunk only after this receipt, with at most one chunk outstanding. This grants neither frame nor decode credit. Duplicate receipts do nothing. Unsent or misaligned offsets are invalid_params. Superseded refresh receipts do nothing. surface.ack follows assembly, decode, and presentation of the complete logical frame."""
+        params = {"stream": stream, "frame": frame, "offset": offset}
+        return self._call("surface.progress", params, [])
 
     def input(self, *, stream: "SurfaceStream", events: list["SurfaceInputEvent"]) -> dict[str, Any]:
         """Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation."""
@@ -829,12 +855,22 @@ class EventsApi:
         return self._call("events.subscribe", params, ["board"])
 
 @_snake_case_hints
+class ViewerApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def activity(self, *, board: "Id", input: bool, terminal: "Id" | None = None) -> dict[str, Any]:
+        """Optional Mac app host report from a remote board viewer on its board event connection. Requires a subscription to object.updated on this open board. input false registers an attached viewer without resetting idle time; true reports actual user input, never background API requests, terminal output or refreshes. A terminal names the tile receiving real keyboard, paste or drop input through its SSH/zmx attachment. Sessions end when the connection, board or terminal ends. Viewers coalesce reports with a trailing report so the final input keeps its full idle-protection window. Unknown-method errors on older servers disable this optional reporting without affecting viewing or input. Not forwarded by easld."""
+        params = {"board": board, "input": input, "terminal": terminal}
+        return self._call("viewer.activity", params, ["board"])
+
+@_snake_case_hints
 class ClientApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def attach(self, *, version: int, schema: str, serves: list[str], app: str | None = None, host: str | None = None, identity: "Id" | None = None, boards: list["Id"] | None = None, focused: "Id" | None = None) -> dict[str, Any]:
-        """Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls and browser object.reload instead go only to the tile's persisted drawingMachine identity. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock."""
+        """Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls, browser object.reload and view.render targeting one browser instead go only to the tile's persisted drawingMachine identity. A singleton target list also names one browser. Multi-object render lists and rectangles stay on the viewer's compositor, including streamed browsers owned elsewhere. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock."""
         params = {"version": version, "schema": schema, "app": app, "host": host, "identity": identity, "serves": serves, "boards": boards, "focused": focused}
         return self._call("client.attach", params, [])
 
@@ -883,11 +919,12 @@ class GeneratedApi:
         self.session = SessionApi(call)
         self.relay = RelayApi(call)
         self.events = EventsApi(call)
+        self.viewer = ViewerApi(call)
         self.client = ClientApi(call)
         self.browser = BrowserApi(call)
         self.text = TextApi(call)
 
-METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"]
+METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

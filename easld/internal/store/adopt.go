@@ -240,6 +240,7 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		format := Format
 		target = &Snapshot{Format: &format, ID: RepoID(commonDir), Root: canonical, Objects: []model.Object{}}
 	}
+	target.MigrateFormat()
 	target.Root = canonical
 	repo := RepoRecord{CommonDir: commonDir, Worktrees: []WorktreeRecord{}}
 	if target.Repo != nil {
@@ -309,16 +310,13 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		}
 
 		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, destinationRoot: Standardized(target.Root)}
-		format := 1
-		if snap.Format != nil {
-			format = *snap.Format
-		}
 		objects := make([]model.Object, len(snap.Objects))
 		for i, o := range snap.Objects {
-			o = o.Clone()
-			if format < 2 && o.Type.IsTile() {
-				o.Frame.H += route.TileTitleHeight
-			}
+			objects[i] = o.Clone()
+		}
+		migrated := Snapshot{Format: snap.Format, Objects: objects}
+		migrated.MigrateFormat()
+		for i, o := range objects {
 			objects[i] = r.reroot(o)
 		}
 		tray := make([]model.Mention, len(snap.Tray))
@@ -798,6 +796,13 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 	case model.Image:
 		if path, ok := props["path"].(string); ok {
 			props["path"] = r.worktreePath(path, what)
+		}
+	case model.Video:
+		for _, key := range []string{"path", "poster"} {
+			path, ok := props[key].(string)
+			if ok && IsRelativeFileReference(path) {
+				props[key] = r.worktreePath(path, what)
+			}
 		}
 	case model.Diagram:
 		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it

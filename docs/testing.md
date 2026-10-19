@@ -21,6 +21,18 @@ The CI `easld` job installs real zmx 0.8.1 for `TestSpawnFirstAttachRestoresBrac
 
 `CanvasCoreTests` is an executable target, not a test target. `main.swift` calls the swift-testing entry point because `swift test` does not discover these suites with the Command Line Tools. Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. CI uses the Command Line Tools, as local development does. `Package.swift` resolves swift-testing's framework, runtime, and macro plugin paths for the selected toolchain. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
+`swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceImage` selects the stream encoder and decoder suites. Tests cover sharp prediction through small input, independent motion after large input, renewed settling, cancellation recovery, malformed packets, declared dimensions, and native padding crop. The JPEG case decodes a valid image larger than 265,627 bytes and checks literal pixels. `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceRefreshTransfer` checks one-chunk receipt flow, duplicate and invalid receipts, complete assembly, and discarded partial transfers. `SocketServerTests` and `EaslConnectionTests` block real writers before canceling queued refresh lines. Their consumer must receive the committed line, another stream, and the replacement in order without the canceled line. Transfer-only cases use bounded opaque bytes. Decoder integration uses the actual codec.
+
+`swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceFrameRasterTests` covers codec-aware capture fitting, including budget-capped and thin H.264 rasters without changing JPEG dimensions. `SurfaceVideoTests.budgetCappedCaptureRastersProduceVisibleSharpReferences` encodes and decodes the fitted rasters through the production codec. `EaslConnectionTests.aDelegatedReplyLargerThan32MiBArrivesWholeAndItsOriginStillPushes` sends a reply above 33 MiB through a real process connection and verifies the full answer and a subsequent event. The blocked-reader case separately requires aggregate output overflow to close the link.
+
+The process relay fixture retains its reply pipe with `exec 3>&1` before redirecting `cat` into the captured-input file. Otherwise the redirect signals stdout EOF, and the client correctly retires that still-running relay after two seconds. Large-reply checks must keep the duplex link open while verifying its captured output.
+
+`swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceVideoQuality` runs `SurfaceVideoQualityTests.realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions`. It requires the manifest and captured image pairs in `Tests/CanvasCoreTests/Fixtures/browser-quality`. Missing fixtures fail rather than skip. The manifest records source URLs, renderer and caret provenance, image hashes, and the required 1800×1324 raster for a 900×662 tile at scale 2.
+
+All real-page cases pass through production capture fitting. A separate 1799×1323 docs viewport crops the captured source before encoding, then compares the complete decoded odd viewport against that source through 30 caret transitions. It enforces max RGB error 8 and mean 1 while requiring the original dimensions, so unconditional even resampling cannot pass.
+
+The quality gate drives `SurfaceImageEncoder.capture` with real documentation, a GitHub file view, and a dense table. Each complete image is compared in canonical sRGB against its captured source, without masks, cropped evaluation regions, or alpha dilution. Maximum RGB channel error must be at most 8 and mean at most 1 for the settled frame and every subsequent caret transition. Documentation runs 200 transitions; the other pages run 30. Encoder-generated sharp IDRs are accepted, decoded and acknowledged under the same quality limits; this gate does not prove periodic keyframe scheduling stays disabled. Saturated synthetic raster errors are reported separately without that quality gate. `SurfaceVideoTests.sharpSizeChangeDoesNotFallBackThroughTheMotionFrameCap` also requires a sharp size-change IDR above the ordinary 48 KiB cap to retain its profile and full dimensions. A passing codec test does not qualify native page capture or a focused caret. Parent-run native measurements and GUI checks supply that evidence.
+
 The Swift navigation fixture builds with `--build-system native --enable-index-store`, the same command the app recommends for user projects. Swift 6.4's SwiftBuild backend reports an index-store path different from the one it writes ([SwiftPM issue 10350](https://github.com/swiftlang/swift-package-manager/issues/10350)). The fixture uses the app's default SourceKit-LSP configuration and keeps the exact cross-file references assertion and its deadline. Neither the app nor the test creates an index-store symlink or enables background builds.
 
 What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` that `CanvasCoreTests` and easld's `go test` both check, so the two can't drift: `terminal-env.json` (a hosted and an owned terminal's session variables), `agent-resume.json` (the command resuming a recorded agent session with the tile's own options, `AgentResume.argv` and `session.ResumeArgv`) and `agent-relaunch.json` (what `agent.restart` relaunches, resumed or fresh, with the recorded model and thinking level and the call's `args`, and the tile's command from then on: `AgentResume.relaunch` and `session.RelaunchOf`). Change a case there, then make both pass.
@@ -110,6 +122,17 @@ What it sets up:
 Browser tests: `EASL_DEV_DOWNLOADS=<folder>` (passed through by `dev.sh`) saves browser downloads there instead of ~/Downloads, and `EASL_DEV_EXTERNAL_OPEN=log` makes links handed to the default browser or another app (⌥-click, `mailto:`) only log `easl: … → <app>` in `app.log`, so a test never opens a window in the user's browser. A page's open panel runs out of process, where no replayed click or key reaches: `input panel <path>` chooses the file.
 
 Run `scripts/dev.sh stop` when the test is done, not at the end of the session: it also kills the instance's zmx sessions.
+
+### Mixed drawing and tile stacking
+
+Build the native app objects, then run the AppKit regression on an isolated GUI test machine:
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
 ### Seeing the window
 
@@ -243,6 +266,23 @@ Stop the host to see "easl isn't running"; the viewer reconnects when the host s
 
 `remote-boards.json` stores each easld board's `host`, `sshTarget`, absolute server `home`, and `board`. Restarting without `EASL_DEV_REMOTE_HOME`, or with a different value, keeps the saved server home. Entries predating `home` use the dev override when set and the host's default only without it. With the override set, discovery refuses the default server even if an entry explicitly names it; it never redirects that address to another server. The picker remembers its most recent server home too. A custom Mac home uses its own `zmx` and `tmp` directories and has no known launcher, so Start easl is unavailable. Quit the viewer with the sheet open and verify that its SSH relays end before the app exits.
 
+### Terminal pixel alignment regression
+
+Run the native AppKit harness in an isolated macOS GUI session. It links the real app and uses a
+Ghostty in-memory terminal. It checks exact body sizes after fractional resizing, window-space
+alignment through flipped and magnified ancestors, unchanged tile geometry, the link underline,
+and a Hyper-click just above a terminal row boundary.
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/TerminalPixels/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+For pixel proof, use a real 1x display mode and confirm the window's backing scale is 1.
+Compare WindowServer crops of the same terminal lines against main after ⌘-scroll, a pan and ⌘0,
+then after a pinch and ⌘0. Use whole-device-pixel body sizes at 100% board and content zoom.
+Fractional body sizes can still stretch Ghostty's drawable. An in-process render is not pixel proof.
+
 ### Default board directory regression
 
 The native regression links the compiled app and invokes the shared picker action with local,
@@ -315,6 +355,7 @@ EASL_DEV_HOME="$t/home" scripts/dev.sh input key return                         
 - Try a wrong `sha256` or `size`, a zip without `easl.app`, a symlink in place of the app, or a version that differs from the zip's. Expect the running app to remain unchanged and a failure notice, not a modal failure sheet. If the app is in the background, expect the notice when the user next looks. `app.update` reports failures in `error`. A version equal to the running one still gives the manual up-to-date sheet. A stopped feed produces a sheet for a manual check and an API error, while an automatic check only logs and preserves any verified staging.
 - `input key escape` is Later: the titlebar keeps its Update button (`dev.sh shot`). Release Notes only logs with `EASL_DEV_EXTERNAL_OPEN=log`.
 - For automatic installation, enable **Install Updates Automatically** and use `input idle off` to hold a verified update in `ready`. Then use `input idle on` to allow installation without a confirmation sheet. `input idle auto` returns to real input timing. Real input in any app, including a foreground terminal program, resets the ten-minute wait. The setting off must prevent automatic installation even with `idle on`.
+- To exercise remote deferral, use two guest instances on a guest-local scratch easld. Let A draw a static browser page and B stream it. Pin A with `input idle on`, enable automatic installation, and click B every 30 seconds. `app.update check` must remain `ready` with `deferred: "remote viewer active"`. Stop B, then wait the full 600 seconds after its last activity. Observe a new A PID, the newer version, and its reopened boards. Use `system.ping`, not repeated update checks, during expiry to prove the idle sampler retries on its own. Repeat an explicit `app.update install` while B is attached and verify the warning lists the browser session before A quits.
 - Exercise `dev.sh cli app.update check` and `dev.sh cli app.update install`. An accepted install must answer `phase: "installing"`, `installPending: true`, and `error: null` before the old connection closes. Reconnect and check `currentVersion` to establish that installation completed. The acknowledgment alone is not proof of replacement or relaunch.
 - Open local and scratch-remote boards before updating. Record tab order, selected tabs, minimized state, pid, window ids, foreground app, and Space before and after. Only the marked update relaunch should attempt the saved layout once. Make a remote board unavailable to exercise the pending recovery notice and Retry or Discard. An ordinary later launch must use the latest normal reopen list, not resurrect the update snapshot, and failed recovery must not block later updates.
 - Interrupt replacement to exercise the atomic same-volume bundle exchange. The canonical app path must contain a complete old or new bundle, never a gap between two renames. A failure to archive the old bundle after exchange must not mark the installation failed. These are rehearsal expectations, not evidence of a completed GUI run.

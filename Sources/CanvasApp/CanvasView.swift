@@ -102,8 +102,6 @@ final class CanvasDocumentView: NSView {
     override func selectAll(_ sender: Any?) { canvas?.selectAll() }
 }
 
-/// The pan/zoom scene for one board: tiles are real NSViews positioned by object frames; groups
-/// are regions behind them; drawings (installed by the drawing layer) and the overlay sit above.
 /// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
 /// The viewport only moves on user input, never in response to agents.
 @MainActor
@@ -198,8 +196,6 @@ final class CanvasView: NSScrollView {
 
     // MARK: Drawn objects (installed by the drawing layer)
 
-    /// The shape or arrow drawn at a document point. Only strokes, text, and fills hit, so an
-    /// empty shape interior never blocks the tiles beneath; drawn objects sit above tiles.
     var shapeHitTest: ((NSPoint) -> ObjectID?)?
     /// Document-space outline of a drawn object at its committed position.
     var shapeOutline: ((ObjectID) -> NSRect?)?
@@ -322,9 +318,10 @@ final class CanvasView: NSScrollView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window, mouseMonitor == nil else { return }
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown]) { [weak self] event in
             // Not `self?.handleMouse(event) ?? event`: that turns "consumed" (nil) back into the event.
             guard let self else { return event }
+            self.reportViewerInput(event)
             return self.handleMouse(event)
         }
         let center = NotificationCenter.default
@@ -366,7 +363,7 @@ final class CanvasView: NSScrollView {
             let carried = rekeyed.removeValue(forKey: object.id)
             let provisional = carried?.browser?.objectID
             add(object, reusing: carried?.browser)
-            restack()
+            if object.type != .shape && object.type != .arrow { restack() }
             scheduleGeometry()
             if let carried {
                 if carried.selected {
@@ -403,7 +400,7 @@ final class CanvasView: NSScrollView {
             } else {
                 // Unarchived (or Archive undone): back in its place in the stack, not on top.
                 add(object)
-                restack()
+                if object.type != .shape && object.type != .arrow { restack() }
             }
             scheduleGeometry()
         case .objectDeleted(let id):
@@ -495,6 +492,9 @@ final class CanvasView: NSScrollView {
         let content = preserved?.content ?? TileFactory.make(object, board: board, remote: remote)
         if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
         if let terminal = content as? TerminalTile {
+            if let remote {
+                terminal.terminal.onUserInput = { [weak mirror = remote.mirror] in mirror?.userInput(terminal: id) }
+            }
             terminal.onTitle = { [weak self] title in
                 self?.tiles[id]?.setTitle(title)
                 // The tray names the target and, when typing goes elsewhere, the terminal typing goes to.
@@ -517,6 +517,18 @@ final class CanvasView: NSScrollView {
                     self.reveal(opened.id, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
                 }
                 self.recordNavigation(from: from, reaim: opened.reaim, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
+            }
+            terminal.onOpenedPage = { [weak self] opened, existing, source in
+                guard let self else { return }
+                let from = self.viewport
+                if existing {
+                    (self.tiles[opened]?.content as? BrowserTile)?.reloadIfFileChanged()
+                    self.goToShown(opened)
+                } else {
+                    self.reveal(opened, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
+                    self.setSelection([opened])
+                }
+                self.recordNavigation(from: from)
             }
             terminal.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
             terminal.onNotice = { [weak self] text in self?.showNotice(text) }
@@ -606,9 +618,7 @@ final class CanvasView: NSScrollView {
         view.author = authorName(of: object)
     }
 
-    /// Orders document subviews: group regions, tiles by `z`, the drawing layer, then the
-    /// overlay. Reorders in place so tiles never leave the window.
-    private func restack() {
+    func restack() {
         document.sortSubviews({ a, b, _ in
             MainActor.assumeIsolated {
                 let lhs = CanvasView.stackRank(a), rhs = CanvasView.stackRank(b)
@@ -617,16 +627,16 @@ final class CanvasView: NSScrollView {
         }, context: nil)
     }
 
-    private static func stackRank(_ view: NSView) -> (Int, Double) {
+    private static func stackRank(_ view: NSView) -> (Int, Double, String) {
         switch view {
-        case is GroupView: (0, 0)
-        case let tile as TileFrameView: (1, tile.z)
-        case is SceneOverlay: (4, 0)
-        default: (2, 0)
+        case let group as GroupView: (0, 0, group.objectID)
+        case let tile as TileFrameView: (1, tile.z, tile.objectID)
+        case let drawing as DrawnItemView: (1, drawing.z, drawing.objectID)
+        case is SceneOverlay: (3, 0, "")
+        default: (2, 0, "")
         }
     }
 
-    /// The drawing layer sits above tiles and below the overlay.
     func installShapeLayer(_ view: NSView) {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)
@@ -789,9 +799,16 @@ final class CanvasView: NSScrollView {
 
     // MARK: Mouse
 
-    /// Clicks that land on tiles or drawings, seen before any view: tile bodies select their tile
-    /// and still receive the click (a terminal keeps focusing); drawn objects are selected and
-    /// dragged here because they have no view of their own.
+    private func reportViewerInput(_ event: NSEvent) {
+        guard let remote, !isHiddenOrHasHiddenAncestor, event.window === window else { return }
+        if event.type == .keyDown {
+            guard let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return }
+        } else {
+            guard event.type != .leftMouseUp, let hit = hitView(event), hit.isDescendant(of: self) else { return }
+        }
+        remote.mirror.userInput()
+    }
+
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
         guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {
@@ -2404,6 +2421,9 @@ final class CanvasView: NSScrollView {
         updateGrid()
         layoutPills()
         if !selection.isEmpty { placeHandles() }
+        // The scroll origin stays where the pan or zoom put it, fractions and all; live terminals
+        // move their surfaces onto device pixels instead (`TerminalTile.alignToPixels`).
+        for tile in tiles.values where tile.isLive { tile.content.alignToPixels() }
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleViewportSave()
         scheduleActivitySettle()

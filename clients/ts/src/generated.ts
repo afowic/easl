@@ -5,6 +5,14 @@ export const SCHEMA_VERSION = 2;
 /** A remote window's in-memory identity, retained across reconnects and scoped to that window's edits and composer returns. */
 export type ViewerId = string;
 
+export type RemoteUpdateSession = {
+  /** Live remote connection or stream identity. */
+  session: string;
+  kind: "browser" | "board" | "terminal";
+  board: Id;
+  tile: unknown;
+};
+
 export type ComposerReceipt = {
   /** Stable outcome identity; the same receipt appears live and in board.get so a viewer applies it once. */
   receipt: Id;
@@ -110,7 +118,7 @@ export type SurfaceInputEvent = {
   url: string;
 };
 
-/** surface.frame data. Full current page image held in memory, never a profile, cookie jar, page source, dirty rectangle or image-less acknowledgement. Only the subscribed owning connection receives it. */
+/** Private in-memory surface frame. JPEG and explicit PNG retain full images up to 16 MiB. Native h264 streams measure the first three decoded motion acknowledgements, then use one full-size quality-0.8 JPEG encode on fast links or bounded predicted ESV1 video on constrained links, regardless of topology. H264 motion is bounded to 48 KiB. After one second without input or a change to more than 1% of consecutive-capture pixels, a stream may send one native-size high-quality H264 refresh bounded to 576 KiB. Small later changes predict from that sharp reference. Large active input resumes warm motion with an independent keyframe. Periodic keyframe scheduling is disabled. Every sharp IDR uses refresh transport and never retries at motion quality. Cumulative changes beyond 1% rearm settling. Real-page RGB gates are in docs/testing.md. Refresh uses ordered 16 KiB chunks with one outstanding chunk. Each validated surface.progress receipt releases at most one next chunk, never frame credit. Chunks share one frame sequence and metadata and assemble into one complete ESV1 packet before decoding. They are not images or pixel regions. surface.ack follows complete decode and presentation. Input cancels refresh without waiting. The next frame declares the canceled range and independently resets prediction. Source writers skip untouched canceled refresh lines. Easld removes only queued same-board and same-stream refresh chunks in that range. Partial lines finish intact. No published motion reference is skipped. Decode failure or any other sequence gap requires a fresh stream without input replay. */
 export type SurfaceFrame = {
   stream: SurfaceStream;
   seq: number;
@@ -118,13 +126,23 @@ export type SurfaceFrame = {
   input: number;
   size: SurfaceSize;
   scale: number;
-  format: "jpeg" | "png";
+  format: "jpeg" | "png" | "h264";
   data: string;
   width: number;
   height: number;
   back: boolean;
   forward: boolean;
   loading: boolean;
+  /** High-quality H264 refresh in the continuing video reference chain. Input can supersede it, forcing the next video frame to start with an independent keyframe. */
+  refresh?: boolean;
+  /** First sequence in a consecutive range of canceled refreshes ending immediately before this frame. The next H264 frame resets prediction with an independent keyframe. Published motion frames cannot be skipped. */
+  supersedes?: number;
+  /** Original raster dimensions. Native-size H264 rounds each dimension up to an even number with a minimum of 16, pads the bottom and right edges, and crops decoded output to this canvas. */
+  canvas?: SurfaceSize;
+  /** Refresh transport chunk byte offset. Only with refresh=true, format=h264 and total. The first chunk starts at zero; chunks are ordered. */
+  offset?: number;
+  /** Whole encoded refresh size. Each chunk contains exactly min(16384,total-offset) decoded bytes, with constant frame metadata. */
+  total?: number;
 };
 
 /** A viewer-picked file held only in memory. All files in one answer total at most 8 MiB decoded, including empty files. No viewer path or drawing-machine staging file is sent. */
@@ -433,6 +451,20 @@ export type ImageProps = {
   key?: ObjectKey;
 };
 
+export type VideoProps = {
+  /** video file on the board's host, board-relative or an allowed absolute path */
+  path: string;
+  /** optional poster image on the board's host */
+  poster?: string;
+  loop?: boolean;
+  muted?: boolean;
+  autoplay?: boolean;
+  /** initial playback position in seconds */
+  startTime?: number;
+  title?: string;
+  key?: ObjectKey;
+};
+
 /** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
 export type DiagramProps = {
   /** what the diagram is of; more kinds (types, pipelines) will come */
@@ -634,7 +666,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "diagram" | "question" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "video" | "diagram" | "question" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -648,7 +680,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -1001,7 +1033,7 @@ export type MetricsCounter = {
 export type SurfaceStreamParams = {
   id: string;
   scale?: number;
-  format?: "jpeg" | "png";
+  format?: "jpeg" | "png" | "h264";
 };
 export type SurfaceStreamResult = {
   stream: SurfaceStream;
@@ -1014,6 +1046,13 @@ export type SurfaceAckParams = {
   frame: number;
 };
 export type SurfaceAckResult = Record<string, unknown>;
+
+export type SurfaceProgressParams = {
+  stream: SurfaceStream;
+  frame: number;
+  offset: number;
+};
+export type SurfaceProgressResult = Record<string, unknown>;
 
 export type SurfaceInputParams = {
   stream: SurfaceStream;
@@ -1109,6 +1148,12 @@ export type AppUpdateResult = {
   phase: string;
   /** The update failure reason, including a retained failure from the previous install; null without a failure. */
   error: unknown;
+  /** remote viewer active when automatic installation is deferred for recent remote activity, otherwise null; explicit install still proceeds. */
+  deferred: unknown;
+  /** Live remote sessions that installing now can interrupt. */
+  interruptions: RemoteUpdateSession[];
+  /** Human-readable interruption warning for explicit installation, otherwise null. */
+  warning: unknown;
 };
 
 export type BoardGetParams = {
@@ -1381,7 +1426,7 @@ export type ObjectFindResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame | SizeFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -1416,7 +1461,7 @@ export type ObjectUpdateParams = {
   z?: number;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props?: Record<string, unknown>;
   /** With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch. */
   viewer?: ViewerId;
@@ -1473,9 +1518,9 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, VideoProps, DiagramProps, QuestionProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
-  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns); the width an html page lays out at (default 640) */
+  /** wrap width for notes and text; maximum width for code (default 1546, 200 columns), images and video (default 960); the width an html page lays out at (default 640) */
   width?: number;
   caller?: Id;
 };
@@ -2077,6 +2122,13 @@ export type EventsSubscribeParams = {
 };
 export type EventsSubscribeResult = Record<string, unknown>;
 
+export type ViewerActivityParams = {
+  board: Id;
+  input: boolean;
+  terminal?: Id;
+};
+export type ViewerActivityResult = Record<string, unknown>;
+
 export type ClientAttachParams = {
   /** the schema `version` the client was built from: older than the server's is refused; a newer client speaks the server's (the reply's `version`) */
   version: number;
@@ -2088,7 +2140,7 @@ export type ClientAttachParams = {
   host?: string;
   /** this app home's persistent machine identity, unchanged across reconnects and relaunches; distinct from the connection's cli_ id. Needed to serve browser.call */
   identity?: Id;
-  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.input, surface.answer, surface.stop (others are ignored) */
+  /** the methods this client answers: view.get, view.render, view.snapshot, agent.prompt, agent.read, agent.restart, object.reload, object.measure, text.measure, browser.call, surface.stream, surface.ack, surface.progress, surface.input, surface.answer, surface.stop (others are ignored) */
   serves: string[];
   /** the boards this client serves, in a window, tab, or background attachment, each open on the server; default none */
   boards?: Id[];
@@ -2174,10 +2226,12 @@ export type TextMeasureResult = {
 /** Every API method, grouped by namespace (`api.board.get(...)`). */
 export interface CanvasApi {
   surface: {
-    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0; no frame event is sent until surface.ack frame 0. At most one frame is outstanding, credits never accumulate. Easld relays to the exact attached drawingMachine and pins the stream to that attachment. Private-event hearing is captured at open; reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
+    /** Open a connection-owned stream of the existing browser WKWebView, not a new page. Requires events.subscribe for surface.frame and the tile's canonical board on this same connection. Starts with outstanding frame 0. No frame event precedes surface.ack frame 0. At most one logical frame is outstanding and credits never accumulate. Acknowledge only after complete decoding and presentation. JPEG is the default. Explicit PNG remains lossless. Explicit h264 negotiates adaptive JPEG or predicted ESV1 motion with a bounded sharp H264 reference. Refresh uses ordered 16 KiB chunks with one outstanding chunk, and surface.progress never grants decode credit. Input may supersede only refresh. The next frame declares its canceled range and independently resets prediction. New video sessions, resizes, and motion resumption after sharp prediction require a keyframe. Reopen after an undeclared sequence gap or decoding failure. Easld pins the stream to the exact drawingMachine attachment and forwards image bytes unchanged to the owning viewer. Private-event hearing is captured at open. Reopen to use subscriptions added later. Drawing changes, board or tile closure, and either endpoint disconnect end the relay without replay. */
     stream(params: SurfaceStreamParams): Promise<SurfaceStreamResult>;
     /** On the opening connection, acknowledge exactly the outstanding frame to grant one next frame. Initial ack is frame 0. Older acknowledgements are ignored; future frames are invalid_params. Decode and install the image before acknowledging. */
     ack(params: SurfaceAckParams): Promise<SurfaceAckResult>;
+    /** On the opening connection, receipt one validated refresh chunk by its starting byte offset. The source sends the next 16 KiB chunk only after this receipt, with at most one chunk outstanding. This grants neither frame nor decode credit. Duplicate receipts do nothing. Unsent or misaligned offsets are invalid_params. Superseded refresh receipts do nothing. surface.ack follows assembly, decode, and presentation of the complete logical frame. */
+    progress(params: SurfaceProgressParams): Promise<SurfaceProgressResult>;
     /** Queue ordered native input for the opening connection's existing browser. Validate the entire bounded batch before any mutation. seq values are positive and strictly increasing within the batch; previously accepted events are ignored. Never automatically resend input. Acceptance means queueing only. If page relay setup fails during delivery, the stream closes with a notice; accepted input is never replayed. A later frame input watermark has the processing limitations documented by SurfaceFrame. Result text is present only for an explicit copy operation. */
     input(params: SurfaceInputParams): Promise<SurfaceInputResult>;
     /** Complete one pending dialog on its stream's opening connection. A closed stream safely dismisses pending dialogs. Auth passwords and file bytes are transient request data, never logged, staged or read from the viewer's keychain. A file picker accepts 1 file, or up to 32 with multiple:true, totaling at most 8 MiB decoded. An accepted file selection cannot be empty. Files are installed in the initiating main-frame input as in-memory File objects with untrusted input/change events. Cancellation preserves the input's prior files. Navigation or element replacement invalidates the picker. Cancel carries accept:false and no files. */
@@ -2313,8 +2367,12 @@ export interface CanvasApi {
     /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
+  viewer: {
+    /** Optional Mac app host report from a remote board viewer on its board event connection. Requires a subscription to object.updated on this open board. input false registers an attached viewer without resetting idle time; true reports actual user input, never background API requests, terminal output or refreshes. A terminal names the tile receiving real keyboard, paste or drop input through its SSH/zmx attachment. Sessions end when the connection, board or terminal ends. Viewers coalesce reports with a trailing report so the final input keeps its full idle-protection window. Unknown-method errors on older servers disable this optional reporting without affecting viewing or input. Not forwarded by easld. */
+    activity(params: ViewerActivityParams): Promise<ViewerActivityResult>;
+  };
   client: {
-    /** Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls and browser object.reload instead go only to the tile's persisted drawingMachine identity. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock. */
+    /** Attach this connection as a Mac client serving the named methods and open boards, including background boards. The optional identity is persistent per app home; the returned cli_ id identifies only this connection. Older schema versions are refused unavailable; newer versions speak the server's version, and equal versions work across schema hashes. Unknown attach params and serves names are ignored. Calls normally go to the capable viewer that focused this board last, then focused most recently, then attached last. Browser calls, browser object.reload and view.render targeting one browser instead go only to the tile's persisted drawingMachine identity. A singleton target list also names one browser. Multi-object render lists and rectangles stay on the viewer's compositor, including streamed browsers owned elsewhere. An eligible creator supplies a new browser's default; otherwise the earliest eligible attached Mac supplies it. The first eligible attachment fills existing missing owners. Disconnect never migrates a page. Delegated requests retain their method, with canonical board/target ids. Prompt mentions are queued by easld. HTML measurement receives resolved props and width. Rendering is requested inline without out; only the server writes caller-requested render files. Results and errors otherwise pass through. Reload waits timeoutMs plus 5 s; render waits timeoutMs plus 30 s. Browser wait uses its requested timeout plus grace. Other deadlines are 5 s for view.get, 30 s for view.snapshot, 25 s for HTML object.measure, 10 s for terminal calls and 2 s for text.measure. Missing, disconnected or unresponsive clients fail unavailable, except text.measure falls back to the glyph table. Attach again to replace capabilities, boards or focus; closing detaches. Answer delegated calls without awaiting a new request on this same link, and answer text.measure without any server request because it may hold the board lock. */
     attach(params: ClientAttachParams): Promise<ClientAttachResult>;
     /** The clients attached to easld, including background viewers. Each entry names its app, host, served boards and methods. Entries, boards and methods are sorted by id or name. The Mac app answers unsupported. */
     list(params?: ClientListParams): Promise<ClientListResult>;
@@ -2340,6 +2398,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     surface: {
       stream: (params: SurfaceStreamParams) => call("surface.stream", params ?? {}, []) as Promise<SurfaceStreamResult>,
       ack: (params: SurfaceAckParams) => call("surface.ack", params ?? {}, []) as Promise<SurfaceAckResult>,
+      progress: (params: SurfaceProgressParams) => call("surface.progress", params ?? {}, []) as Promise<SurfaceProgressResult>,
       input: (params: SurfaceInputParams) => call("surface.input", params ?? {}, []) as Promise<SurfaceInputResult>,
       answer: (params: SurfaceAnswerParams) => call("surface.answer", params ?? {}, []) as Promise<SurfaceAnswerResult>,
       stop: (params: SurfaceStopParams) => call("surface.stop", params ?? {}, []) as Promise<SurfaceStopResult>,
@@ -2420,6 +2479,9 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     events: {
       subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
+    viewer: {
+      activity: (params: ViewerActivityParams) => call("viewer.activity", params ?? {}, ["board"]) as Promise<ViewerActivityResult>,
+    },
     client: {
       attach: (params: ClientAttachParams) => call("client.attach", params ?? {}, []) as Promise<ClientAttachResult>,
       list: (params?: ClientListParams) => call("client.list", params ?? {}, []) as Promise<ClientListResult>,
@@ -2434,7 +2496,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["surface.stream","surface.ack","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

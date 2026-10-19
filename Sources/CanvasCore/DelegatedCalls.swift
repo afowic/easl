@@ -9,11 +9,8 @@ public struct ViewerWindow {
     public var focused: () -> Bool
     /// What the window shows (`view.get`); nil once it is gone.
     public var viewState: () -> ViewState?
-    /// Part of the board drawn offscreen by this Mac (`view.render`), in memory; a tile that shows
-    /// only the host's picture of its object is reported failed, never drawn from that picture.
+    /// Part of the board drawn offscreen by this Mac (`view.render`), in memory.
     public var render: (RenderRequest, ImageFormat) async throws -> RenderOutput
-    /// The object's tile shows only the host's picture of it, which this Mac can't draw itself.
-    public var hostPicture: (ObjectID) -> Bool
     /// An HTML page laid out by this Mac's WebKit, its excerpts and images read on the board's host.
     public var measureHTML: ObjectMeasure.PageMeasurer
     /// A browser tile's page loaded again, when this Mac runs the page (`object.reload`, credited to
@@ -44,7 +41,7 @@ public struct ViewerWindow {
     public var languages: () -> LanguageService?
 
     public init(focused: @escaping () -> Bool, viewState: @escaping () -> ViewState?,
-                render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput, hostPicture: @escaping (ObjectID) -> Bool,
+                render: @escaping (RenderRequest, ImageFormat) async throws -> RenderOutput,
                 measureHTML: @escaping ObjectMeasure.PageMeasurer, reload: @escaping (ObjectID, ObjectID?, Int) async throws -> JSONValue,
                 browse: @escaping (ObjectID, CmuxBrowserCommand, ObjectID?) async throws -> JSONValue,
                 surface: @escaping (SurfaceRequest, EaslConnection.Origin, Set<String>) async throws -> JSONValue,
@@ -54,7 +51,6 @@ public struct ViewerWindow {
         self.focused = focused
         self.viewState = viewState
         self.render = render
-        self.hostPicture = hostPicture
         self.measureHTML = measureHTML
         self.reload = reload
         self.browse = browse
@@ -91,11 +87,10 @@ public struct ClientIdentity: Equatable, Sendable {
 @MainActor
 final class DelegatedCalls {
     /// A snapshot would put the window's picture on the viewer's disk: not a capability of a
-    /// remote board's viewer. The five `surface.*` methods stream a browser tile this Mac draws to
-    /// another Mac's viewer through easld; easld sends the four after `surface.stream` only on
-    /// the link that stream was opened on.
+    /// remote board's viewer. The `surface.*` methods stream a browser tile this Mac draws to
+    /// another Mac's viewer through easld, on the link that stream was opened on.
     static let served = ["view.get", "view.render", "agent.prompt", "agent.read", "object.reload", "object.measure", "text.measure", "browser.call",
-                         "surface.stream", "surface.ack", "surface.input", "surface.answer", "surface.stop"]
+                         "surface.stream", "surface.ack", "surface.progress", "surface.input", "surface.answer", "surface.stop"]
     /// The longest line easld reads from a client (`easld/internal/server`, `defaultLimits`): past
     /// it easld closes the link, failing every call on it.
     nonisolated static let maxReply = 64 << 20
@@ -149,9 +144,6 @@ final class DelegatedCalls {
         }
         let (_, request) = try ApiRouter.renderRequest(p) { _ in board }
         let format = try ApiRouter.imageFormat(p)
-        if case .objects(let ids) = request.target, let id = ids.first(where: window.hostPicture), let object = board.objects[id] {
-            throw ApiRouter.Failure("unavailable", "\(object.type.rawValue) tile \(id) isn't drawn by this viewer: it shows the host's picture of it")
-        }
         let output = try await window.render(request, format)
         let result = ApiRouter.rendered(output, ApiRouter.inlined(output))
         try await offPool(qos: .utility) { Result { try Self.checkReplySize(result) } }.get()
