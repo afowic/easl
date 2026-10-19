@@ -1400,21 +1400,73 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
+        await render(request, deadline: ContinuousClock.now + .seconds(8))
+    }
+
+    func render(_ request: TileRenderRequest, deadline: ContinuousClock.Instant) async -> TileRender {
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
         if drawingOffline {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: drawingStatus)
         }
-        guard streamID != nil, owned.current()?.state == .online else {
-            return TileRender(image: nil, contentSize: request.size, state: .failed,
-                              reason: linkStatus ?? "not streaming from \(remote.host.name)")
+        if streamID != nil, owned.current()?.state == .online, lastAcked > 0, let image {
+            let drawn = draw(image, request: request)
+            return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered)
         }
-        guard lastAcked > 0, let image else { return .placeholder(request, "waiting for the current browser stream's first frame") }
-        let drawn = draw(image, request: request)
-        return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered)
+        return await snapshotBrowserOnly(request, deadline: deadline)
+    }
+
+    private func snapshotBrowserOnly(_ request: TileRenderRequest, deadline: ContinuousClock.Instant) async -> TileRender {
+        let source = object
+        let board = remote.mirror.sessionBoardID
+        guard remote.mirror.availability == .open, !board.isEmpty else {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "the host board is closed")
+        }
+        do {
+            let result = try await remote.browserSnapshots.render(
+                host: remote.host, board: board, browser: source.id,
+                scale: min(4, max(0.1, Double(request.scale) / source.zoom)),
+                priority: request.priority, deadline: deadline)
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else { return .placeholder(request, "timed out") }
+            guard remote.mirror.availability == .open, remote.mirror.sessionBoardID == board,
+                  object.id == source.id, DrawingMachine(object.props)?.id == DrawingMachine(source.props)?.id else {
+                return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "the browser's drawing changed during the render")
+            }
+            guard let rendered = result["objects"]?.array?.first(where: { $0["id"]?.string == source.id }),
+                  let state = rendered["state"]?.string.flatMap(RenderState.init(rawValue:)) else {
+                throw EaslConnection.Failure("unavailable", "the drawing Mac returned no browser render")
+            }
+            guard state == .rendered else {
+                return TileRender(image: nil, contentSize: request.size, state: state, reason: rendered["reason"]?.string)
+            }
+            guard let encoded = result["data"]?.string, let bytes = Data(base64Encoded: encoded),
+                  let image = NSBitmapImageRep(data: bytes)?.cgImage,
+                  let scale = result["scale"]?.number, scale.isFinite, scale > 0,
+                  let rect = try rendered["pixelRect"]?.decode(Frame.self) else {
+                throw EaslConnection.Failure("unavailable", "the drawing Mac returned an invalid browser image")
+            }
+            let top = (rect.y + RenderMath.tileTitleHeight * scale).rounded(.up)
+            let body = CGRect(x: rect.x, y: top, width: rect.w, height: max(0, rect.y + rect.h - top))
+                .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            guard !body.isEmpty, let cropped = image.cropping(to: body) else {
+                throw EaslConnection.Failure("unavailable", "the drawing Mac returned an empty browser image")
+            }
+            let content = NSImage(cgImage: cropped, size: request.size)
+            let drawn = request.image { bounds in content.drawUpright(in: bounds) }
+            return TileRender(image: drawn, contentSize: request.size, state: drawn == nil ? .failed : .rendered,
+                              reason: rendered["reason"]?.string)
+        } catch is CancellationError {
+            return .placeholder(request, "cancelled")
+        } catch let error as EaslConnection.Failure where error.code == "timeout" {
+            return .placeholder(request, "timed out")
+        } catch {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: String(describing: error))
+        }
     }
 
     func cardSnapshot() async -> NSImage? {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
-                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance, priority: .background)
         await MainTurns.next()
         guard !Task.isCancelled, let image else { return nil }
         return draw(image, request: request)

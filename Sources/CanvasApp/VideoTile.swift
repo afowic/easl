@@ -287,10 +287,10 @@ final class VideoTile: NSView, TileContent {
         }
     }
 
-    private func thumbnail(at time: Double, pixels: CGSize) async throws -> NSImage {
+    private func thumbnail(at time: Double, pixels: CGSize, priority: HostReadPriority = .interactive) async throws -> NSImage {
         try Task.checkCancellation()
         guard !hostBoardClosed else { throw CancellationError() }
-        let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files)
+        let source = HostVideoAsset(request: request(object.props["path"]?.string ?? ""), files: files, priority: priority)
         let generator = AVAssetImageGenerator(asset: source.asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: min(4096, max(1, pixels.width)), height: min(4096, max(1, pixels.height)))
@@ -368,7 +368,7 @@ final class VideoTile: NSView, TileContent {
                 frame = cached
             } else {
                 frame = try await thumbnail(at: object.props["startTime"]?.number ?? 0,
-                                            pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale))
+                                            pixels: CGSize(width: request.size.width * request.scale, height: request.size.height * request.scale), priority: request.priority)
             }
             let image = request.image { bounds in
                 NSColor.black.setFill()
@@ -392,7 +392,7 @@ final class VideoTile: NSView, TileContent {
             return frame
         }
         if hostBoardClosed { return lastSnapshot }
-        let frame = try? await thumbnail(at: currentPosition, pixels: pixels)
+        let frame = try? await thumbnail(at: currentPosition, pixels: pixels, priority: .background)
         guard !Task.isCancelled else { return nil }
         if let frame { lastSnapshot = frame }
         return frame
@@ -435,19 +435,25 @@ private final class VideoPlayerView: AVPlayerView {
 
 @MainActor
 private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
+    private struct PendingBlock {
+        let task: Task<HostFile, Error>
+        var readers: Set<ObjectIdentifier>
+    }
+
     let asset: AVURLAsset
     private let request: HostFileRequest
     private let files: HostFiles?
     private var metadataTask: Task<HostFile, Error>?
+    private var pendingBlocks: [Int64: PendingBlock] = [:]
     private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     private var blocks: [HostFile] = []
     private var nextBlock = 0
     private var cancelled = false
     private(set) var failure: String?
 
-    init(request: HostFileRequest, files: HostFiles?) {
+    init(request: HostFileRequest, files: HostFiles?, priority: HostReadPriority = .interactive) {
         self.request = request
-        self.files = files
+        self.files = files?.prioritized(priority)
         var url = URLComponents()
         url.scheme = HtmlKit.scheme
         url.host = "video"
@@ -477,22 +483,54 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
         return try await task.value
     }
 
-    private func block(at offset: Int64, metadata: HostFile) async throws -> HostFile {
+    private func block(at offset: Int64, metadata: HostFile, reader: ObjectIdentifier) async throws -> HostFile {
+        try Task.checkCancellation()
         if let block = blocks.first(where: { offset >= $0.offset && offset < $0.offset + Int64($0.data.count) }) { return block }
         let start = offset - offset % Int64(HostFileRange.maxLength)
-        let length = Int(min(Int64(HostFileRange.maxLength), metadata.size - start))
-        var request = request
-        request.bytes = true
-        request.range = HostFileRange(offset: start, length: length)
-        let file = try await Self.read(request, files: files)
-        guard file.version == metadata.version, file.size == metadata.size,
-              file.offset == start, file.data.count == length else { throw URLError(.resourceUnavailable) }
-        if blocks.count < 4 { blocks.append(file) }
-        else {
-            blocks[nextBlock] = file
-            nextBlock = (nextBlock + 1) % 4
+        let task: Task<HostFile, Error>
+        if var pending = pendingBlocks[start] {
+            pending.readers.insert(reader)
+            pendingBlocks[start] = pending
+            task = pending.task
+        } else {
+            let length = Int(min(Int64(HostFileRange.maxLength), metadata.size - start))
+            var request = request
+            request.bytes = true
+            request.range = HostFileRange(offset: start, length: length)
+            let files = files
+            task = Task { @MainActor [weak self] in
+                let file = try await Self.read(request, files: files)
+                try Task.checkCancellation()
+                guard let self, !self.cancelled else { throw CancellationError() }
+                guard file.version == metadata.version, file.size == metadata.size,
+                      file.offset == start, file.data.count == length else { throw URLError(.resourceUnavailable) }
+                if self.blocks.count < 4 { self.blocks.append(file) }
+                else {
+                    self.blocks[self.nextBlock] = file
+                    self.nextBlock = (self.nextBlock + 1) % 4
+                }
+                return file
+            }
+            pendingBlocks[start] = PendingBlock(task: task, readers: [reader])
         }
-        return file
+        defer { releaseBlock(at: start, reader: reader) }
+        return try await withTaskCancellationHandler {
+            let file = try await task.value
+            try Task.checkCancellation()
+            return file
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.releaseBlock(at: start, reader: reader) }
+        }
+    }
+
+    private func releaseBlock(at start: Int64, reader: ObjectIdentifier) {
+        guard var pending = pendingBlocks[start], pending.readers.remove(reader) != nil else { return }
+        if pending.readers.isEmpty {
+            pendingBlocks[start] = nil
+            pending.task.cancel()
+        } else {
+            pendingBlocks[start] = pending
+        }
     }
 
     nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
@@ -523,7 +561,7 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
                         var offset = max(data.requestedOffset, data.currentOffset)
                         while offset < end {
                             try Task.checkCancellation()
-                            let block = try await self.block(at: offset, metadata: metadata)
+                            let block = try await self.block(at: offset, metadata: metadata, reader: key)
                             guard !loadingRequest.isCancelled, !loadingRequest.isFinished else { throw CancellationError() }
                             let start = Int(offset - block.offset)
                             let count = Int(min(end - offset, Int64(block.data.count - start)))
@@ -551,6 +589,8 @@ private final class HostVideoAsset: NSObject, AVAssetResourceLoaderDelegate {
         cancelled = true
         asset.cancelLoading()
         metadataTask?.cancel()
+        for pending in pendingBlocks.values { pending.task.cancel() }
+        pendingBlocks.removeAll()
         for task in tasks.values { task.cancel() }
         blocks.removeAll()
     }

@@ -9,6 +9,13 @@ final class RemoteSource {
     let git: HostGit
     let languages: LanguageService
     private static var languagePool: [(route: HostRoute, service: LanguageService)] = []
+    private static var snapshotPool: [String: HostBrowserSnapshots] = [:]
+    lazy var browserSnapshots: HostBrowserSnapshots = {
+        if let snapshots = Self.snapshotPool[host.sshTarget] { return snapshots }
+        let snapshots = HostBrowserSnapshots()
+        Self.snapshotPool[host.sshTarget] = snapshots
+        return snapshots
+    }()
 
     static var languageServices: [LanguageService] { languagePool.map(\.service) }
 
@@ -67,6 +74,11 @@ extension ViewerWindow {
             viewState: { [weak controller] in controller?.canvas.viewState },
             render: { [weak controller] request, format in
                 guard let canvas = controller?.canvas else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
+                if case .objects(let ids) = request.target, ids.count == 1,
+                   controller?.board.objects[ids[0]]?.type == .browser,
+                   !(canvas.tiles[ids[0]]?.content is BrowserTile) {
+                    throw ApiRouter.Failure("unavailable", "browser tile \(ids[0]) draws on another Mac, not this viewer")
+                }
                 return try await canvas.render(request, format: format)
             },
             measureHTML: { [weak controller] props, width in
