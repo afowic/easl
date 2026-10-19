@@ -57,7 +57,7 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
 4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
 5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
-To create a fresh, independent board, select a local board or close all board windows, then choose
+To create a fresh, independent board, keep a local board window open and choose
 File › Open Board… or the tab bar's + button. Click **New Folder**, name a folder **outside any
 Git repository**, and choose **Open Board**. No existing easl data is required. A folder inside
 a Git repository opens that repository's board instead; it does not create an independent board.

@@ -318,14 +318,11 @@ To check new-board creation, use the same isolated instance and disposable direc
    independent board opens on that folder. Repeat with the tab bar's + button and a different
    fresh name. Reopen both folders and confirm that each selects its existing board without a
    duplicate.
-2. Close only this instance's board windows and repeat File › Open Board… with no active board.
-   Confirm that **New Folder** remains available and another outside-repository folder opens as
-   an independent board.
-3. Select a remote board and invoke both File › Open Board… and the tab bar's + button.
+2. Select a remote board and invoke both File › Open Board… and the tab bar's + button.
    **New Folder** must be absent or disabled: this local picker must not offer folder creation
    under a remote-titled window. Existing folders must remain selectable, and the starting
    directory must retain its previous remote-board behavior. Cancel both pickers.
-4. Initialize a disposable Git repository and open its root as a board. With that local board
+3. Initialize a disposable Git repository and open its root as a board. With that local board
    active, create and open a child folder through each picker entry point. Both child folders
    must select the repository's board (same board ID and repository root), not independent boards.
 
