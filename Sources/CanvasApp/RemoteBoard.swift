@@ -91,6 +91,11 @@ extension ViewerWindow {
                 }
                 return try await browser.perform(command, driver: caller)
             },
+            surface: { [weak controller] request, origin, heard in
+                guard let controller, let remote = controller.remote else { throw ApiRouter.Failure("unavailable", "this board's window closed") }
+                let peer = RelayPeer(origin: origin, heard: heard, mirror: remote.mirror, canvas: controller.canvas)
+                return try await BrowserSurfaceHost.shared.handle(request, from: peer)
+            },
             submit: { id, text in await terminal(id)?.submit(text) ?? false },
             surfaceTail: { id, lines in terminal(id)?.surfaceTail(lines: lines) },
             block: { id, index in
