@@ -271,6 +271,12 @@ board's root and the remote board's root, then restart the instance.
 Cancel every picker without opening a folder, then stop the development instance. Never change
 the installed app's preferences or close the user's boards for this regression.
 
+To check new-board creation, use the same isolated instance and a disposable parent directory.
+From File › Open Board…, choose **New Folder**, give it a fresh name, then choose **Open Board**.
+Confirm that an empty board opens on that folder. Repeat with the tab bar's + button and a
+different fresh name. Reopen each folder and confirm that it selects the same board rather than
+creating a duplicate. Stop the isolated instance and remove only these disposable directories.
+
 ### Testing the updater
 
 Run this rehearsal only in a claimed GUI guest, on a scratch home whose bundle can be replaced. Never use the checkout's bundle or the installed app. Point easl › Check for Updates… at a local `latest.json` (docs/design.md "Updates"). A development instance with a loopback `EASL_UPDATE_URL` also checks automatically after about a minute and daily. Keep **Install Updates Automatically** off for the manual rehearsal. Two ad-hoc signed development bundles skip `spctl`, which refuses every ad-hoc app. This existing development-only exception does not skip signature validity, Team ID equality, size, checksum, or version verification:

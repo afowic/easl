@@ -57,6 +57,10 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
 4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
 5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
+To create a new board, choose File › Open Board… or the tab bar's + button, then click
+**New Folder**, name the folder, and choose **Open Board**. Any folder can be a board;
+it does not need existing easl data.
+
 To start in a different folder when opening easl from Finder, and use that folder as the starting
 point for File › Open Board… and the tab bar's + button on local boards or with no board open,
 set a default board directory:

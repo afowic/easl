@@ -1418,6 +1418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.prompt = "Open Board"
         let controller = keyController
         panel.directoryURL = controller?.remote == nil

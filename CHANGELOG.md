@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Create a fresh board from File › Open Board… or the tab bar's + button using the picker's New Folder button. Existing folders still open normally.
 - Set `canvas.boardDirectory` in macOS user defaults to choose the default startup folder and the starting folder for Open Board… and the tab bar's + button on local boards or with no board open. Remote boards retain their existing picker behavior. Explicit launch roots still win; existing boards and their storage stay where they are.
 - Remote host file reads use one queued SSH channel, separate from terminals and language servers. Progressing transfers can exceed 20 seconds without failing as SSH status 255. Read-only transport failures get at most three attempts. Real file errors and Git mutations do not retry.
 - Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
