@@ -15,6 +15,7 @@ final class TileFrameView: NSView {
     /// and draws magnified in place, while the title bar stays at 1×.
     private let zoomView = ContentZoomView()
     private let zoomControl = TileZoomControl()
+    private let machineControl = DrawingMachineControl()
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
@@ -36,6 +37,7 @@ final class TileFrameView: NSView {
     var onFrameCommit: ((NSRect) -> Void)?
     /// The title bar's − / % / + asked for this content zoom.
     var onZoom: ((Double) -> Void)?
+    var onDrawingMachine: ((DrawingMachine) -> Void)?
     /// Live resize, so the canvas can keep rings and groups around the tile.
     var onResizing: (() -> Void)?
     var onClose: (() -> Void)?
@@ -108,6 +110,9 @@ final class TileFrameView: NSView {
         zoomControl.onStep = { [weak self] bigger in self?.stepZoom(bigger: bigger) }
         zoomControl.onReset = { [weak self] in self?.onZoom?(1) }
         titleBar.addSubview(zoomControl)
+        machineControl.isHidden = object.type != .browser
+        machineControl.onChoose = { [weak self] machine in self?.onDrawingMachine?(machine) }
+        titleBar.addSubview(machineControl)
         addSubview(titleBar)
         zoomView.addSubview(content)
         addSubview(zoomView)
@@ -252,6 +257,10 @@ final class TileFrameView: NSView {
         default: titleLabel.toolTip = nil
         }
         z = object.z
+        if object.type == .browser {
+            machineControl.show(DrawingMachine(object.props))
+            layoutTitle()
+        }
         accessibilityDetail = Self.accessibilityDetail(for: object)
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
@@ -287,6 +296,12 @@ final class TileFrameView: NSView {
         layoutTitle()
     }
 
+    func setDrawingMachines(_ machines: [DrawingMachine]?, canSwitch: Bool) {
+        guard !machineControl.isHidden else { return }
+        machineControl.choices(machines, canSwitch: canSwitch)
+        layoutTitle()
+    }
+
     /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).
     func syncTitle() {
         guard titleLabel.stringValue != title else { return }
@@ -311,6 +326,7 @@ final class TileFrameView: NSView {
         statusLabel.font = ChromeText.font(Self.statusFont)
         closeButton.font = ChromeText.font(closeBaseFont)
         zoomControl.applyScale()
+        machineControl.applyScale()
         updateZoomControl()
     }
 
@@ -338,7 +354,9 @@ final class TileFrameView: NSView {
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
-        let trailing = zoomWidth > 0 ? zoomWidth + 4 : 0
+        let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, width - 42 - zoomWidth))
+        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth) ?? .zero
+        let trailing = (zoomWidth > 0 ? zoomWidth + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
         let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
         let line = Self.line(15, scale: ChromeText.scale)
         statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: line.y, width: status, height: line.height)
@@ -759,7 +777,8 @@ final class TileFrameView: NSView {
         // dot, a status or the gaps between them selects the tile and turns the keyboard to it,
         // the first click into an inactive window included (the bar's own view takes no first
         // click, so a press on it was lost and typing stayed in the tile that had the keyboard).
-        if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width) == .handle { return self }
+        if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width,
+                             machineControlWidth: machineControl.isHidden ? 0 : machineControl.frame.width) == .handle { return self }
         return super.hitTest(point)
     }
 

@@ -4,6 +4,8 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- **Use the same live browser page from every easld viewer.** Easld relays private frames and input from the tile's drawing Mac, without storing page payloads or replaying input after reconnect. The title-bar selector moves drawing among attached Macs and explains the reload into that Mac's own profile. If the page's input relay cannot be prepared, its stream closes with a clear notice instead of silently losing queued input. Mac-hosted boards still draw only on their host.
+- Streamed file inputs open the file picker on the driving viewer, including repeated clicks after choosing or cancelling a file and custom buttons that call `input.click()`. Passive page helpers preserve real user activation between a press and its release. Up to 32 files and 8 MiB total travel in memory, without staging files on easld or the drawing Mac. Folder and iframe uploads remain unavailable.
 - Set `canvas.boardDirectory` in macOS user defaults to choose the default startup folder and the starting folder for Open Board… and the tab bar's + button on local boards or with no board open. Remote boards retain their existing picker behavior. Explicit launch roots still win; existing boards and their storage stay where they are.
 - Remote host file reads use one queued SSH channel, separate from terminals and language servers. Progressing transfers can exceed 20 seconds without failing as SSH status 255. Read-only transport failures get at most three attempts. Real file errors and Git mutations do not retry.
 - Remote HTML tiles show the reason when a host image cannot load instead of silently returning not found. These are viewer-side fixes and do not require an easld update.
