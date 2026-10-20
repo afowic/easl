@@ -856,10 +856,6 @@ final class CanvasView: NSScrollView {
             monitoredMove = false
             endMove(event)
             return nil
-        case .scrollWheel where movesTiles():
-            guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }
-            scrollWheel(with: event)
-            return nil
         default:
             return event
         }

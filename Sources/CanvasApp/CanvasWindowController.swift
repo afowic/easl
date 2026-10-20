@@ -1595,8 +1595,8 @@ final class CanvasWindow: NSWindow {
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
         let step = ScrollGesture.Step(event)
         if step == .began || step == nil { scrollSequence &+= 1 }
-        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              let canvas = canvas(at: point) else { return false }
+        guard let canvas = canvas(at: point),
+              canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command else { return false }
         canvas.scrollWheel(with: event)
         return true
     }
