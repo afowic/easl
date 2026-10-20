@@ -15,6 +15,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
 - **Drawing toolbar** at the top: select (V), move (M: drag a tile from anywhere on it, a terminal's body too), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
   The default ink (Black) is drawn dark over light pages and images and light over the dark board; other colors stay as chosen.
+  Move keeps the keyboard on the canvas and routes scroll to the board. V or Escape returns to Select and cancels a held drag.
 
 ## Reading a board
 

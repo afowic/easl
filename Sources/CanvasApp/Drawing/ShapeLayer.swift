@@ -6,8 +6,6 @@ final class ShapeLayer: NSView {
     enum Tool: String, CaseIterable {
         case select, move, rect, ellipse, arrow, text, ink
 
-        /// A drawing tool takes every press on the canvas, over tiles too. Select and Move leave
-        /// presses to the scene, which selects and moves (`CanvasView.movesTiles`).
         var draws: Bool { self != .select && self != .move }
 
         var actionID: String {
@@ -54,6 +52,8 @@ final class ShapeLayer: NSView {
         didSet {
             guard tool != oldValue else { return }
             cancelGesture()
+            if oldValue == .move { canvas.cancelMove() }
+            if tool == .move { window?.makeFirstResponder(canvas.document) }
             // Resize handles show only with the select tool.
             for item in resizable { invalidate(handleArea(item.frame)) }
             window?.invalidateCursorRects(for: self)

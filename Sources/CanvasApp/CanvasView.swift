@@ -148,8 +148,6 @@ final class CanvasView: NSScrollView {
     private var magnifying = false
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
-    /// A press tracked here rather than by a view (a drawn object, or a tile's body under the Move
-    /// tool): the event never reaches a view.
     private var monitoredMove = false
     private var mouseMonitor: Any?
     /// Terminals seen since their agent last started working (mirrors Board's seen set).
@@ -203,8 +201,6 @@ final class CanvasView: NSScrollView {
     /// True where the drawing layer handles the mouse itself (active tool, shape handles);
     /// scene selection, marquee, and moves stand down there.
     var drawingOwnsPoint: (NSPoint) -> Bool = { _ in false }
-    /// True while the Move tool is on: a press anywhere on a tile, its live body (a terminal,
-    /// page, or code) included, moves it the way its title bar does.
     var movesTiles: () -> Bool = { false }
     /// Extra props to merge into a drawn object's move (e.g. translated free arrow endpoints).
     var moveProps: ((CanvasObject, _ dx: Double, _ dy: Double) -> JSONValue?)?
@@ -753,11 +749,11 @@ final class CanvasView: NSScrollView {
         defer {
             if let tile = tiles[id] {
                 lastClickedTile = id
-                hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+                hand(movesTiles() ? .canvas : KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
             }
         }
         if selection.contains(id) { return selection.count > 1 ? id : nil }
-        select(id, extend: false)
+        setSelection([id])
         return nil
     }
 
@@ -859,6 +855,10 @@ final class CanvasView: NSScrollView {
         case .leftMouseUp where monitoredMove:
             monitoredMove = false
             endMove(event)
+            return nil
+        case .scrollWheel where movesTiles():
+            guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }
+            scrollWheel(with: event)
             return nil
         default:
             return event
@@ -968,6 +968,14 @@ final class CanvasView: NSScrollView {
                 _ = try? board.update(id, frame: frame, props: tiles[id] == nil ? moveProps?(object, dx, dy) : nil)
             }
         }
+    }
+
+    func cancelMove() {
+        guard let gesture = move else { return }
+        move = nil
+        for (id, origin) in gesture.tileOrigins { tiles[id]?.setFrameOrigin(origin) }
+        if !gesture.drawn.isEmpty { onSelectionDrag?(Set(gesture.drawn.keys), .zero) }
+        objectsMoved()
     }
 
     // MARK: Groups
