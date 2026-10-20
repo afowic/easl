@@ -53,7 +53,10 @@ final class ShapeLayer: NSView {
             guard tool != oldValue else { return }
             cancelGesture()
             if oldValue == .move { canvas.cancelMove() }
-            if tool == .move { window?.makeFirstResponder(canvas.document) }
+            if tool == .move {
+                window?.makeFirstResponder(canvas.document)
+                CanvasTerminalView.forgetRefocus()
+            }
             // Resize handles show only with the select tool.
             for item in resizable { invalidate(handleArea(item.frame)) }
             window?.invalidateCursorRects(for: self)

@@ -741,6 +741,10 @@ final class CanvasView: NSScrollView {
     /// A plain press on a tile's title bar also turns the keyboard to that tile (a terminal) or
     /// the canvas, away from whatever had it (`KeyboardFocus.afterTitleBarPress`).
     private func press(_ id: ObjectID, extend: Bool) -> ObjectID? {
+        if movesTiles() {
+            hand(.canvas)
+            CanvasTerminalView.forgetRefocus()
+        }
         if extend {
             setSelection(selection.symmetricDifference([id]))
             return nil
@@ -749,7 +753,9 @@ final class CanvasView: NSScrollView {
         defer {
             if let tile = tiles[id] {
                 lastClickedTile = id
-                hand(movesTiles() ? .canvas : KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+                if !movesTiles() {
+                    hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+                }
             }
         }
         if selection.contains(id) { return selection.count > 1 ? id : nil }
