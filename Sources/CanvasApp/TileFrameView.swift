@@ -294,6 +294,20 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
+    func updateProximity(to viewport: NSRect, admitColdCards: Bool) {
+        let near = frame.intersects(viewport)
+        let wasNear = isNearViewport
+        isNearViewport = near
+        canStartColdCard = near && admitColdCards
+        if near {
+            if canStartColdCard, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
+        } else {
+            if wasNear, !isLive, !contentLive, cardTask != nil {
+                invalidateCard()
+            }
+        }
+    }
+
     /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
     /// secondary text, red only for a failure; `detail` is its tooltip.
     func setStatus(_ status: String?, failed: Bool, detail: String?) {
@@ -504,6 +518,7 @@ final class TileFrameView: NSView {
         isLive = live
         invalidateCard()
         if live {
+            cardWanted = false
             showContent(true)
             revealWhenReady()
         } else {
@@ -580,22 +595,19 @@ final class TileFrameView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealLimit) { reveal() }
     }
 
-    /// A new tile where it wouldn't be live (zoomed out or offscreen) starts as its card, the
-    /// title until the card is drawn: its content never shows, so it never loads or lays out
-    /// its live view (a batch of dozens of tiles would otherwise build every one live and only
-    /// then swap it for its card). Called before the tile joins the canvas; the card is
-    /// requested once it is in the window (web content renders in it).
     func startAsCard() {
         guard isLive else { return }
         isLive = false
         invalidateCard()
         cardTitle.isHidden = false
         showContent(false)
-        startCardDue = true
+        cardWanted = true
         updateTint()
     }
 
-    private var startCardDue = false
+    private var cardWanted = false
+    private var isNearViewport = false
+    private var canStartColdCard = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -613,13 +625,13 @@ final class TileFrameView: NSView {
             return
         }
         if window.occlusionState.contains(.visible) { syncTitle() }
-        guard startCardDue else { return }
-        startCardDue = false
-        if !isLive { requestCard() }
+        if cardWanted, !isLive { requestCard() }
     }
 
     private func requestCard() {
         invalidateCard()
+        cardWanted = true
+        guard contentLive || canStartColdCard else { return }
         syncTitle()
         if hostBoardClosed {
             if contentLive {
@@ -631,6 +643,7 @@ final class TileFrameView: NSView {
                 card.isHidden = card.image == nil
                 cardTitle.isHidden = card.image != nil
             }
+            cardWanted = false
             showContent(false)
             return
         }
@@ -644,6 +657,7 @@ final class TileFrameView: NSView {
                     let image = await content.cardSnapshot()
                     guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return }
                     self.cardTask = nil
+                    self.cardWanted = false
                     DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
                     Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
                     DevPerf.time("card.install.\(type(of: self.content))") {
@@ -677,6 +691,7 @@ final class TileFrameView: NSView {
             let image = await content.cardSnapshot()
             guard !Task.isCancelled, let self, self.cardRequest == request else { return }
             self.cardTask = nil
+            self.cardWanted = false
             guard !self.hostBoardClosed, !self.isLive, let image else { return }
             self.card.image = self.cardImage(image)
             self.card.isHidden = false
@@ -687,6 +702,9 @@ final class TileFrameView: NSView {
             await task.value
         } onCancel: {
             task.cancel()
+        }
+        if cardRequest == request, task.isCancelled, cardTask != nil {
+            cardTask = nil
         }
     }
 
