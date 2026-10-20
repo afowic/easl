@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Add a Move tool (M) to the drawing toolbar: while it is on, dragging anywhere on a tile moves it, including a terminal's or page's body. Clicks reach no tile content until you pick Select again (its button, or V or Esc while the board has the keyboard).
 - Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.

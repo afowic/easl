@@ -67,6 +67,7 @@ All existing shortcuts are unchanged. **New** marks a default added with Keyboar
 | View | Show Web Inspector | ⌥⌘I |
 | View | Hide Board Chrome | ⌥⌘T |
 | Drawing | Select | V |
+| Drawing | Move | M |
 | Drawing | Rectangle | R |
 | Drawing | Ellipse | O |
 | Drawing | Arrow | A |

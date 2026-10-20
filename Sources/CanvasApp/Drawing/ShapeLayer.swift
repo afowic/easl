@@ -4,11 +4,16 @@ import CanvasCore
 @MainActor
 final class ShapeLayer: NSView {
     enum Tool: String, CaseIterable {
-        case select, rect, ellipse, arrow, text, ink
+        case select, move, rect, ellipse, arrow, text, ink
+
+        /// A drawing tool takes every press on the canvas, over tiles too. Select and Move leave
+        /// presses to the scene, which selects and moves (`CanvasView.movesTiles`).
+        var draws: Bool { self != .select && self != .move }
 
         var actionID: String {
             switch self {
             case .select: "selectTool"
+            case .move: "moveTool"
             case .rect: "rectangleTool"
             case .ellipse: "ellipseTool"
             case .arrow: "arrowTool"
@@ -20,6 +25,7 @@ final class ShapeLayer: NSView {
         var symbol: String {
             switch self {
             case .select: "cursorarrow"
+            case .move: "arrow.up.and.down.and.arrow.left.and.right"
             case .rect: "rectangle"
             case .ellipse: "circle"
             case .arrow: "arrow.up.right"
@@ -31,6 +37,7 @@ final class ShapeLayer: NSView {
         var title: String {
             switch self {
             case .select: "Select"
+            case .move: "Move"
             case .rect: "Rectangle"
             case .ellipse: "Ellipse"
             case .arrow: "Arrow"
@@ -129,6 +136,7 @@ final class ShapeLayer: NSView {
         canvas.shapeHitTest = { [unowned layer] point in layer.item(at: point)?.object.id }
         canvas.shapeOutline = { [unowned layer] id in layer.outlineRect(id) }
         canvas.drawingOwnsPoint = { [unowned layer] point in layer.ownsPoint(point) }
+        canvas.movesTiles = { [unowned layer] in layer.tool == .move }
         canvas.onSelectionChange = { [unowned layer] in layer.selectionChanged() }
         canvas.onSelectionDrag = { [unowned layer] ids, offset in layer.previewDrag(ids, offset: offset) }
         canvas.moveProps = { object, dx, dy in ShapeLayer.moveProps(object, dx: dx, dy: dy) }
@@ -752,25 +760,26 @@ final class ShapeLayer: NSView {
     }
 
     func ownsPoint(_ point: NSPoint) -> Bool {
-        tool != .select || gesture != nil || handle(at: point) != nil || editor?.frame.contains(point) == true
+        tool.draws || gesture != nil || handle(at: point) != nil || editor?.frame.contains(point) == true
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let hit = super.hitTest(point), hit !== self { return hit }
         guard frame.contains(point) else { return nil }
         let local = convert(point, from: superview)
-        if tool != .select || handle(at: local) != nil { return self }
+        if tool.draws || handle(at: local) != nil { return self }
         return item(at: local) != nil ? self : nil
     }
 
     /// A drawn object gets the same menu as a tile (close, order, scale, group, copy id).
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard tool == .select, let item = item(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        guard !tool.draws, let item = item(at: convert(event.locationInWindow, from: nil)) else { return nil }
         return canvas.objectMenu(for: item.object.id)
     }
 
     override func resetCursorRects() {
-        if tool != .select { addCursorRect(visibleRect, cursor: tool == .text ? .iBeam : .crosshair) }
+        if tool.draws { addCursorRect(visibleRect, cursor: tool == .text ? .iBeam : .crosshair) }
+        if tool == .move { addCursorRect(visibleRect, cursor: .openHand) }
     }
 
     // MARK: Selection

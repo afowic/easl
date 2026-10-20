@@ -148,8 +148,9 @@ final class CanvasView: NSScrollView {
     private var magnifying = false
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
-    /// A press on a drawn object is tracked here (the event never reaches a view).
-    private var shapePress = false
+    /// A press tracked here rather than by a view (a drawn object, or a tile's body under the Move
+    /// tool): the event never reaches a view.
+    private var monitoredMove = false
     private var mouseMonitor: Any?
     /// Terminals seen since their agent last started working (mirrors Board's seen set).
     private var seenLocally: Set<ObjectID> = []
@@ -202,6 +203,9 @@ final class CanvasView: NSScrollView {
     /// True where the drawing layer handles the mouse itself (active tool, shape handles);
     /// scene selection, marquee, and moves stand down there.
     var drawingOwnsPoint: (NSPoint) -> Bool = { _ in false }
+    /// True while the Move tool is on: a press anywhere on a tile, its live body (a terminal,
+    /// page, or code) included, moves it the way its title bar does.
+    var movesTiles: () -> Bool = { false }
     /// Extra props to merge into a drawn object's move (e.g. translated free arrow endpoints).
     var moveProps: ((CanvasObject, _ dx: Double, _ dy: Double) -> JSONValue?)?
     /// Live offset (document points) of drawn objects being dragged; `.zero` right before commit.
@@ -827,12 +831,17 @@ final class CanvasView: NSScrollView {
             if drawingOwnsPoint(point) { return event }
             if let shape = shapeHitTest?(point) {
                 if event.clickCount >= 2 { return event }
-                shapePress = true
+                monitoredMove = true
                 beginMove(event, pressing: shape)
                 return nil
             }
             var view: NSView? = hit
             while let current = view, !(current is TileFrameView) { view = current.superview }
+            if movesTiles(), let tile = view as? TileFrameView, hit.isDescendant(of: tile.content) {
+                monitoredMove = true
+                beginMove(event, pressing: tile.objectID)
+                return nil
+            }
             if let tile = view as? TileFrameView, tile.isLive, hit.isDescendant(of: tile.content) {
                 // ⇧-click inside a tile is the tile's own (extending a text or line selection):
                 // it selects just that tile, as a plain click does; title bars ⇧-click to add.
@@ -844,11 +853,11 @@ final class CanvasView: NSScrollView {
                 _ = press(tile.objectID, extend: false)
             }
             return event
-        case .leftMouseDragged where shapePress:
+        case .leftMouseDragged where monitoredMove:
             dragMove(event)
             return nil
-        case .leftMouseUp where shapePress:
-            shapePress = false
+        case .leftMouseUp where monitoredMove:
+            monitoredMove = false
             endMove(event)
             return nil
         default:
