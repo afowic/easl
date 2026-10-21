@@ -602,15 +602,11 @@ final class CanvasView: NSScrollView {
             return self?.objectMenu(for: id, at: point.flatMap { point in tile?.content.bounds.contains(point) == true ? point : nil })
         }
         tile.setHostBoardClosed(remote?.mirror.availability == .closed)
-        // Created where it wouldn't be live (a batch building a board zoomed out or offscreen),
-        // a code, note, or HTML tile starts as its card rather than building its live view for
-        // the liveness pass to swap out. Terminals and browsers start live: they run a session
-        // or a page an agent may be driving.
-        if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
+        if preserved == nil, !(content is TerminalTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         tile.updateProximity(to: documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin), admitColdCards: !magnifying)
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
-        tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
         if object.type == .terminal { lifecycleChanged(object) }
         if object.type == .terminal { syncAuthors(of: id) } else { tile.setAuthor(authorName(of: object)) }
         scheduleLiveness()
@@ -1062,6 +1058,9 @@ final class CanvasView: NSScrollView {
     // MARK: Commands
 
     func escape() {
+        let wasMoving = move != nil
+        cancelMove()
+        if (shapeLayer as? ShapeLayer)?.cancelTool() == true || wasMoving { return }
         switch KeyboardFocus.escape(chromeHidden: chromeHidden, inGroup: enteredGroup != nil, hasSelection: !selection.isEmpty, panelOpen: panelOpen?() ?? false) {
         case .showChrome: chromeHidden = false
         case .exitGroup: exitGroup()
