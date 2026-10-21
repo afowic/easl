@@ -179,7 +179,7 @@ class Lifecycle(TypedDict):
     message: NotRequired[str]
     seen: NotRequired[bool]
     error: NotRequired[str]
-    restored: NotRequired[Literal[true]]
+    restored: NotRequired[Literal[True]]
     via: NotRequired[Literal["notifications"]]
 
 ObjectKey = str
@@ -403,7 +403,7 @@ class PageLog(TypedDict):
     entries: NotRequired[list["PageLogEntry"]]
     omitted: NotRequired[int]
     dropped: NotRequired[int]
-    reloaded: NotRequired[Literal[true]]
+    reloaded: NotRequired[Literal[True]]
     cursor: NotRequired[str]
     vitals: NotRequired[dict[str, Any]]
 
@@ -475,6 +475,17 @@ class BoardInfo(TypedDict):
     objects: Required[int]
     repo: NotRequired[str]
     worktrees: NotRequired[list["WorktreeInfo"]]
+
+class RemoteBoardInfo(TypedDict):
+    """An open remote tab in the Mac app's board.list. The host owns its board id and root. Local-only metadata is absent."""
+    remote: Required[Literal[True]]
+    host: Required[str]
+    sshTarget: Required[str]
+    board: Required["Id"]
+    root: Required[str]
+    title: Required[str]
+    window: Required[int]
+    open: Required[Literal[True]]
 
 class WorktreeInfo(TypedDict):
     path: Required[str]
@@ -675,7 +686,7 @@ class BoardApi:
         return self._call("board.history", params, ["board"])
 
     def list(self) -> dict[str, Any]:
-        """Every stored board, open or not, including archived boards whose root directory is gone."""
+        """Every stored local board, open or not, including archived boards whose root directory is gone. The Mac app appends its open remote tabs with remote:true, host, sshTarget, the host's board id and root, title, window and open:true; closing a remote tab removes its row. Local rows are unchanged and have no remote field. Remote rows have no archived, objects, updatedAt, repo or worktrees metadata; root is on the host. easld lists only its own stored boards, unchanged."""
         params = {}
         return self._call("board.list", params, [])
 
@@ -790,17 +801,17 @@ class TrayApi:
         self._call = call
 
     def list(self, *, board: "Id" | None = None) -> dict[str, Any]:
-        """Staged mentions, in staging order."""
+        """Staged mentions, in staging order. On an app-local remote tab this is the viewer's private tray, never the host user's tray."""
         params = {"board": board}
         return self._call("tray.list", params, ["board"])
 
     def stage(self, *, target: "MentionTarget", board: "Id" | None = None) -> dict[str, Any]:
-        """Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents)."""
+        """Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents). An app-local remote board target stages in this viewer's private tray."""
         params = {"target": target, "board": board}
         return self._call("tray.stage", params, ["board"])
 
     def unstage(self, *, id: "Id") -> dict[str, Any]:
-        """Remove one staged mention."""
+        """Remove one staged mention from this app's local board or remote viewer tray, never another user's tray."""
         params = {"id": id}
         return self._call("tray.unstage", params, [])
 
@@ -810,7 +821,7 @@ class TrayApi:
         return self._call("tray.drain", params, ["board","caller"])
 
     def commit(self, *, ids: list["Id"], board: "Id" | None = None) -> dict[str, Any]:
-        """Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored."""
+        """Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. On an app-local remote tab only this viewer's private tray changes."""
         params = {"board": board, "ids": ids}
         return self._call("tray.commit", params, ["board"])
 

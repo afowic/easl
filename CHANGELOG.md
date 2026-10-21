@@ -2,6 +2,8 @@
 
 Each version's section is its GitHub release's notes.
 
+- The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
+
 ## 0.3.1
 
 easl 0.3.1 adds keyboard shortcuts you can change and a Move tool for dragging tiles from their bodies. It also adds prompt delivery that reconciles lost replies without sending twice, safer board-file handling, and faster opening of big boards and remote content on slow links.

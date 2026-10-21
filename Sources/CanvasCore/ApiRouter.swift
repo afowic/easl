@@ -193,10 +193,12 @@ public final class ApiRouter {
     public struct Failure: Error {
         public var code: String
         public var message: String
+        public var data: JSONValue?
 
-        public init(_ code: String, _ message: String) {
+        public init(_ code: String, _ message: String, data: JSONValue? = nil) {
             self.code = code
             self.message = message
+            self.data = data
         }
     }
 
@@ -275,6 +277,8 @@ public final class ApiRouter {
     /// Throws the picker's failures: `unavailable` (the host can't be reached or its easl doesn't
     /// answer), `not_found` (the host has no such board open), `ambiguous` (a name two hosts have).
     public var openRemoteBoard: ((_ host: String, _ board: BoardID, _ select: Bool) async throws -> OpenedRemoteBoard)?
+    /// Remote windows and background attachments, without adding their mirrors to `registry`.
+    public var remoteTabs: (() -> [RemoteBoardTab])?
     /// The app's browser surfaces (`surface.*`, `SurfaceRequest`): a `surface.stream` reaches it
     /// only for a browser tile on an open board whose `surface.frame` this connection subscribed
     /// to; every other request names a stream the app checks belongs to this connection.
@@ -401,6 +405,23 @@ public final class ApiRouter {
         do {
             if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
             try Self.checkParams(method, params)
+            if let tab = try remoteTarget(method, params) {
+                switch method {
+                case "view.get", "tray.list", "tray.stage", "tray.drain", "tray.commit": break
+                case "view.render":
+                    guard params["inline"]?.bool == true, params["out"] == nil else {
+                        throw Failure("invalid_params", "a remote tab returns its render in the reply: pass inline: true and no out")
+                    }
+                case "view.snapshot":
+                    throw Failure("unsupported", "a remote tab does not save snapshots on this Mac; use view.render with inline: true")
+                case "view.open_url":
+                    throw Failure("unsupported", "open links in the remote tab's UI, or connect to its host to open them in the host's window")
+                case "events.subscribe", "viewer.activity":
+                    throw Failure("unsupported", "\(method) requires a connection to the board's host")
+                default:
+                    return Self.ok(id, try await tab.request(method, params))
+                }
+            }
             if method == "events.subscribe" {
                 registry.subscribe(connection, board: params["board"]?.string.map { registry.board(id: $0)?.id ?? $0 }, events: params["events"]?.array?.compactMap(\.string))
                 connection.send(.object(["id": id, "ok": .bool(true), "result": .object([:])]))
@@ -532,6 +553,8 @@ public final class ApiRouter {
         switch error {
         case let failure as Failure:
             return failure
+        case let failure as EaslConnection.Failure:
+            return Failure(failure.code, failure.message, data: failure.data)
         case let unreadable as BoardFile.Unreadable:
             return Failure("unavailable", unreadable.localizedDescription)
         case let error as BoardError:
@@ -557,7 +580,9 @@ public final class ApiRouter {
     }
 
     static func error(_ id: JSONValue, _ failure: Failure) -> JSONValue {
-        .object(["id": id, "ok": .bool(false), "error": .object(["code": .string(failure.code), "message": .string(failure.message)])])
+        var details: [String: JSONValue] = ["code": .string(failure.code), "message": .string(failure.message)]
+        if let data = failure.data { details["data"] = data }
+        return .object(["id": id, "ok": .bool(false), "error": .object(details)])
     }
 
     /// Rejects a param the method's schema doesn't list and a required one that is missing,
@@ -1682,7 +1707,8 @@ public final class ApiRouter {
                 if let worktrees = entry.worktrees { info["worktrees"] = .array(worktrees.map(\.json)) }
                 return .object(info)
             }
-            return .object(["boards": .array(boards)])
+            let remote = remoteTabs?().compactMap { $0.isOpen ? $0.info.listJSON : nil } ?? []
+            return .object(["boards": .array(boards + remote)])
 
         case "board.export":
             let board = try board(p)
@@ -1821,7 +1847,9 @@ public final class ApiRouter {
 
         case "tray.unstage":
             let id = try string(p, "id")
-            guard let board = registry.boards.values.first(where: { $0.tray.contains { $0.id == id } }) else { throw BoardError.notFound("mention \(id)") }
+            let local = registry.boards.values.first { $0.tray.contains { $0.id == id } }
+            let remote = local == nil ? remoteTabs?().first { $0.isOpen && $0.board.tray.contains { $0.id == id } }?.board : nil
+            guard let board = local ?? remote else { throw BoardError.notFound("mention \(id)") }
             try available(board)
             try board.unstage(id)
             return .object([:])
@@ -2774,11 +2802,41 @@ public final class ApiRouter {
         guard !closingBoards.contains(board.id) else { throw Failure("conflict", "board \(board.id) is closing") }
         return board
     }
+    /// Open and stored local boards, including migrated ids, take precedence over remote tabs.
+    public func remoteTab(id: BoardID, includingClosed: Bool = false) throws -> RemoteBoardTab? {
+        guard registry.board(id: id) == nil, !registry.store.owns(id) else { return nil }
+        let tabs = remoteTabs?() ?? []
+        var found: RemoteBoardTab?
+        for tab in tabs where tab.board.id == id && (includingClosed || tab.isOpen) {
+            guard found == nil else {
+                let candidates = tabs.filter { $0.board.id == id && (includingClosed || $0.isOpen) }.map(\.id).sorted().joined(separator: ", ")
+                throw Failure("ambiguous", "board \(id) is viewed from more than one remote easl: \(candidates)")
+            }
+            found = tab
+        }
+        return found
+    }
+
+    private func remoteTarget(_ method: String, _ p: JSONValue) throws -> RemoteBoardTab? {
+        switch method {
+        case "board.get", "board.history", "board.undo", "board.redo", "board.stale", "board.export",
+             "object.find", "object.create", "object.upsert", "object.measure", "object.batch",
+             "layout.check", "tray.list", "tray.stage", "tray.drain", "tray.commit",
+             "view.get", "view.render", "view.snapshot", "view.open_url", "text.measure",
+             "events.subscribe", "viewer.activity":
+            guard let id = p["board"]?.string, let tab = try remoteTab(id: id) else { return nil }
+            guard !closingBoards.contains(id) else { throw Failure("conflict", "board \(id) is closing") }
+            return tab
+        default:
+            return nil
+        }
+    }
+
 
     /// Target board: explicit `board`, else the caller tile's board, else the frontmost board.
     func board(_ p: JSONValue) throws -> Board {
         if let id = p["board"]?.string {
-            guard let board = registry.board(id: id) else { throw BoardError.notFound("board \(id)") }
+            guard let board = try registry.board(id: id) ?? remoteTab(id: id)?.board else { throw BoardError.notFound("board \(id)") }
             return try available(board)
         }
         if let caller = p["caller"]?.string, let board = registry.board(containing: caller) { return try available(board) }
