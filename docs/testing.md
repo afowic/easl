@@ -81,6 +81,48 @@ An uninstrumented baseline needs the complete development-only observation suppo
 Qualification requires 60 clicks per arm in interleaved blocks in one session, retaining unique before, intermediate, and settled PNGs, native capture receipts, trace records, and exact helper stdout. Wait for sharp assignment or the declared deadline before the next click. Keep failures and uncompleted rows in the denominator and label completed-subset percentiles. Missing, censored, clock-invalid, and three-sample smoke results do not qualify an arm. Record RTT without bulk-transfer probes during timed clicks. Qualify settled real-page RGB error separately and measure static, ticker, and actually focused native-caret wire traffic after settling. The bounded run permits one guest-local 60-per-arm series for the 400 ms input-only candidate against 0.3.0. If it fails the landing gate, production behavior remains unchanged and only the observer documentation and quality finding apply.
 An aborted series retains all requested samples in each gate's denominator, with unattempted samples reported separately as `not_attempted`.
 
+### Remote terminal echo
+
+Run `scripts/terminal-echo/` only inside a claimed GUI guest, against a guest-local scratch easld. The fixture sends native `keyDown` events through the app queue. Do not substitute `input text`: direct text insertion bypasses the local event monitor. `UserIdleWatch` combines the session's HID-idle sample with elapsed time since native app input.
+
+The coordinator accepted the measured good-link native echo of 79 ms median and 97 ms p95 as meeting the intent of about RTT plus a display-link frame. The complete qualification used five interleaved pairs of 100 keys per profile and input mode. The earlier 356 ms baseline measured `DevInput` text replay, not native key handling. Do not use that baseline to claim a native-key speedup or continue frame-path optimization for this result.
+
+Keep OpenSSH's default `ObscureKeystrokeTiming` protection. Do not disable it or shorten its packet interval to improve echo measurements. A fixture-only diagnostic saved about 11 to 12 ms before the host PTY with protection off, but the coordinator rejected that privacy tradeoff. This decision closes that optimization path.
+
+Keep terminal SSH compression enabled. The same-boot A/B showed no interactive echo harm, while exact `seq 1 20000` receipt was 34% faster on the good profile and 47% faster on the poor profile. Preserve the measured child's effective SSH options and negotiated compression when reproducing the result.
+
+Copy the tools into a fresh scratch directory and retain every binary until the session ends. Give the directory a `repo` symlink to the claimed checkout. Provide an authenticated loopback alias named `easl-guest` in `ssh_config`, with strict host-key checking and connection sharing disabled. Provide `ssh`, a wrapper for `/usr/bin/ssh -F <scratch>/ssh_config`, for link calibration. Keep credentials outside the fixture.
+
+Build `easld` with `go -C "$G/repo/easld" build -p 2 -o "$G/easld" ./cmd/easld`, copy zmx 0.8.1 into the scratch directory as `zmx`, and build the tracer and native input helper there:
+
+```sh
+clang -arch arm64 -std=c11 -O2 -Wall -Wextra -Werror -dynamiclib "$G/pty-trace.c" -o "$G/host-pty-trace.dylib"
+codesign --force --sign - "$G/zmx"
+codesign --force --sign - "$G/host-pty-trace.dylib"
+swiftc -O "$G/timed-input.swift" -o "$G/timed-input"
+chmod 700 "$G/ssh-observed" "$G/zmx-launch"
+python3 "$G/pty-trace-smoke.py" --zmx "$G/zmx" --library "$G/host-pty-trace.dylib" --output-root "$G"
+python3 "$G/pty-trace-smoke.py" --zmx "$G/zmx" --library "$G/host-pty-trace.dylib" --output-root "$G" --spacing-ms 150
+```
+
+Require both tracer smokes to pass. They exercise actual PTY master reads and writes, including split output markers. Run `$G/easld --home "$G/host" --own-terminals --zmx "$G/zmx-launch"` in an owned process. Freeze release bundles as `before.app` and `after.app`, with the same development observation support. Use `run-echo.py seed`, then `run-echo.py launch --artifact <bundle> --home <home>`, with `$G` after the action. Each home belongs to one immutable bundle. `run-echo.py stop` checks the recorded PID against its instance lock before stopping it.
+
+`measure-matrix.py "$G" --prefix <unique-name> --home <running-home> --compare-home <other-home> --compressions yes --kinds space burst --repeats 5` alternates the frozen artifacts in the same boot. Launch each home once before the matrix and leave only `--home` running. Without `--compare-home`, the matrix compares compression settings in one artifact. Defaults cover both profiles, both compression settings, 100 keys at 150 ms, 100 keys at 5 ms, and a real `seq 1 20000` burst.
+
+`<prefix>/plan.json` records the matrix PID and every requested cohort before work starts. Failed and unattempted cohorts retain their expected key counts. To yield a guest, create `<prefix>/stop`: the current cohort finishes, shaping is cleared, and the matrix exits 130 with the remaining cohorts marked `not_attempted`. Do not qualify that stopped matrix as a complete run.
+
+The good profile caps each direction at 10 Mbit/s and adds 17 and 18 ms. The poor profile caps each direction at 1 Mbit/s, adds 40 ms each way, and drops 1% each way. Shaping applies only to IPv4 loopback SSH. The matrix records calibration separately, tears down its PF anchor and pipes in `finally`, releases its PF reference, and restores the loopback MTU. Retain the teardown receipt and check the live guest state before releasing the claim.
+
+Cleanup attempts every owned resource after an error and retains only unresolved resources for retry. A missing pipe is accepted only after `dnctl list` proves it absent. New SSH observers retain effective options and the compression negotiated by the actual measured child connection, separate from startup calibration.
+
+Each cohort retains native key handling, SSH-input acceptance, actual host PTY write and output-read returns, viewer SSH-output receipt, first observed Ghostty text, and native first-glyph display timestamps. All use one guest's `mach_absolute_time` domain. `surface.updated` is a text observation sampled on a requested 2 ms timer, not an IO-thread callback. Native display metadata supplies the latency endpoint; capture receipt and its measured delay remain separate. A separate Cua capture checks the completed glyph grid.
+
+Absolute latency includes the text sampler and byte-tracing overhead. Only capture delivery delay is removed by using native display timestamps. Capture stop waits for startup, removes the stream output even after a stop error, and publishes `stopped.json` after the final trace write. The driver waits for both `complete.json` and `surface-complete.json`, then for the stop receipt; it does not rely on a fixed drain sleep.
+
+The driver records `observe-requested.json` before starting capture. Cleanup waits for a stop receipt only when capture was requested, so a preparation failure cannot be replaced by a timeout waiting for a nonexistent observer.
+
+`analyze-echo.py <cohort> --database <sqlite>` requires every expected stage, unique glyphs, matching host counts, actual byte-read coverage, and causal timestamps. It matches SSH reads and input to one marker-producing observer, rather than borrowing offsets or bulk bytes from another session. It preserves failed cohorts and exits nonzero instead of qualifying completed subsets. A marker split across reads uses the read containing the glyph, not the later marker terminator. The analyzer also requires the exact 20,000-line byte sequence for a bulk arm. Trace payloads and captures are fixture-only; never attach these observers to a real terminal session.
+
 ### Remote host-file throughput
 
 `HostFileReadsTests`, `HostFilesTests`, `HostFileRangeTests`, `HostHTTPTests`, `HostGitTests`, and `HostMasterTests` exercise real host programs and SSH subprocess fixtures. They cover binary member ordering, independent refusals, batch-budget deferral, changing files, selected byte ranges, shared-command cancellation, priority/FIFO admission, lease bounds, and cancellation isolation.
