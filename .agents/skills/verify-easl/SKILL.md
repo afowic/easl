@@ -9,13 +9,14 @@ This repo keeps project skills in `.agents/skills/`, not `.cursor/skills/`. Read
 
 ## Hard rules
 
-- Run all GUI launches, input, and captures inside a claimed `agent-gui` or `agent-gui-2`. Never put an easl window on twaldin-home's display, even hidden. Never move its Spaces, focus, or windows.
+- Run all GUI launches, input, and captures inside a claimed `agent-gui`. Never put an easl window on twaldin-home's display, even hidden. Never move its Spaces, focus, or windows.
 - Never touch Tim's `/Applications/easl.app` or connect to `easld@tim`. Use only guest-local scratch easld servers. Never SSH to twaldin-work.
 - Never register a bundle with LaunchServices on home. `scripts/dev.sh` calls `dev-bundle.sh`, which calls `lsregister`, so both belong in the guest. Headless builds on home are not permission to run either launcher there.
 - Keep guests muted. The current claim helper mutes the selected guest on boot. Never change home's audio. Use `screencapture -x` for any native capture to suppress the shutter sound.
 - Kill only recorded, verified owned PIDs. Never use `pkill`, `killall`, names, bundle IDs, or a port alone. Never delete shared lock inodes or preempt another holder.
 - Build with at most two jobs. Keep each frozen bundle until the run ends. Do not delete a binary while Gatekeeper may still scan it.
 - Keep small records under `/home/tim/agents/projects/easl/state/lanes/$LANE/`. Keep bulk evidence under `/home/tim/lane-evidence/easl/$LANE/`. No gists or uploads. Never read secret or authentication-file contents.
+- Require Bun 1.4.3 or later on the viewer and board hosts. Older synchronous subprocess capture can discard successful Git or file-reader output. Record `bun --version` before proof.
 
 ## Launch
 
@@ -174,7 +175,7 @@ scripts/dev.sh input state
 EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"
 ```
 
-Require the remote tab's expected root, real shell output, and advancing HTML and browser counters in native pixels. The guest account must have macOS 14+, CLT, Python, Bun, Go, and zmx 0.8.1. A missing tool or failed loopback check is a failed prerequisite, not a reason to use a production host.
+Require the remote tab's expected root, real shell output, and advancing HTML and browser counters in native pixels. The guest account must have macOS 14+, CLT, Python, Bun 1.4.3+, Go, and zmx 0.8.1. A missing tool or failed loopback check is a failed prerequisite, not a reason to use a production host.
 
 After any restart, remote open, or tab switch, refresh the PID, signed hash, and selected window identity before more input. Read the selected tab from `input state` and run Doctor for that window. Each native tab has its own window ID; an old background tab can still accept explicitly targeted input.
 
@@ -197,7 +198,7 @@ scripts/dev.sh cli system.ping &&
 scripts/dev.sh cli board.get
 ```
 
-Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. The guest-internal claim uses the legacy `agent-gui` record even on `agent-gui-2`; home status is the authority for the concrete VM.
+Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. Home status is the authority for the VM.
 
 For a remote tab, `board.get` on the viewer socket cannot read its host's board. Replace the final `scripts/dev.sh cli board.get` with `scripts/dev.sh input state` to confirm the selected remote tab, then read the host board through `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"`. Keep `system.ping` on the viewer socket to check the viewer.
 

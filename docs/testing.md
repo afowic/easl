@@ -21,6 +21,8 @@ The CI `easld` job installs real zmx 0.8.1 for two regressions. `TestSpawnFirstA
 
 `CanvasCoreTests` is an executable target, not a test target. `main.swift` calls the swift-testing entry point because `swift test` does not discover these suites with the Command Line Tools. Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. CI uses the Command Line Tools, as local development does. `Package.swift` resolves swift-testing's framework, runtime, and macro plugin paths for the selected toolchain. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
+Use Bun 1.4.3 or later for the host-file suites and on board hosts. Bun 1.3.14 can return successful but empty subprocess output before draining stdout. In the HostNotes stress probe this discarded Git output and transiently made a valid fixture appear outside a repository. [Bun's synchronous EOF fix](https://github.com/oven-sh/bun/pull/33832) drains stdout and stderr before returning. Upgrade Bun rather than weakening the assertions, serializing the suite, or retrying empty output. CI pins the qualified 1.4.3 runtime and prints its version.
+
 `IsolatedVideoAudioTests` is an opt-in, headless check of the production audio reader, renderer, and synchronizer. On a Mac with a working audio device, run it separately:
 
 ```sh
@@ -208,7 +210,7 @@ On `twaldin-home`, run every development or test GUI step inside `agent-gui`, in
 Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md` for the tested claim, guest setup, proof, export, and cleanup commands. If that recipe is absent, GUI proof is not ready. Do not substitute a host launch.
 Use the project-local [verify-easl skill](../.agents/skills/verify-easl/SKILL.md) for guest launch, ownership checks, native feature journeys, retained evidence, and cleanup.
 
-The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, bun, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
+The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, Bun 1.4.3 or later, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
 
 In `agent-gui`, use the already-authorized CuaDriver with both the dev process PID and its window ID, as the recipe shows. Capture before and after a visible change, then inspect both PNGs for changed terminal output and advancing HTML or browser content. A new file or in-process `view.snapshot` is not GUI proof. Do not pursue a native SSH Screen Recording grant.
 

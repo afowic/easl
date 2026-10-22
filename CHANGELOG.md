@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
+- Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
+- Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.
+- Host-file helpers require Bun 1.4.3 or later. Older Bun can discard successful subprocess output; CI pins the qualified runtime.
 - The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
 
 ## 0.3.1
