@@ -3,8 +3,16 @@ import CoreGraphics
 import Testing
 import CanvasCore
 
+// VideoToolbox session creation can occupy every cooperative worker. These hardware-codec
+// suites share one actor so unrelated Core tests can keep making progress.
+@globalActor
+actor SurfaceHardwareCodec {
+    static let shared = SurfaceHardwareCodec()
+}
+
+@SurfaceHardwareCodec
 struct SurfaceVideoTests {
-    private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
+    nonisolated private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
@@ -43,6 +51,8 @@ struct SurfaceVideoTests {
     }
 
     @Test func nativeSharpFrameStartsTheContinuingPredictionChain() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("nativeSharpFrameStartsTheContinuingPredictionChain") { return }
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
         let initial = try #require(try encoder.encode(image(width: 65, height: 67), width: 65, height: 67))

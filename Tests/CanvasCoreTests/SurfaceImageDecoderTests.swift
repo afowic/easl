@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import Testing
 import CanvasCore
 
-@Suite(.serialized)
+@SurfaceHardwareCodec
 struct SurfaceImageDecoderTests {
     private func image(redLeftHalf: Bool = false, width: Int = 65, height: Int = 67,
                        noise: Bool = false) throws -> CGImage {
@@ -56,6 +56,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func refreshBecomesTheReferenceForNativeSizePredictedFrames() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("refreshBecomesTheReferenceForNativeSizePredictedFrames") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let source = try image()
@@ -116,6 +118,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func rejectedRefreshBoundariesLeavePublishedReferenceUsable() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("rejectedRefreshBoundariesLeavePublishedReferenceUsable") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let sharp = try #require(try encoder.encode(image(), width: 65, height: 67, refresh: true))
@@ -149,6 +153,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func malformedRefreshInvalidatesPredictionUntilIndependentKeyframe() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("malformedRefreshInvalidatesPredictionUntilIndependentKeyframe") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let sharp = try #require(try encoder.encode(image(), width: 65, height: 67, refresh: true))

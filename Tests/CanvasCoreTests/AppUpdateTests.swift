@@ -343,7 +343,10 @@ struct UpdateStagingLeaseTests {
         }
     }
 
-    @Test func anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld() throws {
+    @Test func anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld() async throws {
+        // Isolate the immediate lease-release probe from concurrent process launches.
+        let isolated = try await runIsolatedTestIfParallel("anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld")
+        if isolated { return }
         defer { try? FileManager.default.removeItem(at: root) }
         let files = FileManager.default
         try files.createDirectory(at: root, withIntermediateDirectories: true)

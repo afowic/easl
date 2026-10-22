@@ -4,7 +4,7 @@ import ImageIO
 import Testing
 @testable import CanvasCore
 
-@Suite(.serialized)
+@SurfaceHardwareCodec
 struct SurfaceImageEncoderTests {
     private final class RefreshQueue {
         let queue = DispatchQueue(label: "easl.tests.surface.refresh")
@@ -176,6 +176,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -317,6 +319,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -369,6 +373,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery") { return }
         let work = RefreshQueue()
         work.pause()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
@@ -406,6 +412,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func cumulativeSmallChangesRefreshAfterQuietWithoutStarvingTheFrozenSnapshot() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("cumulativeSmallChangesRefreshAfterQuietWithoutStarvingTheFrozenSnapshot") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -446,6 +454,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func changesConfinedToOnePercentDoNotRepeatedlyRefresh() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("changesConfinedToOnePercentDoNotRepeatedlyRefresh") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()
@@ -465,6 +475,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func inputCancelsARearmedCumulativeRefreshWithoutLosingTheSharpAnchor() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("inputCancelsARearmedCumulativeRefreshWithoutLosingTheSharpAnchor") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()

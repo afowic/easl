@@ -21,6 +21,30 @@ The CI `easld` job installs real zmx 0.8.1 for two regressions. `TestSpawnFirstA
 
 `CanvasCoreTests` is an executable target, not a test target. `main.swift` calls the swift-testing entry point because `swift test` does not discover these suites with the Command Line Tools. Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. CI uses the Command Line Tools, as local development does. `Package.swift` resolves swift-testing's framework, runtime, and macro plugin paths for the selected toolchain. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
+Core suites run in parallel by default. CI limits the outer runner to four active test cases per logical CPU with Swift 6.4's `--experimental-maximum-parallelization-width` option and prints the core count and width. The `-j 2` flag caps the CI build, not test execution. `SurfaceVideoTests`, `SurfaceImageEncoderTests`, `SurfaceImageDecoderTests`, and `SurfaceVideoQualityTests` share the `SurfaceHardwareCodec` actor to cap synchronous hardware-codec work. Concurrent VideoToolbox session creation can occupy every cooperative worker. Quality scoring still checks every RGB and RGBA byte of every frame.
+
+The following named tests use isolated child processes while the rest of Core stays parallel:
+
+- `identifyingAMacDoesNotHideProtocolFailures` retains its 200 ms protocol deadline without unrelated executor backlog.
+- `nullAndMovedDeadlineCancelOldTimerAndOmissionPreservesDeadline` updates its 200 ms objects before unrelated main-actor work can expire them.
+- `futurePersistedDeadlineFiresAfterRegistryAndStoreRestartWithSystemAttribution` restarts before its real two-second deadline.
+- `wireTimeoutUsesOnlyTheDeadlineRemainingAfterQueueing` retains its two-second wire deadline and 500 ms completion bound.
+- `timedSendWaitsForEarlierBytesAndItsEntireJSONLine` owns the descriptor table for its bounded descriptor-reuse probe.
+- `anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld` checks immediate lease release without concurrent process launches.
+- Ten fixtures require the first unforced sharp successor to be predicted, although VideoToolbox may choose a keyframe. Fresh-process isolation reduces observed failures; it is not an API guarantee:
+  - `SurfaceVideoTests`: `nativeSharpFrameStartsTheContinuingPredictionChain`.
+  - `SurfaceImageDecoderTests`: `refreshBecomesTheReferenceForNativeSizePredictedFrames`, `rejectedRefreshBoundariesLeavePublishedReferenceUsable`, `malformedRefreshInvalidatesPredictionUntilIndependentKeyframe`.
+  - `SurfaceImageEncoderTests`: `settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference`, `acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes`, `smallChangesKeepTheFrozenPendingRefreshAndFollowItsReferenceAfterDelivery`, `cumulativeSmallChangesRefreshAfterQuietWithoutStarvingTheFrozenSnapshot`, `changesConfinedToOnePercentDoNotRepeatedlyRefresh`, `inputCancelsARearmedCumulativeRefreshWithoutLosingTheSharpAnchor`.
+- `persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters` measures its three-second file-read bound without unrelated main-actor fixture work.
+- `filesRequestedTogetherShareOneGitDiff` admits its three requests without unrelated executor work splitting the 20 ms batch window.
+- `theFirstSocketHandshakeGoesOnlineWhileGlobalWorkersAreBlocked` deliberately blocks the global worker pool.
+- `pollingContinuesWhileTheMainActorIsBusyAndCancellationDropsChanges` deliberately blocks the main actor.
+- `programsTheHolderStartsDontInheritTheLock` owns its descriptor-inheritance probe.
+
+`LineClient` scans only newly received bytes while a line is incomplete, so large replies do not repeatedly rescan their prefixes. The note-recovery reconnection fixture waits until the host observes the refresh request before waiting for the mirror's read to finish.
+
+`HostReferencesTests` uses the runner's `list` fixture mode to return the listing stored under its private `TMPDIR`. It creates no executable script during the suite, so a cold script cannot consume the unchanged two-second zmx subprocess deadline. Use `swift run -j 2 CanvasCoreTests --list-tests` to list tests; the bare `list` subcommand is reserved for this fixture.
+
 Use Bun 1.4.3 or later for the host-file suites and on board hosts. Bun 1.3.14 can return successful but empty subprocess output before draining stdout. In the HostNotes stress probe this discarded Git output and transiently made a valid fixture appear outside a repository. [Bun's synchronous EOF fix](https://github.com/oven-sh/bun/pull/33832) drains stdout and stderr before returning. Upgrade Bun rather than weakening the assertions, serializing the suite, or retrying empty output. CI pins the qualified 1.4.3 runtime and prints its version.
 
 `IsolatedVideoAudioTests` is an opt-in, headless check of the production audio reader, renderer, and synchronizer. On a Mac with a working audio device, run it separately:
