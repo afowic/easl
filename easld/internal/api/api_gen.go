@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "dfc53d2bf1d20656"
+const SchemaHash = "2f9f5f6cec1d0c8a"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -741,27 +741,48 @@ type VideoProps struct {
 	Key       *ObjectKey `json:"key,omitempty"`
 }
 
+// DiagramSource: Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board
+type DiagramSource struct {
+	// an agent session id (`props.agent.sessionId`) or session path (`props.agent.sessionPath`) of a terminal on the board
+	Session *string `json:"session,omitempty"`
+	// the message or prompt the claim came from
+	Message *string `json:"message,omitempty"`
+	// the board the tile is on; another board is not resolvable from this one
+	Board *Id `json:"board,omitempty"`
+	// the terminal tile it came from
+	Tile *Id `json:"tile,omitempty"`
+}
+
 type DiagramPropsGraphNodesExcerpt struct {
 	Line *int    `json:"line,omitempty"`
 	Text *string `json:"text,omitempty"`
 }
 
 type DiagramPropsGraphNodes struct {
-	// `path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
+	// a calls node: `path#Container.name`, stable while the symbol exists (not its line); a graph node: the caller's node id. What `expanded` and arrow ends name
+	ID string `json:"id"`
+	// a calls node's symbol name; a graph node's `label`
+	Name string `json:"name"`
+	// calls nodes: the enclosing type or module, when the server says
 	Container *string `json:"container,omitempty"`
-	// LSP symbol kind: method, function, constructor, …
-	Kind string `json:"kind"`
-	// board-relative
-	Path string `json:"path"`
-	// 1-based line of its name
-	Line int `json:"line"`
-	// its whole declaration
-	Lines   LineRange                       `json:"lines"`
-	Excerpt []DiagramPropsGraphNodesExcerpt `json:"excerpt"`
-	// columns from the root (0): callers negative, callees positive
+	// calls nodes: LSP symbol kind: method, function, constructor, …
+	Kind *string `json:"kind,omitempty"`
+	// calls nodes: board-relative file
+	Path *string `json:"path,omitempty"`
+	// calls nodes: 1-based line of its name
+	Line *int `json:"line,omitempty"`
+	// calls nodes: its whole declaration
+	Lines *LineRange `json:"lines,omitempty"`
+	// calls nodes: 1-3 lines, a caller's calls toward the root or the signature
+	Excerpt []DiagramPropsGraphNodesExcerpt `json:"excerpt,omitempty"`
+	// calls: columns from the root (0), callers negative; graph: reasoning depth from a premise (0), conclusions deeper
 	Level int `json:"level"`
+	// graph nodes: markdown (or plain text) shown as two rows in the node and expanded whole when the node is clicked
+	Detail *string `json:"detail,omitempty"`
+	// graph nodes: where the statement came from; the node shows a source badge
+	Sources []DiagramSource `json:"sources,omitempty"`
+	// graph nodes: what practice has shown of the claim, drawn as a coloured badge; update it with object.update so practice results feed back One of "taught", "practiced", "retained", "weak".
+	Status *string `json:"status,omitempty"`
 	// its symbol is gone from its file: shown as it last was, badged
 	Stale *bool `json:"stale,omitempty"`
 	// its next level hasn't been asked for: a click (or adding its id to `expanded`) opens it
@@ -771,16 +792,18 @@ type DiagramPropsGraphNodes struct {
 }
 
 type DiagramPropsGraphEdges struct {
-	// the caller's node id
+	// the caller's (or premise's) node id
 	From string `json:"from"`
-	// the callee's node id
+	// the callee's (or conclusion's) node id
 	To string `json:"to"`
-	// 1-based lines of the calls, in the caller's file
-	Lines []int `json:"lines"`
-	Stale *bool `json:"stale,omitempty"`
+	// calls edges: 1-based lines of the calls, in the caller's file
+	Lines []int `json:"lines,omitempty"`
+	// graph edges: the reasoning step's word, drawn on the arrow
+	Label *string `json:"label,omitempty"`
+	Stale *bool   `json:"stale,omitempty"`
 }
 
-// DiagramPropsGraph: written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it)
+// DiagramPropsGraph: kind calls: written by the app (never an undo step, no rev): the graph as last computed; writing it changes nothing (the next computation replaces it). kind graph: the caller's input, normalized in the same create or update: omitted levels are computed as reasoning depth (longest path from source nodes, premises 0) and stored back; nodes keep label as `name`, detail, sources and status. At most 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and cycles with a missing level are invalid_params naming the rule
 type DiagramPropsGraph struct {
 	// the kind, path, symbol, line and direction it was computed for
 	Aim map[string]any `json:"aim,omitempty"`
@@ -795,9 +818,9 @@ type DiagramPropsGraph struct {
 	ComputedAt *string `json:"computedAt,omitempty"`
 }
 
-// DiagramProps: A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.
+// DiagramProps: A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.
 type DiagramProps struct {
-	// what the diagram is of; more kinds (types, pipelines) will come One of "calls".
+	// calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `graph.nodes` (id, label, detail, level, sources, status) and `graph.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success One of "calls", "graph".
 	Kind *string `json:"kind,omitempty"`
 	// the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration
 	Symbol *string `json:"symbol,omitempty"`
@@ -811,9 +834,9 @@ type DiagramProps struct {
 	Depth *int `json:"depth,omitempty"`
 	// node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one
 	Expanded []string `json:"expanded,omitempty"`
-	// default: `Callers of <symbol>` (`Calls from`, `Calls around`)
+	// default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph
 	Title *string `json:"title,omitempty"`
-	// written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it)
+	// kind calls: written by the app (never an undo step, no rev): the graph as last computed; writing it changes nothing (the next computation replaces it). kind graph: the caller's input, normalized in the same create or update: omitted levels are computed as reasoning depth (longest path from source nodes, premises 0) and stored back; nodes keep label as `name`, detail, sources and status. At most 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and cycles with a missing level are invalid_params naming the rule
 	Graph *DiagramPropsGraph `json:"graph,omitempty"`
 	Zoom  *Zoom              `json:"zoom,omitempty"`
 	Key   *ObjectKey         `json:"key,omitempty"`

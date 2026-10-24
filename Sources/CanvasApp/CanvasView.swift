@@ -550,6 +550,9 @@ final class CanvasView: NSScrollView {
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
         (content as? DiagramTile)?.onOpenedCode = showCode
+        // A graph node's source badge: the terminal it came from, or why it can't be shown here.
+        (content as? DiagramTile)?.onFocusTile = { [weak self] tile in self?.go(to: tile) }
+        (content as? DiagramTile)?.onSourceNotice = { [weak self] text in self?.showNotice(text) }
         (content as? QuestionTile)?.onOpenedCode = showCode
         (content as? QuestionTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         (content as? QuestionTile)?.onGoTo = { [weak self] target in self?.goToShown(target) }

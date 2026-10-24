@@ -487,10 +487,22 @@ export type VideoProps = {
   key?: ObjectKey;
 };
 
-/** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
+/** Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board */
+export type DiagramSource = {
+  /** an agent session id (`props.agent.sessionId`) or session path (`props.agent.sessionPath`) of a terminal on the board */
+  session?: string;
+  /** the message or prompt the claim came from */
+  message?: string;
+  /** the board the tile is on; another board is not resolvable from this one */
+  board?: Id;
+  /** the terminal tile it came from */
+  tile?: Id;
+};
+
+/** A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
 export type DiagramProps = {
-  /** what the diagram is of; more kinds (types, pipelines) will come */
-  kind?: "calls";
+  /** calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `graph.nodes` (id, label, detail, level, sources, status) and `graph.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success */
+  kind?: "calls" | "graph";
   /** the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration */
   symbol?: string;
   /** the file declaring the root, board-relative (relative to your own checkout when you work in another worktree) or absolute */
@@ -503,47 +515,58 @@ export type DiagramProps = {
   depth?: number;
   /** node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one */
   expanded?: string[];
-  /** default: `Callers of <symbol>` (`Calls from`, `Calls around`) */
+  /** default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph */
   title?: string;
-  /** written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it) */
+  /** kind calls: written by the app (never an undo step, no rev): the graph as last computed; writing it changes nothing (the next computation replaces it). kind graph: the caller's input, normalized in the same create or update: omitted levels are computed as reasoning depth (longest path from source nodes, premises 0) and stored back; nodes keep label as `name`, detail, sources and status. At most 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and cycles with a missing level are invalid_params naming the rule */
   graph?: {
     /** the kind, path, symbol, line and direction it was computed for */
     aim?: Record<string, unknown>;
     /** the root node's id */
     root?: string;
-    nodes?: {
-      /** `path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name */
+    nodes?: ({
+      /** a calls node: `path#Container.name`, stable while the symbol exists (not its line); a graph node: the caller's node id. What `expanded` and arrow ends name */
       id: string;
+      /** a calls node's symbol name; a graph node's `label` */
       name: string;
+      /** calls nodes: the enclosing type or module, when the server says */
       container?: string;
-      /** LSP symbol kind: method, function, constructor, … */
-      kind: string;
-      /** board-relative */
-      path: string;
-      /** 1-based line of its name */
-      line: number;
-      /** its whole declaration */
-      lines: LineRange;
-      excerpt: {
+      /** calls nodes: LSP symbol kind: method, function, constructor, … */
+      kind?: string;
+      /** calls nodes: board-relative file */
+      path?: string;
+      /** calls nodes: 1-based line of its name */
+      line?: number;
+      /** calls nodes: its whole declaration */
+      lines?: LineRange;
+      /** calls nodes: 1-3 lines, a caller's calls toward the root or the signature */
+      excerpt?: {
         line?: number;
         text?: string;
       }[];
-      /** columns from the root (0): callers negative, callees positive */
+      /** calls: columns from the root (0), callers negative; graph: reasoning depth from a premise (0), conclusions deeper */
       level: number;
+      /** graph nodes: markdown (or plain text) shown as two rows in the node and expanded whole when the node is clicked */
+      detail?: string;
+      /** graph nodes: where the statement came from; the node shows a source badge */
+      sources?: DiagramSource[];
+      /** graph nodes: what practice has shown of the claim, drawn as a coloured badge; update it with object.update so practice results feed back */
+      status?: "taught" | "practiced" | "retained" | "weak";
       /** its symbol is gone from its file: shown as it last was, badged */
       stale?: boolean;
       /** its next level hasn't been asked for: a click (or adding its id to `expanded`) opens it */
       expandable?: boolean;
       /** opened past `depth` (`expanded`) */
       expanded?: boolean;
-    }[];
+    })[];
     edges?: {
-      /** the caller's node id */
+      /** the caller's (or premise's) node id */
       from: string;
-      /** the callee's node id */
+      /** the callee's (or conclusion's) node id */
       to: string;
-      /** 1-based lines of the calls, in the caller's file */
-      lines: number[];
+      /** calls edges: 1-based lines of the calls, in the caller's file */
+      lines?: number[];
+      /** graph edges: the reasoning step's word, drawn on the arrow */
+      label?: string;
       stale?: boolean;
     }[];
     /** why the graph is empty or old: no language server for the file, the symbol isn't found, the server failed or has no call hierarchy. The last good graph stays */

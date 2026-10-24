@@ -1749,6 +1749,11 @@ public final class ApiRouter {
             }
             if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
+            if type == .diagram, DiagramSpec(props).kind == .graph {
+                let (graph, problem) = DiagramSpec.graph(props)
+                if let problem { throw Failure("invalid_params", problem) }
+                if let graph { props = props.merging(.object(["graph": graph.json])) }
+            }
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             if type == .video, let problem = LocalVideo.problem(props) { throw Failure("invalid_params", problem) }
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
@@ -1770,8 +1775,15 @@ public final class ApiRouter {
             var frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
             var props = p["props"]
             if let root = props?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
-            if let patch = props, try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
-                throw Failure("invalid_params", problem)
+            if let patch = props, try board.object(id).type == .diagram {
+                let merged = try board.object(id).props.merging(patch)
+                if DiagramSpec(merged).kind == .graph, patch["graph"] != nil || patch["kind"] != nil {
+                    let (graph, problem) = DiagramSpec.graph(merged)
+                    if let problem { throw Failure("invalid_params", problem) }
+                    if let graph { props = patch.merging(.object(["graph": graph.json])) }
+                } else if let problem = DiagramSpec.problem(merged) {
+                    throw Failure("invalid_params", problem)
+                }
             }
             if let patch = props, try board.object(id).type == .video,
                let problem = LocalVideo.problem(try board.object(id).props.merging(patch)) {
@@ -1989,7 +2001,14 @@ public final class ApiRouter {
         }
         let timeout = p["timeoutMs"]?.int ?? (object.type == .diagram ? diagramTimeoutMs : Self.reloadTimeoutMs)
         guard timeout >= 0 else { throw Failure("invalid_params", "timeoutMs must be 0 or more") }
-        if object.type == .diagram { return try await computeDiagram(board, id, timeoutMs: timeout) }
+        if object.type == .diagram {
+            // A graph diagram is the caller's: there is nothing to compute (and no no-op rev).
+            if DiagramSpec(object.props).kind == .graph {
+                let graph = DiagramGraph(object.props["graph"])
+                return DiagramRefresh.summary(id, graph: graph, computed: graph != nil)
+            }
+            return try await computeDiagram(board, id, timeoutMs: timeout)
+        }
         guard let reloadBrowser else { throw Failure("unsupported", "reloading pages needs the app UI") }
         return try await reloadBrowser(board, id, p["caller"]?.string, timeout)
     }
@@ -2326,7 +2345,7 @@ public final class ApiRouter {
     /// ends leaves the tile at the default size, with a warning. Nil for any other create.
     private func createFittedDiagram(_ p: JSONValue) async throws -> JSONValue? {
         guard p["type"]?.string == ObjectType.diagram.rawValue, p["size"]?.string == "fit", DiagramGraph(p["props"]?["graph"]) == nil,
-              refreshDiagram != nil, var params = p.object else { return nil }
+              refreshDiagram != nil || DiagramSpec(p["props"] ?? .null).kind == .graph, var params = p.object else { return nil }
         params.removeValue(forKey: "size")
         let origin = p["frame"]?["x"]?.number.flatMap { x in p["frame"]?["y"]?.number.map { (x: x, y: $0) } }
         if let origin {
@@ -2338,7 +2357,10 @@ public final class ApiRouter {
         var result = try dispatch("object.create", .object(params)).object ?? [:]
         guard let id = result["object"]?["id"]?.string else { return .object(result) }
         let board = try board(forObject: id)
-        let summary = try await computeDiagram(board, id, timeoutMs: diagramTimeoutMs)
+        let callerGraph = DiagramSpec(p["props"] ?? .null).kind == .graph
+        let summary = callerGraph
+            ? DiagramRefresh.summary(id, graph: DiagramGraph(board.objects[id]?.props["graph"]), computed: true)
+            : try await computeDiagram(board, id, timeoutMs: diagramTimeoutMs)
         result["diagram"] = summary
         var warning: String?
         if let object = board.objects[id], summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
@@ -2348,7 +2370,7 @@ public final class ApiRouter {
                 let frame = try origin == nil ? board.refitFrame(id, to: size) : Frame(x: current.x, y: current.y, w: size.width, h: size.height)
                 try board.update(id, frame: frame, actor: .system)
             }
-        } else {
+        } else if !callerGraph {
             warning = "the graph is still being computed (the language server hasn't answered within \((Double(diagramTimeoutMs) / 1000).formatted()) s): "
                 + "object.reload \(id) waits for it again, then object.update size \"fit\""
         }

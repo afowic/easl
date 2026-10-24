@@ -11,6 +11,8 @@ type DiagramNode struct {
 	Container *string
 	Level     int
 	Excerpts  int
+	// Detail is whether a graph node has the detail a click expands.
+	Detail bool
 }
 
 // QualifiedName is `Container.name`.
@@ -58,7 +60,8 @@ func decodeDiagramGraph(v any) (DiagramGraph, error) {
 	if err != nil {
 		return g, err
 	}
-	if _, err := aim.Enum("kind", "DiagramKind", "calls"); err != nil {
+	kind, err := aim.Enum("kind", "DiagramKind", "calls", "graph")
+	if err != nil {
 		return g, err
 	}
 	for _, key := range []string{"path", "symbol"} {
@@ -94,6 +97,18 @@ func decodeDiagramGraph(v any) (DiagramGraph, error) {
 		}
 		if node.Name, err = n.String("name"); err != nil {
 			return g, err
+		}
+		if node.Level, err = n.Int("level"); err != nil {
+			return g, err
+		}
+		if kind == "graph" {
+			detail, err := n.StringIfPresent("detail")
+			if err != nil {
+				return g, err
+			}
+			node.Detail = detail != nil && *detail != ""
+			g.Nodes = append(g.Nodes, node)
+			continue
 		}
 		if node.Container, err = n.StringIfPresent("container"); err != nil {
 			return g, err
@@ -131,9 +146,6 @@ func decodeDiagramGraph(v any) (DiagramGraph, error) {
 			}
 		}
 		node.Excerpts = len(excerpts)
-		if node.Level, err = n.Int("level"); err != nil {
-			return g, err
-		}
 		for _, key := range []string{"stale", "expandable", "expanded"} {
 			if _, err := n.BoolIfPresent(key); err != nil {
 				return g, err
@@ -208,6 +220,9 @@ const (
 )
 
 func diagramNodeHeight(n DiagramNode) float64 {
+	if n.Detail {
+		return 2*diagramPadding + diagramNameHeight + 2*diagramExcerptLine + 4
+	}
 	h := 2*diagramPadding + diagramNameHeight + diagramPlaceHeight + float64(n.Excerpts)*diagramExcerptLine
 	if n.Excerpts > 0 {
 		h += 4

@@ -42,7 +42,7 @@ type diagramSpec struct {
 }
 
 func diagramSpecOf(props map[string]any) diagramSpec {
-	spec := diagramSpec{aim: diagramAim{kind: "calls", direction: "incoming"}, depth: 2}
+	spec := diagramSpec{aim: diagramAim{kind: diagramKindOf(props), direction: "incoming"}, depth: 2}
 	spec.aim.path, _ = props["path"].(string)
 	spec.aim.symbol, _ = props["symbol"].(string)
 	if line, ok := board.TruncInt(props["line"]); ok && line >= 1 {
@@ -86,6 +86,10 @@ type diagramWait struct {
 func (r *Router) reloadDiagram(requestID any, b *board.Board, object model.Object, timeout int) (any, error) {
 	until := time.Now().Add(millis(timeout))
 	spec := diagramSpecOf(object.Props)
+	// A graph diagram is the caller's graph: reload is a no-op success, never a viewer call.
+	if spec.aim.kind == "graph" {
+		return diagramSummary(object.ID, object.Props["graph"], true), nil
+	}
 	job := r.diagrams[object.ID]
 	if job != nil && (job.board != b || job.rev != object.Rev || !job.spec.equal(spec)) {
 		r.finishDiagram(job, board.Conflict("diagram %s changed while computing", object.ID))
@@ -247,7 +251,7 @@ func checkedDiagramGraph(value any) (diagramGraph, bool) {
 	aim := asMap(m["aim"])
 	kind, kindOK := aim["kind"].(string)
 	direction, directionOK := aim["direction"].(string)
-	if !kindOK || kind != "calls" || !directionOK || (direction != "incoming" && direction != "outgoing" && direction != "both") {
+	if !kindOK || (kind != "calls" && kind != "graph") || !directionOK || (direction != "incoming" && direction != "outgoing" && direction != "both") {
 		return diagramGraph{}, false
 	}
 	graph := diagramGraph{aim: diagramAim{kind: kind, direction: direction}, raw: m}
@@ -287,17 +291,26 @@ func checkedDiagramGraph(value any) (diagramGraph, bool) {
 	}
 	for _, value := range graph.nodes {
 		node, valid := value.(map[string]any)
-		if !valid || !diagramStrings(node, "id", "name", "kind", "path") || !diagramIntegers(node, "line", "level") || !diagramIntegers(asMap(node["lines"]), "start", "end") || !diagramOptional(node, "string", "container") || !diagramOptional(node, "bool", "stale", "expandable", "expanded") {
+		if !valid || !diagramStrings(node, "id", "name") || !diagramIntegers(node, "level") {
 			return diagramGraph{}, false
 		}
-		excerpt, valid := node["excerpt"].([]any)
-		if !valid {
-			return diagramGraph{}, false
-		}
-		for _, line := range excerpt {
-			if !diagramIntegers(asMap(line), "line") || !diagramStrings(asMap(line), "text") {
+		if kind == "calls" {
+			if !diagramStrings(node, "kind", "path") || !diagramIntegers(node, "line") || !diagramIntegers(asMap(node["lines"]), "start", "end") || !diagramOptional(node, "string", "container") || !diagramOptional(node, "bool", "stale", "expandable", "expanded") {
 				return diagramGraph{}, false
 			}
+			excerpt, valid := node["excerpt"].([]any)
+			if !valid {
+				return diagramGraph{}, false
+			}
+			for _, line := range excerpt {
+				if !diagramIntegers(asMap(line), "line") || !diagramStrings(asMap(line), "text") {
+					return diagramGraph{}, false
+				}
+			}
+			continue
+		}
+		if !diagramGraphNodeOptionals(node) {
+			return diagramGraph{}, false
 		}
 	}
 	graph.edges, ok = m["edges"].([]any)
@@ -306,8 +319,11 @@ func checkedDiagramGraph(value any) (diagramGraph, bool) {
 	}
 	for _, value := range graph.edges {
 		edge := asMap(value)
-		if !diagramStrings(edge, "from", "to") || !diagramOptional(edge, "bool", "stale") {
+		if !diagramStrings(edge, "from", "to") || !diagramOptional(edge, "bool", "stale") || !diagramOptional(edge, "string", "label") {
 			return diagramGraph{}, false
+		}
+		if kind == "graph" && edge["lines"] == nil {
+			continue
 		}
 		lines, valid := edge["lines"].([]any)
 		if !valid {
@@ -357,6 +373,47 @@ func diagramOptional(m map[string]any, kind string, keys ...string) bool {
 				if _, ok := v.(bool); !ok {
 					return false
 				}
+			}
+		}
+	}
+	return true
+}
+
+func diagramGraphNodeOptionals(node map[string]any) bool {
+	if !diagramOptional(node, "string", "container", "kind", "path", "detail", "status") || !diagramOptional(node, "bool", "stale", "expandable", "expanded") {
+		return false
+	}
+	if status, ok := node["status"].(string); ok && !diagramStatuses[status] {
+		return false
+	}
+	if node["line"] != nil {
+		if _, ok := diagramInteger(node["line"]); !ok {
+			return false
+		}
+	}
+	if lines := node["lines"]; lines != nil && !diagramIntegers(asMap(lines), "start", "end") {
+		return false
+	}
+	if excerpt := node["excerpt"]; excerpt != nil {
+		list, ok := excerpt.([]any)
+		if !ok {
+			return false
+		}
+		for _, line := range list {
+			if !diagramIntegers(asMap(line), "line") || !diagramStrings(asMap(line), "text") {
+				return false
+			}
+		}
+	}
+	if sources := node["sources"]; sources != nil {
+		list, ok := sources.([]any)
+		if !ok {
+			return false
+		}
+		for _, source := range list {
+			object, ok := source.(map[string]any)
+			if !ok || !diagramOptional(object, "string", "session", "message", "board", "tile") {
+				return false
 			}
 		}
 	}

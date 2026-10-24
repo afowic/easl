@@ -12,6 +12,7 @@ Each version's section is its GitHub release's notes.
 - Development: restore parallel Core CI with at most four active outer test cases per logical CPU. Cap synchronous codec work and isolate contention-sensitive fixtures. Keep linear large-line reads, the retained-runner zmx fixture, and unchanged assertions and deadlines.
 - The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
 - Notes typeset LaTeX: `$…$` inline and `$$…$$` on its own centered line with SwiftMath (currency, `\$`, code and unparsable formulas stay as written), and HTML tiles load KaTeX only when a page has math; note measurement, `size: "fit"` and `layout.check` account for it.
+- Diagram tiles draw caller-supplied knowledge and reasoning graphs (`kind: "graph"`): nodes with click-to-expand markdown detail, provenance that focuses the terminal it came from, and practice status (`taught`, `practiced`, `retained`, `weak`), up to 500 nodes laid out one column per reasoning depth. Nothing in them is computed from code.
 
 ## 0.3.1
 

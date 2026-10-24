@@ -80,8 +80,10 @@ public enum ObjectMeasure {
             let caption = props["caption"]?.string.map { $0.isEmpty ? 0 : LocalImage.captionHeight } ?? 0
             size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height + caption)
         case .diagram:
-            // The graph as last computed, drawn at full size under its status strip.
-            guard let graph = DiagramGraph(props["graph"]) else {
+            // The graph as last computed (or a graph diagram's caller-supplied graph), drawn at
+            // full size under its status strip.
+            let graph = DiagramGraph(props["graph"]) ?? DiagramSpec.graph(props).graph
+            guard let graph else {
                 throw Failure.unavailable("the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit")
             }
             let body = DiagramLayout(graph).bodySize

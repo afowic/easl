@@ -354,6 +354,9 @@ func diagramTitle(p map[string]any) string {
 	if t, ok := p["title"].(string); ok && t != "" {
 		return t
 	}
+	if kind, _ := p["kind"].(string); kind == "graph" {
+		return "Graph"
+	}
 	nonEmpty := func(k string) string { s, _ := p[k].(string); return s }
 	root := nonEmpty("symbol")
 	if root == "" {

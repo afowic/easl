@@ -280,9 +280,16 @@ class VideoProps(TypedDict):
     title: NotRequired[str]
     key: NotRequired["ObjectKey"]
 
+class DiagramSource(TypedDict):
+    """Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board"""
+    session: NotRequired[str]
+    message: NotRequired[str]
+    board: NotRequired["Id"]
+    tile: NotRequired["Id"]
+
 class DiagramProps(TypedDict):
-    """A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`."""
-    kind: NotRequired[Literal["calls"]]
+    """A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`."""
+    kind: NotRequired[Literal["calls", "graph"]]
     symbol: NotRequired[str]
     path: NotRequired[str]
     line: NotRequired[int]

@@ -13,26 +13,55 @@ public struct DiagramExcerptLine: Codable, Equatable, Sendable {
     }
 }
 
-/// A symbol in a diagram, identified by what it is (file, container, name), not where it is,
-/// so it keeps its identity (expansions, arrows bound to it) when code above it moves.
+/// Where a graph node came from: the terminal tile, agent session, message or board that holds
+/// the observation or argument it states.
+public struct DiagramSource: Codable, Equatable, Sendable {
+    public var session: String?
+    public var message: String?
+    public var board: String?
+    public var tile: String?
+
+    public init(session: String? = nil, message: String? = nil, board: String? = nil, tile: String? = nil) {
+        self.session = session
+        self.message = message
+        self.board = board
+        self.tile = tile
+    }
+}
+
+/// How well a graph node's claim is held: what practice has shown so far.
+public enum DiagramNodeStatus: String, CaseIterable, Codable, Sendable {
+    case taught, practiced, retained, weak
+}
+
+/// A node in a diagram: a symbol in a calls graph, or a caller-supplied statement in a graph
+/// diagram (label in `name`, with optional `detail`, `sources` and practice `status`).
 public struct DiagramNode: Codable, Equatable, Sendable {
-    /// `path#Container.name`; a second symbol with the same identity gets `@line` appended.
+    /// `path#Container.name` for a symbol; the caller's node id for a graph statement.
     public var id: String
     public var name: String
     /// The enclosing type or module, when the server says.
     public var container: String?
-    /// LSP symbol kind as a word ("method", "function").
-    public var kind: String
-    /// Board-relative (absolute outside the board root).
-    public var path: String
-    /// 1-based line of the name.
-    public var line: Int
-    /// The whole declaration.
-    public var lines: LineRange
+    /// LSP symbol kind as a word ("method", "function"); absent on graph nodes.
+    public var kind: String?
+    /// Board-relative (absolute outside the board root); absent on graph nodes.
+    public var path: String?
+    /// 1-based line of the name; absent on graph nodes.
+    public var line: Int?
+    /// The whole declaration; absent on graph nodes.
+    public var lines: LineRange?
     /// 1–3 lines: for a caller, the lines making its calls toward the root; else the signature.
-    public var excerpt: [DiagramExcerptLine]
-    /// Columns from the root (0): callers negative, callees positive.
+    /// Absent on graph nodes, which show `detail` instead.
+    public var excerpt: [DiagramExcerptLine]?
+    /// Columns from the root (0): callers negative, callees positive; a graph node's reasoning
+    /// depth (premises 0).
     public var level: Int
+    /// Graph nodes: the full markdown (or plain text) a click expands.
+    public var detail: String?
+    /// Graph nodes: where the statement came from.
+    public var sources: [DiagramSource]?
+    /// Graph nodes: what practice has shown of it.
+    public var status: DiagramNodeStatus?
     /// Its symbol is gone from the code: the node stays as it last was, badged, until the
     /// symbol is back or the diagram is aimed elsewhere.
     public var stale: Bool?
@@ -41,8 +70,10 @@ public struct DiagramNode: Codable, Equatable, Sendable {
     /// Opened past `depth` by a click (`props.expanded`).
     public var expanded: Bool?
 
-    public init(id: String, name: String, container: String?, kind: String, path: String, line: Int, lines: LineRange, excerpt: [DiagramExcerptLine],
-                level: Int, stale: Bool? = nil, expandable: Bool? = nil, expanded: Bool? = nil) {
+    public init(id: String, name: String, container: String? = nil, kind: String? = nil, path: String? = nil, line: Int? = nil,
+                lines: LineRange? = nil, excerpt: [DiagramExcerptLine]? = nil,
+                level: Int, stale: Bool? = nil, expandable: Bool? = nil, expanded: Bool? = nil,
+                detail: String? = nil, sources: [DiagramSource]? = nil, status: DiagramNodeStatus? = nil) {
         self.id = id
         self.name = name
         self.container = container
@@ -55,6 +86,9 @@ public struct DiagramNode: Codable, Equatable, Sendable {
         self.stale = stale
         self.expandable = expandable
         self.expanded = expanded
+        self.detail = detail
+        self.sources = sources
+        self.status = status
     }
 
     public var isStale: Bool { stale == true }
@@ -65,23 +99,27 @@ public struct DiagramNode: Codable, Equatable, Sendable {
     /// What a Hyper-click on the node in diagram tile `object` mentions: a code mention of its
     /// symbol, with its declaration's lines, or the one excerpt line clicked.
     public func mention(in object: ObjectID, excerptLine: Int? = nil) -> MentionTarget {
-        .code(object: object, path: path, lines: excerptLine.map { LineRange(start: $0, end: $0) } ?? lines, symbol: qualifiedName)
+        guard let path, let lines else { return .object(object) }
+        return .code(object: object, path: path, lines: excerptLine.map { LineRange(start: $0, end: $0) } ?? lines, symbol: qualifiedName)
     }
 }
 
-/// A call, from caller to callee.
+/// A call (calls graphs), or a reasoning step from a premise to its conclusion (graph diagrams).
 public struct DiagramEdge: Codable, Equatable, Sendable {
     public var from: String
     public var to: String
-    /// 1-based lines of the calls, in `from`'s file.
+    /// 1-based lines of the calls, in `from`'s file; empty on graph edges.
     public var lines: [Int]
+    /// The reasoning step's word ("observed by", "fixed by"), for a graph edge.
+    public var label: String?
     /// An edge kept from before, into or out of a stale node.
     public var stale: Bool?
 
-    public init(from: String, to: String, lines: [Int], stale: Bool? = nil) {
+    public init(from: String, to: String, lines: [Int], label: String? = nil, stale: Bool? = nil) {
         self.from = from
         self.to = to
         self.lines = lines
+        self.label = label
         self.stale = stale
     }
 }
