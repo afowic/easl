@@ -315,6 +315,15 @@ python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system nati
 
 The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
+### HTML tile keyboard
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The runner links the prebuilt `CanvasApp`, opens a board in a disposable home, and drives an HTML tile with a `<textarea>` that mirrors its value into `canvasKit.setState`. It checks that Return on the selected tile, and a click in the text field, give the page the keyboard; that Tab moves within the page and typed literal text reaches `props.state`; that Delete with no field focused never acts on the board; that Esc and a click on the board give the keyboard back so a canvas key (Delete) acts on the selection; and that a page focusing a field on its own never captures keys. It repeats on a remote board through `RemoteSource`. Clicks go straight to the page's view (`mouseDown`) and keys to the window's responder chain (`sendEvent`), because the runner never activates a window on the machine it runs on. It never rebuilds the app and is not WindowServer proof: for a visual check, type in a field in an isolated development instance and read the tile's state back with `object.get`.
+
 ### Move tool input isolation
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.

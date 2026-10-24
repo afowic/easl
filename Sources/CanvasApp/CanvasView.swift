@@ -1242,8 +1242,8 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Tiles Return hands the keyboard to (an HTML tile's page never takes it: `HtmlWebView`).
-    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser, .question]
+    /// Tiles Return hands the keyboard to.
+    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser, .html, .question]
 
     /// Return with one tile selected and the canvas holding the keyboard: the tile
     /// takes it (`TileContent.enterKeyboard`), revealed first with the least pan (an agent's

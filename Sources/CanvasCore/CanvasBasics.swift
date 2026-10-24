@@ -89,7 +89,7 @@ public enum CanvasBasics {
             Item(term: "⌘N · ⇧⌘B · ⇧⌘H", text: "new note · new browser tile · new HTML tile."),
             Item(term: "⌘O · ⇧⌘O", text: "open a file as a code tile · open a board."),
             Item(term: "⌃⌥⌘T · ⌃⌥⌘O · ⌃⌥⌘R", text: "new board tab · open a remote board · review a branch. ⇧⌘R reviews uncommitted changes."),
-            Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the board, then clears the selection, then closes Get Started. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
+            Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code; an HTML tile's page, where its text fields are); Esc gives the keyboard back to the board, then clears the selection, then closes Get Started. In a terminal or a browser page Esc goes to the program or page (a game's pause, a dialog); in an HTML tile the page gets its own Esc first: ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
             Item(term: "⌥⌘/", text: "open or close this legend (Help › easl Basics)."),
         ]),
