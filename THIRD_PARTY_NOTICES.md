@@ -1,6 +1,6 @@
 # Third-party notices
 
-Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
+Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`); the HTML kit's Tailwind CSS 4.3.3 and Pele 1.9.1 are MIT.
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |

@@ -50,10 +50,16 @@ Never paste code you could anchor: pasted code is a copy that falls behind silen
 
 ## Mermaid
 
-- **Give diagrams the full width.** Mermaid scales a diagram down to fit its container,
-  so a sequence diagram squeezed into a narrow column (a grid cell, one `canvas-compare` pane) renders its message text at ~9 px, unreadable at 100%.
+Diagrams are drawn by Pele (the vendored, offline Mermaid renderer), themed from the tile's light
+or dark palette; a diagram's links and images are disabled, and text is escaped.
+
+- **Give diagrams the full width.** A diagram is rendered at its container's width, so one
+  squeezed into a narrow column (a grid cell, one `canvas-compare` pane) draws its labels tiny at 100%.
   Put diagrams in their own full-width section, keep them to 5–9 nodes or participants, and put the details in sections under them.
-- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram ("Syntax error in text").
+  Below 640 px a `flowchart LR` may lay itself out top-to-bottom; keep the source direction if that matters in a narrow column.
+- **A broken diagram shows its source.** Pele's explanation (e.g. `Parse error on line 3 …`) appears below the source instead of a picture;
+  fix the syntax rather than hiding it.
+- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram.
   Use a comma, or `#59;` for a literal semicolon (`A->>B: read#59; retry`).
 - **Building HTML in omp's `eval`:** a Python cell line that starts with `%%` (e.g. a Mermaid `%%{init: …}%%` directive) is taken as a cell magic.
   Keep the directive inside a string that doesn't start a line of the cell, or leave it out.

@@ -88,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
+        // Note diagrams: build Pele's JSContext and parse the common diagram types off-thread, so
+        // the first mermaid fence doesn't pay for it on the main thread.
+        NoteDiagram.prewarm()
         // app.metrics: main-thread stretches (and the app.log line naming a long one's cause).
         Metrics.shared.monitorMainThread()
         // A main thread stuck for a second gets `sample`d into <home>/stalls/ (docs/design.md,

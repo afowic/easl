@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Notes draw a `mermaid` fence as a diagram at the note's width, and HTML tiles draw Mermaid with the vendored Pele build instead of Mermaid.js: both are synchronous and offline, follow light/dark, and keep the source with the parser's explanation when a diagram can't be drawn.
 - Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.

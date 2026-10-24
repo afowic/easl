@@ -146,6 +146,12 @@ final class NoteTile: NSView, TileContent {
         placeBanner()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Diagrams bake their theme colors into their images; text resolves its colors at draw.
+        renderDisplay()
+    }
+
     var markdown: String { object.props["markdown"]?.string ?? "" }
     /// A code link the user clicked opened this code tile, or found one already showing the
     /// lines (`existing`); the canvas shows it.

@@ -177,7 +177,39 @@
   }
 
   .mermaid { display: flex; justify-content: center; margin: 12px 0; }
-  .mermaid:not([data-processed]) { white-space: pre; font-family: var(--canvas-mono); color: var(--canvas-muted-foreground); }
+  .mermaid:not([data-rendered]) { white-space: pre; font-family: var(--canvas-mono); color: var(--canvas-muted-foreground); }
+  .mermaid[data-rendered="error"] { display: block; }
+  .mermaid > pre {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--canvas-border);
+    border-radius: 8px;
+    background: var(--canvas-code);
+    color: var(--canvas-foreground);
+    font: 12px/1.55 var(--canvas-mono);
+    overflow-x: auto;
+  }
+  .mermaid .mermaid-error {
+    margin: 6px 0 0;
+    color: var(--canvas-warn);
+    font: 12px/1.5 var(--canvas-mono);
+    white-space: pre-wrap;
+  }
+
+  /* Pele draws Mermaid diagrams in HTML tiles; its palette follows the app's, including dark mode. */
+  .pele {
+    --pele-bg: var(--canvas-background);
+    --pele-fg: var(--canvas-foreground);
+    --pele-muted: var(--canvas-muted-foreground);
+    --pele-line: var(--canvas-foreground);
+    --pele-surface: var(--canvas-card);
+    --pele-surface-alt: var(--canvas-muted);
+    --pele-border: var(--canvas-border);
+    --pele-accent: var(--canvas-accent);
+    --pele-critical: var(--canvas-warn);
+    --pele-font: var(--canvas-font);
+    --pele-font-mono: var(--canvas-mono);
+  }
 
   /* KaTeX: inline follows the text; display math is its own centered block. */
   .canvas-math { color: inherit; }

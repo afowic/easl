@@ -509,11 +509,47 @@ public final class NoteRenderer {
         let key = (block.language ?? "").trimmingCharacters(in: .whitespaces)
         let fence = NoteFence(info: key)
         let body = NoteSource.lines(of: block.code)
+        if fence.mode == .free, fence.language?.lowercased() == "mermaid" {
+            diagram(body, context: context, line: line)
+            return
+        }
         switch fence.mode {
         case .free:
             rows(body.map { ($0, nil, NoteBlock.authored, nil) }, context: context, markdownLine: line + 1, numberWidth: 0, referenceLinks: true)
         case .excerpt, .propose:
             anchored(fence, excerpt: excerpts[key], body: body, context: context, line: line)
+        }
+    }
+
+    /// A ```mermaid fence drawn by Pele at the note's width, or its source rows and Pele's
+    /// explanation when the diagram can't be drawn.
+    private func diagram(_ body: [String], context: Context, line: Int) {
+        let source = body.joined(separator: "\n")
+        switch NoteDiagram.image(source: source, width: lineWidth, appearance: NoteDiagram.appearance()) {
+        case .image(let image):
+            let attachment = NoteImageAttachment()
+            attachment.image = image
+            attachment.allowsTextAttachmentView = false
+            let style = style(context, spacing: 8, before: 4)
+            style.firstLineHeadIndent = context.indent + NoteBlockFragment.inset
+            style.headIndent = style.firstLineHeadIndent
+            append("\u{FFFC}\n", [
+                .attachment: attachment,
+                .font: Self.bodyFont,
+                .paragraphStyle: style,
+                .noteMarkdownLine: line + 1,
+            ])
+        case .failure(let message):
+            rows(body.map { ($0, nil, NoteBlock.authored, nil) }, context: context, markdownLine: line + 1, numberWidth: 0, referenceLinks: false)
+            let style = style(context, spacing: 8, before: 2)
+            style.firstLineHeadIndent = context.indent + NoteBlockFragment.inset + 4
+            style.headIndent = style.firstLineHeadIndent
+            append("Pele: \(message)\n", [
+                .font: Self.codeFont,
+                .foregroundColor: NSColor.systemRed,
+                .paragraphStyle: style,
+                .noteMarkdownLine: line + 1,
+            ])
         }
     }
 
