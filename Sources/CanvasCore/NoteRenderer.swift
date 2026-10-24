@@ -14,6 +14,9 @@ public final class NoteRenderer {
     private let excerpts: [String: NoteExcerpt]
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
+    /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
+    private let source: String?
+    private lazy var sourceIndex: NoteMath.SourceIndex? = source.map(NoteMath.SourceIndex.init)
     /// Where lines end: the text container's width less its line fragment padding. Tables fit
     /// their columns into it.
     private let lineWidth: CGFloat
@@ -27,9 +30,10 @@ public final class NoteRenderer {
 
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
-    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], width: CGFloat) {
+    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil, width: CGFloat) {
         self.excerpts = excerpts
         self.images = images
+        self.source = source
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -75,7 +79,11 @@ public final class NoteRenderer {
             let font = NSFont.systemFont(ofSize: size, weight: heading.level <= 2 ? .bold : .semibold)
             paragraph(heading, font: font, context: &context, line: line, spacingBefore: heading.level <= 2 ? 6 : 3)
         case let paragraph as Paragraph:
-            self.paragraph(paragraph, font: Self.bodyFont, context: &context, line: line)
+            if let formula = displayMath(paragraph) {
+                displayFormula(formula.latex, source: formula.source, context: &context, line: line)
+            } else {
+                self.paragraph(paragraph, font: Self.bodyFont, context: &context, line: line)
+            }
         case let quote as BlockQuote:
             var inner = context
             inner.indent += 14
@@ -168,7 +176,7 @@ public final class NoteRenderer {
         let font = attributes[.font] as? NSFont ?? Self.bodyFont
         switch markup {
         case let text as Markdown.Text:
-            target.append(NSAttributedString(string: text.string, attributes: attributes))
+            math(text, attributes, into: target)
         case is Emphasis:
             attributes[.font] = Self.font(font, adding: .italic)
             inlines(markup, attributes, into: target)
@@ -216,6 +224,73 @@ public final class NoteRenderer {
                 target.append(NSAttributedString(string: markup.format(), attributes: attributes))
             }
         }
+    }
+
+    // MARK: Math
+
+    /// A text node with its `$…$` and `$$…$$` formulas as SwiftMath attachments; a formula
+    /// SwiftMath can't typeset stays its source, delimiters included, in the code font.
+    private func math(_ text: Markdown.Text, _ attributes: [NSAttributedString.Key: Any], into target: NSMutableAttributedString) {
+        guard let index = sourceIndex, let range = text.range, let raw = index.text(range),
+              let decoded = NoteMath.text(raw: raw, decoded: text.string) else {
+            target.append(NSAttributedString(string: text.string, attributes: attributes))
+            return
+        }
+        let spans = NoteMath.spans(in: decoded)
+        guard !spans.isEmpty else {
+            target.append(NSAttributedString(string: text.string, attributes: attributes))
+            return
+        }
+        let font = attributes[.font] as? NSFont ?? Self.bodyFont
+        var cursor = 0
+        for span in spans {
+            if span.start > cursor {
+                target.append(NSAttributedString(string: String(decoded.characters[cursor..<span.start]), attributes: attributes))
+            }
+            if let attachment = NoteMath.attachment(latex: span.latex, fontSize: font.pointSize, display: span.display) {
+                var math = attributes
+                math[.attachment] = attachment
+                target.append(NSAttributedString(string: "\u{FFFC}", attributes: math))
+            } else {
+                var fallback = attributes
+                fallback[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.9, weight: .regular)
+                target.append(NSAttributedString(string: String(decoded.characters[span.start..<span.end]), attributes: fallback))
+            }
+            cursor = span.end
+        }
+        if cursor < decoded.characters.count {
+            target.append(NSAttributedString(string: String(decoded.characters[cursor...]), attributes: attributes))
+        }
+    }
+
+    /// The markdown source of a paragraph that is one display formula.
+    private func displayMath(_ paragraph: Paragraph) -> (latex: String, source: String)? {
+        guard let index = sourceIndex, let range = paragraph.range, let raw = index.text(range),
+              let latex = NoteMath.displayMath(in: raw) else { return nil }
+        return (latex, raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// A display formula as its own line, centered. A formula SwiftMath can't typeset keeps its
+    /// source in the code font.
+    private func displayFormula(_ latex: String, source: String, context: inout Context, line: Int?) {
+        let style = style(context, spacing: 6)
+        style.alignment = .center
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.bodyFont,
+            .foregroundColor: context.quoted ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            .paragraphStyle: style,
+        ]
+        if let line { attributes[.noteMarkdownLine] = line }
+        let start = out.length
+        if let attachment = NoteMath.attachment(latex: latex, fontSize: Self.bodyFont.pointSize, display: true) {
+            attributes[.attachment] = attachment
+            append("\u{FFFC}", attributes)
+        } else {
+            attributes[.font] = NSFont.monospacedSystemFont(ofSize: Self.bodyFont.pointSize * 0.9, weight: .regular)
+            append(source, attributes)
+        }
+        append("\n", attributes)
+        out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
     }
 
     public static func font(_ font: NSFont, adding trait: NSFontDescriptor.SymbolicTraits) -> NSFont {

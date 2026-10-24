@@ -8,6 +8,7 @@ Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`;
 | [Ghostty](https://github.com/ghostty-org/ghostty) (the `libghostty` binary libghostty-spm downloads) | commit 3c47ca159368 | MIT | (c) 2024 Mitchell Hashimoto, Ghostty contributors |
 | [MSDisplayLink](https://github.com/Lakr233/MSDisplayLink) | 2.2.0 | MIT | (c) 2024 Lakr Aream |
 | [swift-markdown](https://github.com/swiftlang/swift-markdown) | 0.9.0 | Apache-2.0 | (c) 2021 Apple Inc. and the Swift project authors |
+| [SwiftMath](https://github.com/mgriebling/SwiftMath) | 1.7.3 | MIT (its math fonts: SIL OFL 1.1) | (c) 2023 Computer Inspirations |
 | [swift-cmark](https://github.com/swiftlang/swift-cmark) (cmark-gfm) | 0.9.0 | BSD-2-Clause, with parts under MIT (see its COPYING below) | (c) 2014 John MacFarlane |
 | [SwiftTreeSitter](https://github.com/ChimeHQ/SwiftTreeSitter) | 0.25.0 | BSD-3-Clause | (c) 2021, Chime |
 | [tree-sitter](https://github.com/tree-sitter/tree-sitter) | 0.25.10 | MIT | (c) 2018-2024 Max Brunsfeld |

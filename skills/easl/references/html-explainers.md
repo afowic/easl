@@ -19,6 +19,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
     `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`.
     Avoid hard-coded hex colors.
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
+  - **KaTeX**: `$…$` (inline) and `$$…$$` (display) typeset as math, as do `\(…\)` and `\[…\]`; KaTeX loads only when the page has a formula. `$5 and $10` stays prose (Pandoc's rule), `\$` is a dollar, and code/pre is untouched. Keep the text color inherited (`text-foreground`) so math follows dark mode.
   - **easl components** (below).
 - Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
 
@@ -56,6 +57,12 @@ Never paste code you could anchor: pasted code is a copy that falls behind silen
   Use a comma, or `#59;` for a literal semicolon (`A->>B: read#59; retry`).
 - **Building HTML in omp's `eval`:** a Python cell line that starts with `%%` (e.g. a Mermaid `%%{init: …}%%` directive) is taken as a cell magic.
   Keep the directive inside a string that doesn't start a line of the cell, or leave it out.
+
+## Math
+
+- **Write LaTeX between dollars.** Inline `$e^{i\pi} + 1 = 0$`; a formula that is the point of a section goes on its own line as `$$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$$` (centered).
+- **Currency is prose.** `$5 and $10` is untouched; write `\$` for a literal dollar in a formula. Backticks win: anything in `<code>` or `pre` is never math.
+- **One formula, not a derivation.** Split a derivation into short lines of display math with a one-line caption each; KaTeX's `aligned` environment works inside `$$…$$` when alignment matters.
 
 ## Playbooks
 

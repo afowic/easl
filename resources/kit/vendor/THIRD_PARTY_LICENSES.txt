@@ -3,6 +3,12 @@ same pinned npm releases (or newer ones) and regenerating this file.
 
 tailwindcss-browser.js  @tailwindcss/browser 4.3.3 (dist/index.global.js)  MIT  sha256 a60c785630a06196808cbe79e6f7bdb4abcc8f4421a47b56f29338fc84805e3b
 mermaid.min.js          mermaid 11.17.2 (dist/mermaid.min.js)  MIT  sha256 581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8
+katex/katex.min.js      katex 0.19.1 (dist/katex.min.js)  MIT  sha256 fa140498b8cfc8302cbe5e7cb1bdbc1f952bc38b3fa258ede09e73edbf9a74bc
+katex/katex.min.css     katex 0.19.1 (dist/katex.min.css)  MIT  sha256 00e0b094171b07f58422075f469b4feac2b2f7bce1aeec943c08da4d697f4dcf
+katex/fonts/*.woff2     katex 0.19.1 (dist/fonts)  SIL OFL 1.1 (text: resources/fonts/OFL.txt)
+
+KaTeX's fonts are the KaTeX project's Computer Modern-derived faces, used under the SIL Open
+Font License 1.1; everything else in KaTeX is MIT. Its license follows.
 
 mermaid.min.js bundles its runtime dependencies. Their licenses follow (versions as resolved
 by npm for mermaid@11.17.2; dompurify is used under its Apache-2.0 option).
@@ -3078,3 +3084,28 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+==============================================================================
+katex 0.19.1 — MIT
+==============================================================================
+The MIT License (MIT)
+
+Copyright (c) 2013-2020 Khan Academy and other contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

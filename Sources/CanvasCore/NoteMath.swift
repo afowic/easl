@@ -1,0 +1,223 @@
+import AppKit
+import Markdown
+import SwiftMath
+
+/// LaTeX in notes, typeset by SwiftMath: `$…$` runs inline, `$$…$$` on its own centered line.
+/// Delimiters follow Pandoc's rule so currency stays prose, and `\$` is a literal dollar.
+@MainActor
+enum NoteMath {
+    /// A formula in one text node: its characters (without the delimiters) and whether it is
+    /// display math.
+    struct Span {
+        let start: Int
+        let end: Int
+        let latex: String
+        let display: Bool
+    }
+
+    /// One text node's decoded characters, with the raw source each came from (so LaTeX keeps
+    /// `\,` and `\{` that CommonMark would otherwise unescape) and which `$`s were written `\$`.
+    struct Text {
+        let characters: [Character]
+        let source: [String]
+        let escapedDollar: [Bool]
+    }
+
+    /// `raw` decoded as CommonMark decodes a text node, or nil when it can't be reproduced
+    /// exactly (an entity beyond the numeric and XML ones), which leaves the node as prose.
+    static func text(raw: String, decoded: String) -> Text? {
+        var characters: [Character] = []
+        var source: [String] = []
+        var escapedDollar: [Bool] = []
+        let scalars = Array(raw)
+        var index = 0
+        while index < scalars.count {
+            let character = scalars[index]
+            if character == "\\", index + 1 < scalars.count, isPunctuation(scalars[index + 1]) {
+                let escaped = scalars[index + 1]
+                characters.append(escaped)
+                source.append(String([character, escaped]))
+                escapedDollar.append(escaped == "$")
+                index += 2
+                continue
+            }
+            if character == "&", let semicolon = scalars[index...].firstIndex(of: ";"), semicolon - index <= 32,
+               let decoded = entity(scalars[(index + 1)..<semicolon]) {
+                characters.append(contentsOf: decoded)
+                for _ in decoded { source.append(String(scalars[index...semicolon])) }
+                for _ in decoded { escapedDollar.append(false) }
+                index = semicolon + 1
+                continue
+            }
+            characters.append(character)
+            source.append(String(character))
+            escapedDollar.append(false)
+            index += 1
+        }
+        guard String(characters) == decoded else { return nil }
+        return Text(characters: characters, source: source, escapedDollar: escapedDollar)
+    }
+
+    /// The formulas `text` holds, with the LaTeX as written. An unclosed or currency-shaped `$`
+    /// stays prose, as does a `$` written `\$`.
+    static func spans(in text: Text) -> [Span] {
+        let characters = text.characters
+        var spans: [Span] = []
+        var index = 0
+        while index < characters.count {
+            guard characters[index] == "$", !text.escapedDollar[index] else {
+                index += 1
+                continue
+            }
+            if index + 1 < characters.count, characters[index + 1] == "$" {
+                if let close = closing(of: "$$", in: characters, from: index + 2, escaped: text.escapedDollar) {
+                    let latex = latex(text, from: index + 2, to: close).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !latex.isEmpty {
+                        spans.append(Span(start: index, end: close + 2, latex: latex, display: true))
+                        index = close + 2
+                        continue
+                    }
+                }
+                index += 2
+                continue
+            }
+            guard index + 1 < characters.count, !characters[index + 1].isWhitespace else {
+                index += 1
+                continue
+            }
+            if let close = closing(of: "$", in: characters, from: index + 1, escaped: text.escapedDollar) {
+                spans.append(Span(start: index, end: close + 1, latex: latex(text, from: index + 1, to: close), display: false))
+                index = close + 1
+                continue
+            }
+            index += 1
+        }
+        return spans
+    }
+
+    /// `source` without surrounding whitespace when it is one display formula and nothing else.
+    static func displayMath(in source: String) -> String? {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 5, trimmed.hasPrefix("$$"), trimmed.hasSuffix("$$") else { return nil }
+        let latex = String(trimmed.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return latex.isEmpty ? nil : latex
+    }
+
+    /// A formula as a text attachment, or nil when SwiftMath can't typeset it. The picture draws
+    /// in `NSColor.labelColor` at draw time, so it follows light and dark.
+    static func attachment(latex: String, fontSize: CGFloat, display: Bool) -> NSTextAttachment? {
+        let label = MTMathUILabel()
+        label.fontSize = fontSize
+        label.labelMode = display ? .display : .text
+        label.textAlignment = .left
+        label.latex = latex
+        guard label.error == nil else { return nil }
+        let fitting = label.fittingSize
+        guard fitting.width > 0, fitting.height > 0 else { return nil }
+        label.frame = CGRect(origin: .zero, size: fitting)
+        label.layout()
+        guard let list = label.displayList else { return nil }
+        let size = CGSize(width: list.width, height: list.ascent + list.descent)
+        guard size.width > 0, size.height > 0 else { return nil }
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard NSGraphicsContext.current?.cgContext != nil else { return false }
+            label.textColor = NSColor.labelColor
+            label.draw(label.bounds)
+            return true
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: -list.descent, width: size.width, height: size.height)
+        return attachment
+    }
+
+    // MARK: Source
+
+    /// The markdown `range` names, for the source a formula keeps verbatim.
+    static func source(_ range: SourceRange, in index: SourceIndex) -> String? {
+        index.text(range)
+    }
+
+    /// Line starts in UTF-8 bytes: `SourceLocation.column` counts UTF-8 bytes from the line start.
+    struct SourceIndex {
+        private let markdown: String
+        private let lineStarts: [Int]
+
+        init(_ markdown: String) {
+            self.markdown = markdown
+            var starts = [0]
+            for (offset, byte) in markdown.utf8.enumerated() where byte == 0x0A { starts.append(offset + 1) }
+            lineStarts = starts
+        }
+
+        func text(_ range: SourceRange) -> String? {
+            guard let start = offset(range.lowerBound), let end = offset(range.upperBound), start <= end else { return nil }
+            let bytes = markdown.utf8
+            guard let lower = bytes.index(bytes.startIndex, offsetBy: start, limitedBy: bytes.endIndex),
+                  let upper = bytes.index(lower, offsetBy: end - start, limitedBy: bytes.endIndex) else { return nil }
+            return String(decoding: bytes[lower..<upper], as: UTF8.self)
+        }
+
+        private func offset(_ location: SourceLocation) -> Int? {
+            guard location.line >= 1, location.line <= lineStarts.count, location.column >= 1 else { return nil }
+            return lineStarts[location.line - 1] + location.column - 1
+        }
+    }
+
+    // MARK: Helpers
+
+    /// The closer's index, where the character before it isn't whitespace and a `$` isn't
+    /// followed by a digit (Pandoc's rule, which keeps `$5 and $10` prose).
+    private static func closing(of delimiter: String, in characters: [Character], from start: Int, escaped: [Bool]) -> Int? {
+        let width = delimiter.count
+        var index = start
+        while index + width <= characters.count {
+            if delimiter == "$" {
+                if characters[index] == "$", !escaped[index] {
+                    // A `$` that can't close here can't be inside math either: the formula would
+                    // have swallowed currency (`$5 and $10 … $x$`), so this candidate is prose.
+                    guard !characters[index - 1].isWhitespace, index + 1 >= characters.count || !characters[index + 1].isNumber else { return nil }
+                    return index
+                }
+                index += 1
+            } else {
+                if characters[index] == "$", characters[index + 1] == "$" {
+                    return index
+                }
+                index += 1
+            }
+        }
+        return nil
+    }
+
+    private static func latex(_ text: Text, from start: Int, to end: Int) -> String {
+        text.source[start..<end].joined()
+    }
+
+    private static func isPunctuation(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first, character.unicodeScalars.count == 1, scalar.isASCII else { return false }
+        return CharacterSet.punctuationCharacters.contains(scalar) || CharacterSet.symbols.contains(scalar)
+    }
+
+    /// A numeric entity, or one of the five XML names. Named HTML entities beyond these can't be
+    /// reproduced without cmark's table, so the text node stays prose.
+    private static func entity(_ body: ArraySlice<Character>) -> [Character]? {
+        let name = String(body)
+        if name.hasPrefix("#x") || name.hasPrefix("#X") {
+            guard let value = UInt32(name.dropFirst(2), radix: 16), let scalar = Unicode.Scalar(value) else { return nil }
+            return Array(String(scalar))
+        }
+        if name.hasPrefix("#") {
+            guard let value = UInt32(name.dropFirst()), let scalar = Unicode.Scalar(value) else { return nil }
+            return Array(String(scalar))
+        }
+        switch name {
+        case "amp": return ["&"]
+        case "lt": return ["<"]
+        case "gt": return [">"]
+        case "quot": return ["\""]
+        case "apos": return ["'"]
+        default: return nil
+        }
+    }
+}
