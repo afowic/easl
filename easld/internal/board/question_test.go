@@ -164,6 +164,32 @@ func TestAnAnswerIsStampedWithWhenAndByWhomWhateverTheCallSays(t *testing.T) {
 	}
 }
 
+func TestAnAnswerIsStampedAgainstTheQuestionsCorrectOption(t *testing.T) {
+	b := New("brd", "/r")
+	asker := map[string]any{"name": "cos"}
+	open := func() model.Object {
+		return ask(t, b, askProps(map[string]any{"asker": asker, "correct": "b"}), nil, "")
+	}
+
+	right := write(t, b, open().ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "b"}}, nil, "")
+	if answer, _ := right.Props["answer"].(map[string]any); answer["correct"] != true {
+		t.Errorf("the right pick: %v", right.Props["answer"])
+	}
+	wrong := write(t, b, open().ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}, nil, "")
+	if answer, _ := wrong.Props["answer"].(map[string]any); answer["correct"] != false {
+		t.Errorf("the wrong pick: %v", wrong.Props["answer"])
+	}
+	noted := write(t, b, open().ID, map[string]any{"status": "answered", "answer": map[string]any{"note": "no pick"}}, nil, "")
+	if answer, _ := noted.Props["answer"].(map[string]any); answer["correct"] != nil {
+		t.Errorf("a note-only answer has nothing to mark: %v", noted.Props["answer"])
+	}
+	// A caller's stamp is the app's to write.
+	if _, _, err := b.QuestionUpdate(open().ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "a", "correct": true}}, true, nil, "", answeredAt); err == nil ||
+		err.Error() != "answer.correct is written by easl: it says whether the picked option is correct" {
+		t.Errorf("forged: %v", err)
+	}
+}
+
 func TestAQuestionMovesOpenToAnsweredCancelledOrExpiredAndNoFurther(t *testing.T) {
 	b := New("brd", "/r")
 	asker := map[string]any{"name": "cos"}

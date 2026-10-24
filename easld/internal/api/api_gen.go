@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "2f9f5f6cec1d0c8a"
+const SchemaHash = "2a71cdd990468b02"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -857,23 +857,31 @@ type QuestionPropsAsker struct {
 	Host *string `json:"host,omitempty"`
 }
 
-// QuestionPropsAnswer: with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+// QuestionPropsAnswer: with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered
 type QuestionPropsAnswer struct {
 	// an option id
 	Option *string `json:"option,omitempty"`
 	Note   *string `json:"note,omitempty"`
-	At     *string `json:"at,omitempty"`
+	// how sure the user was, 0–1, on a question asked with `askConfidence`; absent when they answered without setting the slider. Callers may answer with it; without `askConfidence` it is invalid_params
+	Confidence *float64 `json:"confidence,omitempty"`
+	// written by easl on a question with `correct`: true when the picked option is it, false when another is. Absent on a note-only answer; a caller may send only the value easl would stamp
+	Correct *bool   `json:"correct,omitempty"`
+	At      *string `json:"at,omitempty"`
 	// who answered: the user, or an agent's terminal (`caller`)
 	By Actor `json:"by,omitempty"`
 }
 
-// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
+// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
 type QuestionProps struct {
 	Question string `json:"question"`
 	// what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note
 	Options []QuestionPropsOptions `json:"options"`
 	// the id of the option the asker recommends; the tile marks it
 	Recommended *string `json:"recommended,omitempty"`
+	// the id of the option that is right: easl stamps `answer.correct` (true for it, false for another) when the question is answered, and the closed tile marks it and shows its why. The tile never marks it while the question is open
+	Correct *string `json:"correct,omitempty"`
+	// true adds a confidence slider to the open tile: the user sets 0–100% before answering (optional: skipping it leaves `answer.confidence` out), and the answer line the asker gets says how sure the user was
+	AskConfidence *bool `json:"askConfidence,omitempty"`
 	// what to look at before answering; each a link on the tile that opens beside it
 	Context []map[string]any `json:"context,omitempty"`
 	// who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params
@@ -882,7 +890,7 @@ type QuestionProps struct {
 	Status *string `json:"status,omitempty"`
 	// when an open question stops waiting (RFC 3339); none by default
 	ExpiresAt *string `json:"expiresAt,omitempty"`
-	// with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+	// with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered
 	Answer *QuestionPropsAnswer `json:"answer,omitempty"`
 	// true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived. The host also sets it when a closed question's archive delay elapses
 	Archived *bool `json:"archived,omitempty"`

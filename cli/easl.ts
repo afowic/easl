@@ -66,16 +66,17 @@ const SPAWN_TIMEOUT_MS = 120_000;
 const SPAWN_RETRY_MS = 1000;
 
 const ASK_FORMS = [
-  'easl ask "question" --option id=label[:why] ... [--recommend id] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--keep] [--board brd_…] [--wait]',
-  "easl ask --json '{...}' | --json @file | --json @-   (question, options, recommended, … as props; the flags add to them)",
+  'easl ask "question" --option id=label[:why] ... [--recommend id] [--correct id] [--confidence] [--context obj_…|url|path[:a[-b]]] ... [--asker name[@host]] [--expires 30m|2h|1d|45s|ISO] [--keep] [--board brd_…] [--wait]',
+  "easl ask --json '{...}' | --json @file | --json @-   (question, options, recommended, correct, askConfidence, … as props; the flags add to them)",
   "easl ask list [--open] [--board brd_…]",
   "easl ask get <id> | cancel <id> | wait <id>",
 ];
 const ASK_HELP = [
   "`easl ask` puts a question tile on the board for the user. --option repeats (split at the first =, then the first :); with none, the answer is a note.",
+  "--correct names the right option: the closed tile shows ✓ or ✗ and the right option's why, and the answer says whether the pick was right. --confidence adds a confidence slider to the tile; the answer then carries 0–1 (or none, when the user skips it).",
   "--context points at what the question is about: an object id, a URL (https://…, mailto:…), or a path with :line or :start-end.",
   "--asker defaults to the asking terminal tile; outside a tile, to <user>@<short hostname>. --expires takes 45s, 30m, 2h, 1d or an ISO 8601 date-time.",
-  "--wait blocks until the user answers: the answer {id, option, label, note, at, by} prints as JSON, exit 0. Cancelled, expired or deleted: why on stderr, exit 2.",
+  "--wait blocks until the user answers: the answer {id, option, label, note, confidence, correct, at, by} prints as JSON, exit 0. Cancelled, expired or deleted: why on stderr, exit 2.",
   "`ask wait <id>` does the same for a question already posted; `ask cancel <id>` withdraws one; `ask list --open` lists the open ones.",
   "Closed questions leave the board after 10 seconds by default. --keep leaves the tile on the board. ask get and ask list still return archived questions.",
   "The host can set the default delay. --json '{\"archiveAfter\":30}' overrides it for one question.",
@@ -566,7 +567,7 @@ if (argv[0] === "metrics") {
 
 /** The flags of each `easl ask` form: [those that take a value (repeating one adds), bare ones]. */
 const ASK_FLAGS = {
-  create: [["json", "option", "recommend", "context", "asker", "expires", "board"], ["wait", "keep"]],
+  create: [["json", "option", "recommend", "correct", "context", "asker", "expires", "board"], ["wait", "keep", "confidence"]],
   list: [["board"], ["open"]],
   get: [[], []],
   cancel: [[], []],
@@ -683,6 +684,9 @@ function questionProps(positional: string[], flags: Map<string, string[]>): Reco
   props.options ??= [];
   const recommend = flags.get("recommend")?.at(-1);
   if (recommend !== undefined) props.recommended = recommend;
+  const correct = flags.get("correct")?.at(-1);
+  if (correct !== undefined) props.correct = correct;
+  if (flags.has("confidence")) props.askConfidence = true;
   const expires = flags.get("expires")?.at(-1);
   if (expires !== undefined) props.expiresAt = parseExpires(expires);
   if (flags.has("keep")) props.keep = true;

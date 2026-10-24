@@ -101,7 +101,13 @@ func (a Asker) Label() string {
 // Answer is QuestionSpec.Answer (`at` is read from the props where a mention shows it).
 type Answer struct {
 	Option, Note *string
-	By           *model.Actor
+	// Confidence is how sure the user was, 0–1, on a question asked with AskConfidence; nil when
+	// they left the slider alone.
+	Confidence *float64
+	// Correct is whether the picked option is the question's Correct one: easl's, never the
+	// caller's. Nil on a note-only answer and on a question without Correct.
+	Correct *bool
+	By      *model.Actor
 }
 
 // Spec is QuestionSpec: a question's props as stored (validated on the way in); anything
@@ -110,13 +116,17 @@ type Spec struct {
 	Question    string
 	Options     []Option
 	Recommended *string
-	Context     []Context
-	Asker       *Asker
-	Status      Status
-	ExpiresAt   *time.Time
-	Answer      *Answer
-	Archived    bool
-	Keep        bool
+	// Correct is the id of the option that is right (`correct`).
+	Correct *string
+	// AskConfidence is whether the tile asks how sure the user is (`askConfidence`).
+	AskConfidence bool
+	Context       []Context
+	Asker         *Asker
+	Status        Status
+	ExpiresAt     *time.Time
+	Answer        *Answer
+	Archived      bool
+	Keep          bool
 	// ArchiveAfter is the delay before a closed question is archived. Unreadable or out of range
 	// stored values use DefaultArchiveAfter, as an absent one does.
 	ArchiveAfter float64
@@ -143,6 +153,8 @@ func Read(props map[string]any) Spec {
 		}
 	}
 	spec.Recommended = optString(props, "recommended")
+	spec.Correct = optString(props, "correct")
+	spec.AskConfidence = props["askConfidence"] == true
 	items, _ := props["context"].([]any)
 	for _, item := range items {
 		if c, ok := contextOf(item); ok {
@@ -159,6 +171,12 @@ func Read(props map[string]any) Spec {
 	}
 	if answer, ok := props["answer"].(map[string]any); ok {
 		spec.Answer = &Answer{Option: optString(answer, "option"), Note: optString(answer, "note")}
+		if confidence, ok := answer["confidence"].(float64); ok {
+			spec.Answer.Confidence = &confidence
+		}
+		if correct, ok := answer["correct"].(bool); ok {
+			spec.Answer.Correct = &correct
+		}
 		if by, ok := decodeActor(answer["by"]); ok {
 			spec.Answer.By = &by
 		}
@@ -363,6 +381,20 @@ func Problem(patch any, before *model.Object) (message string, bad bool) {
 			return fmt.Sprintf("recommended \"%s\" is not an option id (%s)", id, idList), true
 		}
 	}
+	if correct, ok := given("correct"); ok {
+		id, isString := correct.(string)
+		if !isString {
+			return "correct must be an option id (" + idList + ")", true
+		}
+		if !isOption(id) {
+			return fmt.Sprintf("correct \"%s\" is not an option id (%s)", id, idList), true
+		}
+	}
+	if ask, ok := given("askConfidence"); ok {
+		if _, isBool := ask.(bool); !isBool {
+			return "askConfidence must be true or false", true
+		}
+	}
 	if context, ok := given("context"); ok {
 		items, isArray := context.([]any)
 		if !isArray {
@@ -423,6 +455,27 @@ func Problem(patch any, before *model.Object) (message string, bad bool) {
 		}
 		if !picked && !noted {
 			return answerShape, true
+		}
+		if confidence := answer["confidence"]; confidence != nil {
+			value, isNumber := confidence.(float64)
+			if !isNumber || math.IsNaN(value) || value < 0 || value > 1 {
+				return "answer.confidence must be a number from 0 to 1", true
+			}
+			if ask, _ := props["askConfidence"].(bool); !ask {
+				return "answer.confidence goes with a question asked with askConfidence", true
+			}
+		}
+		if stamped := answer["correct"]; stamped != nil {
+			flag, isBool := stamped.(bool)
+			expected, known := false, false
+			if option, ok := answer["option"].(string); ok {
+				if right, ok := props["correct"].(string); ok {
+					expected, known = option == right, true
+				}
+			}
+			if !isBool || !known || flag != expected {
+				return "answer.correct is written by easl: it says whether the picked option is correct", true
+			}
 		}
 	} else if hasAnswer {
 		return "answer goes with status answered", true
@@ -588,6 +641,11 @@ func Date(text string) (time.Time, bool) {
 // Stamp is QuestionSpec.stamp: how easl writes a moment (`answer.at`): UTC, whole seconds.
 func Stamp(t time.Time) string { return model.FileTime(t) }
 
+// Percent is QuestionSpec.percent: `80%`, how a confidence reads on the tile and in a mention.
+func Percent(confidence float64) string {
+	return strconv.Itoa(int(math.Round(confidence*100))) + "%"
+}
+
 // --- size ---
 
 // A new question tile's width, and the rows its height is counted in: the title bar, the
@@ -598,8 +656,10 @@ const (
 	OpenBase   = 194.0
 	OptionRow  = 50.0
 	ContextRow = 30.0
-	ClosedBase = 148.0
-	NoteRow    = 40.0
+	// ConfidenceRow is the confidence slider's row on a question asked with askConfidence.
+	ConfidenceRow = 30.0
+	ClosedBase    = 148.0
+	NoteRow       = 40.0
 )
 
 // Size is QuestionSpec.size: the tile's frame size at 100% for these props (`object.create`
@@ -612,7 +672,11 @@ func Size(props map[string]any) (w, h float64) {
 		if items, ok := props["context"].([]any); ok && len(items) > 0 {
 			context = ContextRow
 		}
-		return Width, OpenBase + OptionRow*float64(len(options)) + context
+		confidence := 0.0
+		if props["askConfidence"] == true {
+			confidence = ConfidenceRow
+		}
+		return Width, OpenBase + OptionRow*float64(len(options)) + context + confidence
 	}
 	noted := false
 	if answer, ok := props["answer"].(map[string]any); ok {
@@ -675,6 +739,16 @@ func MentionLines(props map[string]any) []string {
 				part += " " + option.Label
 			}
 			parts = append(parts, part)
+		}
+		if spec.Correct != nil && answer.Correct != nil {
+			if *answer.Correct {
+				parts = append(parts, "correct")
+			} else {
+				parts = append(parts, "incorrect")
+			}
+		}
+		if answer.Confidence != nil {
+			parts = append(parts, "confidence: "+Percent(*answer.Confidence))
 		}
 		if answer.Note != nil && trimmed(*answer.Note) != "" {
 			parts = append(parts, "note: \""+oneLine(*answer.Note)+"\"")

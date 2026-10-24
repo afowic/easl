@@ -589,7 +589,7 @@
     "QuestionProps": {
       "type": "object",
       "required": ["question", "options"],
-      "description": "A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.",
+      "description": "A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.",
       "properties": {
         "question": { "type": "string", "minLength": 1 },
         "options": {
@@ -607,6 +607,8 @@
           }
         },
         "recommended": { "type": "string", "description": "the id of the option the asker recommends; the tile marks it" },
+        "correct": { "type": "string", "description": "the id of the option that is right: easl stamps `answer.correct` (true for it, false for another) when the question is answered, and the closed tile marks it and shows its why. The tile never marks it while the question is open" },
+        "askConfidence": { "type": "boolean", "default": false, "description": "true adds a confidence slider to the open tile: the user sets 0–100% before answering (optional: skipping it leaves `answer.confidence` out), and the answer line the asker gets says how sure the user was" },
         "context": {
           "type": "array",
           "description": "what to look at before answering; each a link on the tile that opens beside it",
@@ -628,10 +630,12 @@
         "expiresAt": { "type": "string", "format": "date-time", "description": "when an open question stops waiting (RFC 3339); none by default" },
         "answer": {
           "type": "object",
-          "description": "with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered",
+          "description": "with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered",
           "properties": {
             "option": { "type": "string", "description": "an option id" },
             "note": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "how sure the user was, 0–1, on a question asked with `askConfidence`; absent when they answered without setting the slider. Callers may answer with it; without `askConfidence` it is invalid_params" },
+            "correct": { "type": "boolean", "description": "written by easl on a question with `correct`: true when the picked option is it, false when another is. Absent on a note-only answer; a caller may send only the value easl would stamp" },
             "at": { "type": "string", "format": "date-time" },
             "by": { "$ref": "#/definitions/Actor", "description": "who answered: the user, or an agent's terminal (`caller`)" }
           },

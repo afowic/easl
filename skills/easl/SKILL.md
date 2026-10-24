@@ -331,11 +331,13 @@ It carries discrete options and your recommendation, shows up in the user's ⌘J
 
 ```sh
 easl ask "Ship the migration before the freeze?" --option now="Ship now:needs the 9am deploy window" --option later="After the freeze" --recommend now --context src/migrate.ts:40-72 --expires 4h
-easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, at, by} prints as JSON, exit 0
+easl ask "Which cache is right?" --option a=L1 --option b=L2 --correct a --confidence   # graded: the closed tile shows ✓ or ✗
+easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, confidence, correct, at, by} prints as JSON, exit 0
 easl ask cancel obj_…                                              # the question is moot
 ```
 
 - `--option id=label[:why]` repeats; `--recommend <id>` names your pick; `--context` points at what it is about (an `obj_…`, a URL, or `path:10-20`). Without options the answer is a note.
+- `--correct <id>` makes the question graded: while it is open nothing marks the right option; once answered the tile shows ✓ or ✗, a wrong pick highlights the right option and its `why`, and the answer line tells you whether the pick was right. `--confidence` asks how sure the user is: the tile gets a slider (optional; skipping it leaves `confidence` out), and the answer line says e.g. `confidence: 80%`. `--json` takes both as `correct` and `askConfidence`.
 - Without `--wait` the command returns at once: carry on, and the answer reaches you as an object mention. Use `--wait` only when nothing else can proceed; a question cancelled, expired (`--expires 30m`, `2h`, `1d`) or deleted ends it with the reason on stderr and exit 2.
 - Ask only what you can't decide yourself, one question per decision. Cancel one the moment it is moot (you found the answer, the plan changed): an open question keeps counting as something the user must do.
 - Keep `<canvas-decisions>` for an explanatory page with many choices recorded in its state, and chat for anything conversational.
