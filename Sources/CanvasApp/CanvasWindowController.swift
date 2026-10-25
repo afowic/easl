@@ -1583,6 +1583,9 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown {
+            NotificationCenter.default.post(name: HtmlWebView.nativeMouseDown, object: self)
+        }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }

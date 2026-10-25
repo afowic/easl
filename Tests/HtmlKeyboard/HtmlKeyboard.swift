@@ -109,7 +109,8 @@ private enum HtmlKeyboard {
 
     /// A click straight to the page's view, as AppKit's hit-tested dispatch delivers it. Posted
     /// mouse events would wait for a key window that an unactivated test window never has.
-    private static func click(_ selector: String, in web: WKWebView, window: NSWindow) async throws {
+    private static func click(_ selector: String, in web: WKWebView, window: NSWindow,
+                              afterMouseDown: (@MainActor () throws -> Void)? = nil) async throws {
         guard let rect = await js(web, "document.querySelector('\(selector)').getBoundingClientRect().toJSON()") as? [String: Any],
               let x = rect["x"] as? Double, let y = rect["y"] as? Double else {
             throw Failure(message: "the page has no \(selector) to click")
@@ -124,6 +125,7 @@ private enum HtmlKeyboard {
             throw Failure(message: "could not build the click")
         }
         web.mouseDown(with: down)
+        try afterMouseDown?()
         web.mouseUp(with: up)
     }
 
@@ -142,8 +144,17 @@ private enum HtmlKeyboard {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
         app.finishLaunching()
+        if CommandLine.arguments.contains("--hostile-clicks") {
+            try await exerciseHostileClicks()
+            try await exerciseStaleClicks()
+            return
+        }
         let root = URL(fileURLWithPath: home).appendingPathComponent("board", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--missing-selector") {
+            try await exerciseWithoutSuppression(root: root)
+            return
+        }
         try await exercise(root: root, remote: nil, kind: "local")
         let host = RemoteHost(name: "html-keyboard-regression", sshTarget: "html-keyboard-regression.invalid",
                               socketPath: root.appendingPathComponent("absent.sock").path,
@@ -153,7 +164,154 @@ private enum HtmlKeyboard {
                                  connection: absent, diagrams: EaslConnection(.unixSocket(host.socketPath)))
         try await exercise(root: root, remote: RemoteSource(host: host, mirror: mirror), kind: "remote")
         try await exerciseWithoutSuppression(root: root.appendingPathComponent("missing-selector", isDirectory: true))
+        try await exerciseHostileClicks()
+        try await exerciseStaleClicks()
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
+    }
+
+    private final class NativeClickTarget: NSView {
+        var clicks = 0
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { clicks += 1 }
+    }
+
+    private static func clickFixture(patch: String = "") async throws
+        -> (window: CanvasWindow, web: HtmlWebView, native: NSTextView, other: NSTextView, elsewhere: NativeClickTarget) {
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let web = HtmlWebView(frame: NSRect(x: 0, y: 180, width: 700, height: 320),
+                              configuration: WKWebViewConfiguration())
+        let native = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 100))
+        let other = NSTextView(frame: NSRect(x: 350, y: 0, width: 340, height: 100))
+        let elsewhere = NativeClickTarget(frame: NSRect(x: 0, y: 110, width: 700, height: 60))
+        let views: [NSView] = [web, native, other, elsewhere]
+        for view in views { window.contentView!.addSubview(view) }
+        window.orderFrontRegardless()
+        web.loadHTMLString("""
+        <!doctype html><html><body style="margin:0;padding:8px">
+        <button id="plain">Not a text field</button>
+        <textarea id="field" style="display:block;width:320px;height:60px"></textarea>
+        <script>
+        window.pageKeys = 0;
+        document.addEventListener('keydown', () => window.pageKeys++);
+        \(patch)
+        window.attackReady = true;
+        </script></body></html>
+        """, baseURL: nil)
+        try await loaded(web)
+        for _ in 0..<240 {
+            if await js(web, "window.attackReady") as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let ready = await js(web, "window.attackReady") as? Bool
+        try require(ready == true, "the adversarial click page must be ready")
+        try require(window.makeFirstResponder(native), "the native text target must hold the keyboard")
+        return (window, web, native, other, elsewhere)
+    }
+
+    private static func pageTurn(_ web: WKWebView) async throws {
+        let replied = await PageScript.value("""
+        return new Promise(resolve => setTimeout(() => resolve(true), 0));
+        """, in: .page, on: web) { ($0 as? Bool) == true }
+        try require(replied, "the page must acknowledge a turn after the click or promise release")
+    }
+
+    private static func exerciseHostileClicks() async throws {
+        let attacks: [(name: String, patch: String, delayed: Bool)] = [
+            ("delayed true promise", """
+            window.delayedGrant = new Promise(resolve => {
+              window.releaseGrant = () => { window.released = true; resolve(true); };
+            });
+            Object.defineProperty(HTMLElement.prototype, 'isContentEditable', {
+              get() { return window.delayedGrant; }
+            });
+            """, true),
+            ("patched activeElement", """
+            Object.defineProperty(Document.prototype, 'activeElement', {
+              get() { return document.getElementById('field'); }
+            });
+            """, false),
+            ("patched isContentEditable", """
+            Object.defineProperty(HTMLElement.prototype, 'isContentEditable', {
+              get() { return true; }
+            });
+            """, false)
+        ]
+        for attack in attacks {
+            let fixture = try await clickFixture(patch: attack.patch)
+            defer { fixture.window.close() }
+            let target = attack.delayed ? fixture.other : fixture.native
+            try await click("#plain", in: fixture.web, window: fixture.window) {
+                if attack.delayed {
+                    try require(fixture.window.makeFirstResponder(target),
+                                "\(attack.name): the user must be able to focus another native target")
+                }
+            }
+            if attack.delayed {
+                try await pageTurn(fixture.web)
+                try require(fixture.window.firstResponder === fixture.other,
+                            "an unresolved page promise must leave the native target focused")
+                _ = await js(fixture.web, "window.releaseGrant(); true")
+                let released = await js(fixture.web, "window.released") as? Bool
+                try require(released == true, "the delayed true promise must actually resolve")
+            }
+            try await pageTurn(fixture.web)
+            try require(fixture.window.firstResponder === target,
+                        "\(attack.name) must not steal the keyboard from the native target")
+            typed("native", in: fixture.window)
+            try require(target.string == "native",
+                        "\(attack.name): typed text must reach the native target")
+            let pageKeys = await js(fixture.web, "window.pageKeys") as? Int
+            try require(pageKeys == 0, "\(attack.name): the page must not receive the native target's keys")
+            check("\(attack.name) cannot authorize keyboard capture")
+        }
+    }
+
+    private static func nativeClick(_ target: NativeClickTarget, window: NSWindow) throws {
+        let point = target.convert(NSPoint(x: 10, y: 10), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil,
+                                                eventNumber: 0, clickCount: 1, pressure: 1) else {
+                throw Failure(message: "could not build the later native click")
+            }
+            window.sendEvent(event)
+        }
+    }
+
+    private static func exerciseStaleClicks() async throws {
+        let fixture = try await clickFixture()
+        defer { fixture.window.close() }
+        try await click("#field", in: fixture.web, window: fixture.window)
+        try await wait(until: { fixture.window.firstResponder === fixture.web },
+                       "an unmodified native text-field click must grant the keyboard")
+        try require(fixture.window.makeFirstResponder(fixture.native), "the native target must reclaim the keyboard")
+        try require(!fixture.web.acceptsFirstResponder, "leaving the page must revoke its keyboard grant")
+
+        try await click("#field", in: fixture.web, window: fixture.window) {
+            try require(fixture.window.makeFirstResponder(fixture.other), "focus must move away during the click check")
+            try require(fixture.window.makeFirstResponder(fixture.native), "focus must return before the click reply")
+        }
+        try await pageTurn(fixture.web)
+        try require(fixture.window.firstResponder === fixture.native,
+                    "restoring the original first responder must not revive a stale click")
+        try require(!fixture.web.acceptsFirstResponder, "an away-and-back focus change must cancel click authorization")
+
+        try await click("#field", in: fixture.web, window: fixture.window) {
+            try nativeClick(fixture.elsewhere, window: fixture.window)
+            try require(fixture.elsewhere.clicks == 1, "the later click must reach another native view")
+            try require(fixture.window.firstResponder === fixture.native,
+                        "the later native click fixture must keep the same first responder")
+        }
+        try await pageTurn(fixture.web)
+        try require(fixture.window.firstResponder === fixture.native,
+                    "a newer native click must cancel the page grant even without a focus change")
+        try require(!fixture.web.acceptsFirstResponder, "the earlier page click must remain ungranted")
+        typed("kept", in: fixture.window)
+        try require(fixture.native.string == "kept", "native typing must survive both canceled click grants")
+        check("focus away-and-back and a later native click permanently cancel pending grants")
     }
 
     private static func exerciseWithoutSuppression(root: URL) async throws {
