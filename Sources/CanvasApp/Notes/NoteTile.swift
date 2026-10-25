@@ -208,7 +208,7 @@ final class NoteTile: NSView, TileContent {
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
         guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
@@ -743,6 +743,7 @@ final class NoteTile: NSView, TileContent {
     /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let source = markdown, document = document
         let generation = closureGeneration
         let resolved: [String: NoteExcerpt]
         let pictures: [String: NSImage]
@@ -774,11 +775,13 @@ final class NoteTile: NSView, TileContent {
             }
             pictures = await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
         }
-        guard !Task.isCancelled, generation == closureGeneration else {
-            return .placeholder(request, "board availability changed while rendering")
+        guard !Task.isCancelled, generation == closureGeneration, markdown == source else {
+            return .placeholder(request, "note changed while rendering")
         }
         let inset = NSSize(width: 8, height: 10)
-        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
+        let text = NoteRenderer(excerpts: resolved, images: pictures, source: source,
+                                width: request.size.width - 2 * inset.width)
+            .render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()

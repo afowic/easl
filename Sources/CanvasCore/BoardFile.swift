@@ -29,7 +29,9 @@ enum BoardFile {
             if let format = header.format, format > Board.format {
                 throw Unreadable(filename: url.path, reason: "requires a newer easl (board format \(format), supported through \(Board.format))")
             }
-            return try decoder.decode(BoardSnapshot.self, from: data)
+            var snapshot = try decoder.decode(BoardSnapshot.self, from: data)
+            snapshot.objects = snapshot.objects.map(QuestionSpec.normalized)
+            return snapshot
         } catch {
             let reason = (error as? Unreadable)?.reason ?? "unreadable board data: \(String(describing: error))"
             throw refusal(url, reason: reason, data: data, backup: backupUnreadable)

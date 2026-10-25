@@ -70,6 +70,9 @@ func TestCreateRulesRunInOrderWithTheirMessages(t *testing.T) {
 		{"no question", with(map[string]any{"question": gone{}}), "a question needs props.question, a non-empty string"},
 		{"null question", with(map[string]any{"question": nil}), "a question needs props.question, a non-empty string"},
 		{"blank question", with(map[string]any{"question": " \n\t "}), "a question needs props.question, a non-empty string"},
+		{"correct not an option", with(map[string]any{"correct": "z"}), `correct "z" is not an option id (a, b)`},
+		{"correct not a string", with(map[string]any{"correct": 1.0}), "correct must be an option id (a, b)"},
+		{"askConfidence not a bool", with(map[string]any{"askConfidence": "yes"}), "askConfidence must be true or false"},
 		{"number question", with(map[string]any{"question": 5.0}), "a question needs props.question, a non-empty string"},
 		{"no options", with(map[string]any{"options": gone{}}), "a question needs props.options, an array of {id, label, why?}"},
 		{"options not an array", with(map[string]any{"options": "a"}), "a question needs props.options, an array of {id, label, why?}"},
@@ -168,6 +171,13 @@ func TestAnUpdateIsJudgedMergedWithWhatIsStored(t *testing.T) {
 		{"answer option not an option", nil, obj("status", "answered", "answer", obj("option", "z")), `answer.option "z" is not an option id (a, b)`},
 		{"answer option not a string", nil, obj("status", "answered", "answer", obj("option", 1.0)), "answer.option must be an option id (a, b)"},
 		{"answer note not a string", nil, obj("status", "answered", "answer", obj("option", "a", "note", 1.0)), "answer.note must be a string"},
+		{"confidence with askConfidence", map[string]any{"askConfidence": true}, obj("status", "answered", "answer", obj("option", "a", "confidence", 0.8)), ""},
+		{"confidence out of range", map[string]any{"askConfidence": true}, obj("status", "answered", "answer", obj("option", "a", "confidence", 1.5)), "answer.confidence must be a number from 0 to 1"},
+		{"confidence not a number", map[string]any{"askConfidence": true}, obj("status", "answered", "answer", obj("option", "a", "confidence", "80%")), "answer.confidence must be a number from 0 to 1"},
+		{"confidence without askConfidence", nil, obj("status", "answered", "answer", obj("option", "a", "confidence", 0.5)), "answer.confidence goes with a question asked with askConfidence"},
+		{"a forged correct", map[string]any{"correct": "a"}, obj("status", "answered", "answer", obj("option", "b", "correct", true)), "answer.correct is written by easl: it says whether the picked option is correct"},
+		{"correct on a question without one", nil, obj("status", "answered", "answer", obj("option", "b", "correct", false)), "answer.correct is written by easl: it says whether the picked option is correct"},
+		{"a stored correct alone is fine", map[string]any{"status": "answered", "correct": "a", "answer": obj("option", "a", "correct", true)}, obj("answer", obj("option", "a", "correct", true)), ""},
 		{"null answer parts are absent", nil, obj("status", "answered", "answer", obj("option", nil, "note", "n")), ""},
 		{"cancelled", nil, obj("status", "cancelled"), ""},
 		{"expired", nil, obj("status", "expired"), ""},
@@ -266,6 +276,7 @@ func TestSizeIsCountedFromTheProps(t *testing.T) {
 		{"no options", map[string]any{"options": list()}, 194},
 		{"two options", base(), 294},
 		{"two options and context", with(map[string]any{"context": list(obj("url", "u"))}), 324},
+		{"two options and a confidence slider", with(map[string]any{"askConfidence": true}), 324},
 		{"empty context adds nothing", with(map[string]any{"context": list()}), 294},
 		{"no status is open", with(map[string]any{"status": gone{}}), 294},
 		{"an unknown status is open", with(map[string]any{"status": "weird"}), 294},
@@ -333,6 +344,12 @@ func TestMentionLinesTellTheWholeQuestion(t *testing.T) {
 		if len(got) != 5 || got[1] != "    asked by terminal obj_term · answered · archived" || got[len(got)-1] != c.last {
 			t.Errorf("%s:\n%q", name, got)
 		}
+	}
+	graded := with(map[string]any{"status": "answered", "correct": "b", "askConfidence": true,
+		"answer": obj("option", "a", "confidence", 0.8, "correct", false, "by", obj("kind", "user"), "at", "2026-10-05T17:01:02Z"),
+		"asker":  obj("tile", "obj_term")})
+	if got := MentionLines(graded); got[len(got)-1] != "    answer: [a] Yes · incorrect · confidence: 80% · by the user at 2026-10-05T17:01:02Z" {
+		t.Errorf("graded: %q", got)
 	}
 	if got := MentionLines(closed("cancelled", nil)); len(got) != 4 || got[1] != "    asked by terminal obj_term · cancelled · archived" {
 		t.Errorf("cancelled: %q", got)

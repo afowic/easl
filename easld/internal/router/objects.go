@@ -214,6 +214,14 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 		if problem, bad := diagramProblem(props); bad {
 			return nil, invalid("%s", problem)
 		}
+		if diagramKindOf(props) == "graph" {
+			graph, problem := graphOf(props)
+			if problem != "" {
+				return nil, invalid("%s", problem)
+			}
+			props = cloneProps(props)
+			props["knowledge"] = graph
+		}
 	}
 	if typ == model.Question {
 		if props, err = b.QuestionToCreate(props, caller); err != nil {
@@ -294,8 +302,19 @@ func (r *Router) update(p map[string]any) (any, error) {
 		}
 	}
 	if props != nil && current.Type == model.Diagram {
-		if problem, bad := diagramProblem(model.Merge(current.Props, props).(map[string]any)); bad {
+		merged := model.Merge(current.Props, props).(map[string]any)
+		if problem, bad := diagramProblem(merged); bad {
 			return nil, invalid("%s", problem)
+		}
+		if diagramKindOf(merged) == "graph" && (props["knowledge"] != nil || props["kind"] != nil) {
+			graph, problem := graphOf(merged)
+			if problem != "" {
+				return nil, invalid("%s", problem)
+			}
+			props = cloneProps(props)
+			props["knowledge"] = graph
+			p = cloneProps(p)
+			p["props"] = props
 		}
 	}
 	var rev *int
@@ -371,8 +390,13 @@ func checkProps(p map[string]any) error {
 
 // diagramProblem is DiagramSpec.problem.
 func diagramProblem(props map[string]any) (string, bool) {
-	if kind, ok := props["kind"]; ok && kind != "calls" {
-		return "diagram kind must be one of calls", true
+	kind := "calls"
+	if value, ok := props["kind"]; ok {
+		given, isString := value.(string)
+		if !isString || (given != "calls" && given != "graph") {
+			return "diagram kind must be one of calls, graph", true
+		}
+		kind = given
 	}
 	if d, ok := props["direction"]; ok && d != "incoming" && d != "outgoing" && d != "both" {
 		return "direction must be one of incoming, outgoing, both", true
@@ -400,6 +424,12 @@ func diagramProblem(props map[string]any) (string, bool) {
 		if !allStrings {
 			return "expanded is an array of node ids", true
 		}
+	}
+	if kind == "graph" {
+		if _, problem := graphOf(props); problem != "" {
+			return problem, true
+		}
+		return "", false
 	}
 	symbol, _ := props["symbol"].(string)
 	path, _ := props["path"].(string)

@@ -1554,6 +1554,15 @@ final class CanvasWindow: NSWindow {
         NotificationCenter.default.addObserver(self, selector: #selector(cancelMiddlePan), name: NSApplication.didResignActiveNotification, object: nil)
     }
 
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        var view = responder as? NSView
+        while let current = view {
+            if let html = current as? HtmlWebView, !html.acceptsFirstResponder { return false }
+            view = current.superview
+        }
+        return super.makeFirstResponder(responder)
+    }
+
     override func close() {
         let app = NSApp.delegate as? AppDelegate
         if let controller = windowController as? CanvasWindowController, controller.remote != nil, controller.closing == nil {
@@ -1574,6 +1583,9 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown {
+            NotificationCenter.default.post(name: HtmlWebView.nativeMouseDown, object: self)
+        }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }

@@ -343,6 +343,7 @@ public enum RepoBoardMigration {
             let rerootBranch = legacy.identity == .path ? nil : branch
             var rerooter = Rerooter(oldRoot: URL(fileURLWithPath: snapshot.root).standardizedFileURL.path, top: legacy.top, live: legacy.live, anchor: anchor,
                                     destinationRoot: URL(fileURLWithPath: target.root))
+            rerooter.knowledgeDiagrams = Set(snapshot.objects.filter { $0.type == .diagram && $0.props["kind"]?.string == "graph" }.map(\.id))
             var objects = snapshot.objects.map { rerooter.reroot($0, branch: rerootBranch) }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
             let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
@@ -569,6 +570,7 @@ struct Rerooter {
     let anchor: Anchor
     /// The board that will build the diagram next, not necessarily this legacy worktree's top.
     let destinationRoot: URL
+    var knowledgeDiagrams: Set<ObjectID> = []
     var unanchored: [String] = []
 
     /// `path` as written on the legacy board, absolute.
@@ -704,6 +706,7 @@ struct Rerooter {
                 props[key] = .string(worktreePath(path, what: what))
             }
         case .diagram:
+            if props["kind"]?.string == "graph" { break }
             // Its file, the graph as last computed (node paths and ids, its aim) and the nodes
             // it expanded, as the repository board's next build writes them (`moved`), so that
             // build finds them again: nothing anchors a diagram by branch.
@@ -739,6 +742,7 @@ struct Rerooter {
             // An end bound to a diagram's node names it by id.
             for end in ["from", "to"] {
                 guard var binding = props[end]?.object, let node = binding["node"]?.string else { continue }
+                if let target = binding["object"]?.string, knowledgeDiagrams.contains(target) { continue }
                 binding["node"] = .string(nodeID(node))
                 props[end] = .object(binding)
             }

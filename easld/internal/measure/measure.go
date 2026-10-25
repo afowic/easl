@@ -113,7 +113,7 @@ func Size(typ model.ObjectType, props map[string]any, width *float64, root strin
 		}
 		w, h = fw, TitleHeight+fh+caption
 	case model.Diagram:
-		graph, ok := DecodeDiagramGraph(props["graph"])
+		graph, ok := DecodeDiagramGraph(model.DiagramGraphValue(props))
 		if !ok {
 			return 0, 0, false, &Failure{"unavailable", "the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit"}
 		}

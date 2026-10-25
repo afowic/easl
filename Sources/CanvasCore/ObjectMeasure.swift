@@ -80,8 +80,15 @@ public enum ObjectMeasure {
             let caption = props["caption"]?.string.map { $0.isEmpty ? 0 : LocalImage.captionHeight } ?? 0
             size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height + caption)
         case .diagram:
-            // The graph as last computed, drawn at full size under its status strip.
-            guard let graph = DiagramGraph(props["graph"]) else {
+            // The graph as last computed (or a graph diagram's caller-supplied graph), drawn at
+            // full size under its status strip.
+            var graph = DiagramGraph.stored(in: props)
+            if graph == nil, DiagramSpec(props).kind == .graph {
+                let parsed = DiagramSpec.graph(props)
+                if let problem = parsed.problem { throw Failure.invalidParams(problem) }
+                graph = parsed.graph
+            }
+            guard let graph else {
                 throw Failure.unavailable("the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit")
             }
             let body = DiagramLayout(graph).bodySize
@@ -196,16 +203,17 @@ public enum ObjectMeasure {
         let document = NoteMarkdown.parse(props["markdown"]?.string ?? "")
         let excerpts = await NoteSource.excerpts(for: NoteMarkdown.anchoredFences(in: document), root: root)
         let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
-        return note(document, width: width, excerpts: excerpts, images: images)
+        return note(document, markdown: props["markdown"]?.string ?? "", width: width, excerpts: excerpts, images: images)
     }
 
     /// `note(_:width:root:)` once its fences' `excerpts` (by fence key) and its `images` (by
     /// destination) are read.
-    static func note(_ document: Document, width: CGFloat?, excerpts: [String: NoteExcerpt], images: [String: NSImage]) -> (size: CGSize, tableShortfall: CGFloat) {
+    static func note(_ document: Document, markdown: String, width: CGFloat?, excerpts: [String: NoteExcerpt], images: [String: NSImage]) -> (size: CGSize, tableShortfall: CGFloat) {
         let width = width ?? defaultNoteWidth
         let textWidth = width - 2 * noteInset.width
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
-        let height = noteTextHeight(renderer.render(document, placeholder: notePlaceholder), width: textWidth)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
+        let text = renderer.render(document, placeholder: notePlaceholder)
+        let height = noteTextHeight(text, width: textWidth)
         return (CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up)), renderer.tableShortfall)
     }
 

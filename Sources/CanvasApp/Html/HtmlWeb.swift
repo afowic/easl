@@ -428,11 +428,142 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-/// HTML tiles never take keyboard focus: the prompt target terminal keeps it while the user
-/// clicks through explainers. Clicks still work, including on the (never key) dev window.
+/// An HTML tile's page takes the keyboard only when the user asks for it: Return on the tile
+/// (`HtmlTile.enterKeyboard`) or a click in one of its text fields. Until then the page can't
+/// take it, so an explainer never pulls the keyboard from the prompt target terminal the user is
+/// typing in.
 final class HtmlWebView: WKWebView {
-    override var acceptsFirstResponder: Bool { false }
+    static let nativeMouseDown = Notification.Name("HtmlWebView.nativeMouseDown")
+    private static let clickWorld = WKContentWorld.world(name: "canvas-html-keyboard")
+    private static let clickGrantLifetime: TimeInterval = 0.3
+
+    private enum KeyboardAuthorization {
+        case denied
+        case pending(KeyboardClick)
+        case granted
+    }
+
+    @MainActor
+    private final class KeyboardClick: NSObject {
+        weak var window: NSWindow?
+        weak var responder: NSResponder?
+        let time: TimeInterval
+        let wasKey: Bool
+        let appWasActive: Bool
+        private let invalidated: @MainActor () -> Void
+        private var responderObservation: NSKeyValueObservation?
+
+        init(window: NSWindow, invalidated: @escaping @MainActor () -> Void) {
+            self.window = window
+            responder = window.firstResponder
+            time = ProcessInfo.processInfo.systemUptime
+            wasKey = window.isKeyWindow
+            appWasActive = NSApp.isActive
+            self.invalidated = invalidated
+            super.init()
+        }
+
+        func observe() {
+            guard let window else { return }
+            responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
+                MainActor.assumeIsolated {
+                    guard let self, window.firstResponder !== self.responder else { return }
+                    self.invalidate()
+                }
+            }
+            let center = NotificationCenter.default
+            for name in [HtmlWebView.nativeMouseDown, NSWindow.didResignKeyNotification,
+                         NSWindow.didBecomeKeyNotification, NSWindow.willCloseNotification] {
+                center.addObserver(self, selector: #selector(invalidate), name: name, object: window)
+            }
+            for name in [NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification] {
+                center.addObserver(self, selector: #selector(invalidate), name: name, object: NSApp)
+            }
+        }
+
+        @objc private func invalidate() { invalidated() }
+
+        func stopObserving() {
+            responderObservation = nil
+            NotificationCenter.default.removeObserver(self)
+        }
+    }
+
+    private var keyboardAuthorization: KeyboardAuthorization = .denied {
+        didSet {
+            if case let .pending(click) = oldValue { click.stopObserving() }
+        }
+    }
+    /// Esc in the page: the canvas takes the keyboard back (`CanvasView.leaveTile`). Set for the
+    /// tile's live page; an offscreen render's page has none and never has the keyboard anyway.
+    var onEscape: (@MainActor () -> Void)?
+
+    override init(frame: NSRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        Self.suppressPageFocusChanges(in: self)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    /// Best effort: suppress WebKit's page-initiated focus changes in addition to the native
+    /// keyboard permission gate. Explicit user grants still use `makeFirstResponder`.
+    private static func suppressPageFocusChanges(in web: WKWebView) {
+        let selector = NSSelectorFromString("_setShouldSuppressFirstResponderChanges:")
+        guard web.responds(to: selector) else { return }
+        typealias SetSuppressed = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(web.method(for: selector), to: SetSuppressed.self)(web, selector, true)
+    }
+
+    override var acceptsFirstResponder: Bool {
+        if case .granted = keyboardAuthorization { return true }
+        return false
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        guard acceptsFirstResponder else { return false }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { keyboardAuthorization = .denied }
+        return resigned
+    }
+
+    /// The user asked for the page's keyboard (Return on the selected tile, or a click in a text
+    /// field). False when the page has no view in the window to take it.
+    @discardableResult
+    func takeKeyboard() -> Bool {
+        guard window != nil, !isHiddenOrHasHiddenAncestor else { return false }
+        keyboardAuthorization = .granted
+        guard window?.makeFirstResponder(self) == true else {
+            keyboardAuthorization = .denied
+            return false
+        }
+        return true
+    }
+
+    func resetKeyboardAuthorization() {
+        keyboardAuthorization = .denied
+        guard let window, ownsKeyboard(in: window) else { return }
+        onEscape?()
+        if ownsKeyboard(in: window) { window.makeFirstResponder(nil) }
+    }
+
+    private func ownsKeyboard(in window: NSWindow) -> Bool {
+        guard let responder = window.firstResponder as? NSView else { return false }
+        return responder === self || responder.isDescendant(of: self)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow { keyboardAuthorization = .denied }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func cancelKeyboardClick() {
+        if case .pending = keyboardAuthorization { keyboardAuthorization = .denied }
+    }
 
     private var lastClick: (time: TimeInterval, flags: NSEvent.ModifierFlags)?
 
@@ -446,7 +577,50 @@ final class HtmlWebView: WKWebView {
 
     override func mouseDown(with event: NSEvent) {
         lastClick = (ProcessInfo.processInfo.systemUptime, event.modifierFlags)
+        let hadKeyboard = window?.firstResponder === self
+        let point = convert(event.locationInWindow, from: nil)
+        let zoom = pageZoom * magnification
+        let x = (point.x - bounds.minX) / zoom
+        let y = (isFlipped ? point.y - bounds.minY : bounds.maxY - point.y) / zoom
+        cancelKeyboardClick()
         super.mouseDown(with: event)
+        guard !hadKeyboard, let window else { return }
+        let click = KeyboardClick(window: window) { [weak self] in self?.cancelKeyboardClick() }
+        guard !click.appWasActive || click.wasKey else { return }
+        keyboardAuthorization = .pending(click)
+        click.observe()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.clickGrantLifetime) { [weak self, weak click] in
+            guard let self, let click, case let .pending(latest) = self.keyboardAuthorization, latest === click else { return }
+            self.cancelKeyboardClick()
+        }
+        // First mouse can arrive without activating the app. A later focus, key-window or
+        // application transition cancels even if the original state is restored.
+        PageScript.call("""
+        const el = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get.call(document);
+        if (!(el instanceof HTMLElement)) return false;
+        const tag = Object.getOwnPropertyDescriptor(Element.prototype, 'tagName').get.call(el);
+        const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get.call(el);
+        if (!(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable === true)) return false;
+        const hit = Document.prototype.elementFromPoint.call(document, x, y);
+        return hit !== null && Node.prototype.contains.call(el, hit) === true;
+        """, ["x": x, "y": y], in: Self.clickWorld, on: self) { [weak self, weak click] value, error in
+            guard let self, let click, case let .pending(latest) = self.keyboardAuthorization, latest === click else { return }
+            self.keyboardAuthorization = .denied
+            guard error == nil, (value as? Bool) == true,
+                  ProcessInfo.processInfo.systemUptime - click.time <= Self.clickGrantLifetime,
+                  let window = click.window, self.window === window,
+                  window.firstResponder === click.responder, window.isKeyWindow == click.wasKey,
+                  NSApp.isActive == click.appWasActive else { return }
+            _ = self.takeKeyboard()
+        }
+    }
+
+    /// Esc the page didn't use (a dialog closes, a game pauses on its own) arrives here as
+    /// WebKit's saved Esc command; no `super` (the canvas must not see it). It hands the keyboard
+    /// back like any tile's Esc. Every other key the page didn't use stays in the page: the
+    /// canvas's tools, Delete and Return don't act while a field is being typed in.
+    override func cancelOperation(_ sender: Any?) {
+        onEscape?()
     }
 
     override func mouseUp(with event: NSEvent) {

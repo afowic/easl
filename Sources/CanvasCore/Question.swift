@@ -60,6 +60,12 @@ public struct QuestionSpec: Equatable, Sendable {
     public struct Answer: Equatable, Sendable {
         public var option: String?
         public var note: String?
+        /// How sure the user was, 0–1, on a question asked with `askConfidence`; nil when they left
+        /// the slider alone, and on a question that doesn't ask.
+        public var confidence: Double?
+        /// Whether the picked option is the question's `correct` one: easl's, never the caller's.
+        /// Nil on a note-only answer and on a question without `correct`.
+        public var correct: Bool?
         public var at: Date?
         public var by: Actor?
     }
@@ -67,6 +73,10 @@ public struct QuestionSpec: Equatable, Sendable {
     public var question: String
     public var options: [Option]
     public var recommended: String?
+    /// The id of the option that is right (`correct`): answering stamps `answer.correct` against it.
+    public var correct: String?
+    /// Whether the tile asks how sure the user is (`askConfidence`) and the answer may carry it.
+    public var askConfidence: Bool
     public var context: [Context]
     public var asker: Asker?
     public var status: Status
@@ -78,7 +88,7 @@ public struct QuestionSpec: Equatable, Sendable {
     /// Seconds a closed question stays in view after its last write (`archiveAt`).
     public var archiveAfter: TimeInterval
 
-    /// Reads props as stored (validated on the way in); anything unreadable is left out.
+    /// Reads stored or direct props, dropping unreadable answer fields.
     public init(_ props: JSONValue) {
         question = props["question"]?.string ?? ""
         options = (props["options"]?.array ?? []).compactMap { option in
@@ -86,6 +96,8 @@ public struct QuestionSpec: Equatable, Sendable {
             return Option(id: id, label: label, why: option["why"]?.string)
         }
         recommended = props["recommended"]?.string
+        correct = props["correct"]?.string
+        askConfidence = props["askConfidence"]?.bool == true
         context = (props["context"]?.array ?? []).compactMap(Self.context)
         asker = props["asker"]?.object.map { _ in
             Asker(tile: props["asker"]?["tile"]?.string, name: props["asker"]?["name"]?.string, host: props["asker"]?["host"]?.string)
@@ -95,11 +107,37 @@ public struct QuestionSpec: Equatable, Sendable {
         answer = props["answer"]?.object.map { _ in
             let by = props["answer"]?["by"].flatMap { try? $0.decode(Actor.self) }
             return Answer(option: props["answer"]?["option"]?.string, note: props["answer"]?["note"]?.string,
+                          confidence: Self.confidence(props["answer"]?["confidence"]), correct: Self.correctness(props),
                           at: props["answer"]?["at"]?.string.flatMap(Self.date), by: by)
         }
         archived = props["archived"]?.bool == true
         keep = props["keep"]?.bool == true
         archiveAfter = props["archiveAfter"].flatMap(Self.archiveDelay) ?? Self.defaultArchiveAfter
+    }
+
+    static func confidence(_ value: JSONValue?) -> Double? {
+        guard let number = value?.number, number.isFinite, (0...1).contains(number) else { return nil }
+        return number
+    }
+
+    private static func correctness(_ props: JSONValue) -> Bool? {
+        guard let key = props["correct"]?.string, let option = props["answer"]?["option"]?.string else { return nil }
+        return option == key
+    }
+
+    static func normalized(_ props: JSONValue) -> JSONValue {
+        guard var fields = props.object, var answer = fields["answer"]?.object else { return props }
+        answer["confidence"] = confidence(answer["confidence"]).map(JSONValue.number)
+        answer["correct"] = correctness(props).map(JSONValue.bool)
+        fields["answer"] = .object(answer)
+        return .object(fields)
+    }
+
+    static func normalized(_ object: CanvasObject) -> CanvasObject {
+        guard object.type == .question else { return object }
+        var object = object
+        object.props = normalized(object.props)
+        return object
     }
 
     /// `props.status`; a question without a status it knows is open.
@@ -197,6 +235,11 @@ public struct QuestionSpec: Equatable, Sendable {
             guard let id = recommended.string else { return "recommended must be an option id (\(idList))" }
             if !ids.contains(id) { return "recommended \"\(id)\" is not an option id (\(idList))" }
         }
+        if let correct = given("correct") {
+            guard let id = correct.string else { return "correct must be an option id (\(idList))" }
+            if !ids.contains(id) { return "correct \"\(id)\" is not an option id (\(idList))" }
+        }
+        if let ask = given("askConfidence"), ask.bool == nil { return "askConfidence must be true or false" }
         if let context = given("context") {
             guard let items = context.array else { return "props.context must be an array of {object}, {url}, or {path, lines?}" }
             for (index, item) in items.enumerated() where Self.context(item) == nil {
@@ -224,6 +267,16 @@ public struct QuestionSpec: Equatable, Sendable {
                 noted = !trimmed(text).isEmpty
             }
             if !picked, !noted { return answerShape }
+            if let confidence = answer["confidence"], confidence != .null {
+                guard Self.confidence(confidence) != nil else { return "answer.confidence must be a number from 0 to 1" }
+                guard given("askConfidence")?.bool == true else { return "answer.confidence goes with a question asked with askConfidence" }
+            }
+            if let correct = answer["correct"], correct != .null {
+                let expected = given("correct")?.string.flatMap { right in answer["option"]?.string.map { $0 == right } }
+                guard let flag = correct.bool, let expected, flag == expected else {
+                    return "answer.correct is written by easl: it says whether the picked option is correct"
+                }
+            }
         } else if given("answer") != nil {
             return "answer goes with status answered"
         }
@@ -301,6 +354,12 @@ public struct QuestionSpec: Equatable, Sendable {
         stampFormat.string(from: date)
     }
 
+    /// `80%`: how a confidence reads on the tile and in a mention.
+    public static func percent(_ confidence: Double) -> String {
+        guard Self.confidence(.number(confidence)) != nil else { return "—" }
+        return "\(Int((confidence * 100).rounded()))%"
+    }
+
     // MARK: Size
 
     /// A new question tile's width, and the rows its height is counted in: the title bar, the
@@ -310,6 +369,8 @@ public struct QuestionSpec: Equatable, Sendable {
     public static let openBase = 194.0
     public static let optionRow = 50.0
     public static let contextRow = 30.0
+    /// The confidence slider's row on a question asked with `askConfidence`.
+    public static let confidenceRow = 30.0
     public static let closedBase = 148.0
     public static let noteRow = 40.0
 
@@ -320,7 +381,8 @@ public struct QuestionSpec: Equatable, Sendable {
         if status(of: props) == .open {
             let options = Double(props["options"]?.array?.count ?? 0)
             let context = props["context"]?.array?.isEmpty == false ? contextRow : 0
-            return (width, openBase + optionRow * options + context)
+            let confidence = props["askConfidence"]?.bool == true ? confidenceRow : 0
+            return (width, openBase + optionRow * options + context + confidence)
         }
         let note = props["answer"]?["note"]?.string.map { !trimmed($0).isEmpty } ?? false
         return (width, closedBase + (note ? noteRow : 0))
@@ -346,6 +408,8 @@ public struct QuestionSpec: Equatable, Sendable {
         if spec.status == .answered, let answer = spec.answer {
             var parts: [String] = []
             if let id = answer.option { parts.append("[\(id)]" + (spec.option(id).map { " \($0.label)" } ?? "")) }
+            if spec.correct != nil, let correct = answer.correct { parts.append(correct ? "correct" : "incorrect") }
+            if let confidence = answer.confidence { parts.append("confidence: \(Self.percent(confidence))") }
             if let note = answer.note, !trimmed(note).isEmpty { parts.append("note: \"\(note.replacingOccurrences(of: "\n", with: "\\n"))\"") }
             let at = props["answer"]?["at"]?.string.map { " at \($0)" } ?? ""
             switch answer.by {
@@ -380,6 +444,10 @@ extension Board {
         if status == .answered, var answer = before.props.merging(patch)["answer"]?.object {
             answer["at"] = .string(QuestionSpec.stamp(now))
             answer["by"] = try JSONValue.encode(Actor(caller: caller))
+            let merged = before.props.merging(patch)
+            if let correct = merged["correct"]?.string, let option = answer["option"]?.string {
+                answer["correct"] = .bool(option == correct)
+            }
             patch = patch.merging(.object(["answer": .object(answer)]))
         }
         guard status != .open, frame == nil else { return (patch, frame) }
@@ -388,10 +456,11 @@ extension Board {
 
     /// The user's answer from the tile: an option and/or a note, as `object.update` would write it.
     @discardableResult
-    public func answerQuestion(_ id: ObjectID, option: String?, note: String?) throws -> CanvasObject {
+    public func answerQuestion(_ id: ObjectID, option: String?, note: String?, confidence: Double? = nil) throws -> CanvasObject {
         var answer: [String: JSONValue] = [:]
         if let option { answer["option"] = .string(option) }
         if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { answer["note"] = .string(note) }
+        if let confidence { answer["confidence"] = .number(confidence) }
         return try writeQuestion(id, .object(["status": .string(QuestionSpec.Status.answered.rawValue), "answer": .object(answer)]))
     }
 

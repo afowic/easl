@@ -1,0 +1,909 @@
+{
+  "scenario": "graph-diagrams",
+  "description": "Authored diagrams store only knowledge, ignore an overwritten old calls cache, keep graph metadata, and reject unsafe level conversions.",
+  "recordedOn": "run4 actual Swift working manifest",
+  "steps": [
+    {
+      "step": "board.open",
+      "method": "board.open",
+      "request": {
+        "root": "<root>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {
+          "board": "<board>",
+          "objects": 0,
+          "root": "<root>"
+        }
+      }
+    },
+    {
+      "step": "events.subscribe",
+      "method": "events.subscribe",
+      "conn": "events",
+      "request": {
+        "board": "<board>"
+      },
+      "response": {
+        "id": "r1",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 480,
+          "w": 760,
+          "x": 0,
+          "y": 0
+        },
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "edges": [
+              {
+                "from": "premise#one",
+                "label": "supports",
+                "to": "conclusion"
+              }
+            ],
+            "nodes": [
+              {
+                "detail": "**Evidence** stays.",
+                "id": "premise#one",
+                "label": "Premise",
+                "sources": [
+                  {
+                    "board": "external-board",
+                    "message": "m-1"
+                  }
+                ],
+                "status": "weak"
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "taught"
+              }
+            ]
+          },
+          "title": "Preserved reasoning"
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "id": "r2",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "weak"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "taught"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "weak"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "taught"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:1>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "z": 1
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "graph": {
+            "aim": {
+              "direction": "incoming",
+              "kind": "calls"
+            },
+            "computedAt": "<time:iso>",
+            "edges": [],
+            "error": "old refresh",
+            "nodes": []
+          }
+        }
+      },
+      "response": {
+        "id": "r3",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "old refresh",
+                "nodes": []
+              },
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "weak"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "taught"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:2>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "old refresh",
+                "nodes": []
+              },
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "weak"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "taught"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:2>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.reload",
+      "method": "object.reload",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r4",
+        "ok": true,
+        "result": {
+          "edges": 1,
+          "id": "<obj:1>",
+          "loaded": true,
+          "nodes": 2,
+          "stale": []
+        }
+      }
+    },
+    {
+      "step": "object.measure",
+      "method": "object.measure",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "edges": [
+              {
+                "from": "premise#one",
+                "label": "supports",
+                "to": "conclusion"
+              }
+            ],
+            "nodes": [
+              {
+                "detail": "**Evidence** stays.",
+                "id": "premise#one",
+                "label": "Premise",
+                "sources": [
+                  {
+                    "board": "external-board",
+                    "message": "m-1"
+                  }
+                ],
+                "status": "weak"
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "taught"
+              }
+            ]
+          },
+          "title": "Preserved reasoning"
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "id": "r5",
+        "ok": true,
+        "result": {
+          "h": 196,
+          "w": 748
+        }
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "knowledge": {
+            "edges": [
+              {
+                "from": "premise#one",
+                "label": "supports",
+                "to": "conclusion"
+              }
+            ],
+            "nodes": [
+              {
+                "detail": "**Evidence** stays.",
+                "id": "premise#one",
+                "label": "Premise",
+                "sources": [
+                  {
+                    "board": "external-board",
+                    "message": "m-1"
+                  }
+                ],
+                "status": "retained"
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "practiced"
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "id": "r6",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "old refresh",
+                "nodes": []
+              },
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "retained"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "practiced"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:3>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "old refresh",
+                "nodes": []
+              },
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "retained"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "practiced"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:3>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "graph": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "Old alias"
+              }
+            ]
+          },
+          "kind": "graph"
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "a graph diagram needs props.knowledge.nodes and props.knowledge.edges"
+        },
+        "id": "r7",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1e+300
+              }
+            ]
+          }
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r8",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1e+300
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r9",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": -1e+300
+              }
+            ]
+          }
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r10",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": -1e+300
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r11",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1.5
+              }
+            ]
+          }
+        },
+        "type": "diagram"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r12",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:1>",
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1.5
+              }
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "props.knowledge.nodes[0].level must be a non-negative integer"
+        },
+        "id": "r13",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:1>"
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 480,
+              "w": 760,
+              "x": 0,
+              "y": 0
+            },
+            "id": "<obj:1>",
+            "props": {
+              "graph": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "calls"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [],
+                "error": "old refresh",
+                "nodes": []
+              },
+              "kind": "graph",
+              "knowledge": {
+                "aim": {
+                  "direction": "incoming",
+                  "kind": "graph"
+                },
+                "computedAt": "<time:iso>",
+                "edges": [
+                  {
+                    "from": "premise#one",
+                    "label": "supports",
+                    "lines": [],
+                    "to": "conclusion"
+                  }
+                ],
+                "nodes": [
+                  {
+                    "detail": "**Evidence** stays.",
+                    "id": "premise#one",
+                    "level": 0,
+                    "name": "Premise",
+                    "sources": [
+                      {
+                        "board": "external-board",
+                        "message": "m-1"
+                      }
+                    ],
+                    "status": "retained"
+                  },
+                  {
+                    "id": "conclusion",
+                    "level": 1,
+                    "name": "Conclusion",
+                    "status": "practiced"
+                  }
+                ]
+              },
+              "title": "Preserved reasoning"
+            },
+            "rev": "<rev:3>",
+            "type": "diagram",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 1
+          }
+        }
+      }
+    }
+  ]
+}

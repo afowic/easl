@@ -509,21 +509,32 @@
       },
       "additionalProperties": false
     },
+    "DiagramSource": {
+      "type": "object",
+      "description": "Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board",
+      "properties": {
+        "session": { "type": "string", "minLength": 1, "description": "an agent session id (`props.agent.sessionId`) or session path (`props.agent.sessionPath`) of a terminal on the board" },
+        "message": { "type": "string", "minLength": 1, "description": "the message or prompt the claim came from" },
+        "board": { "type": "string", "minLength": 1, "description": "the board the tile is on; another board is not resolvable from this one" },
+        "tile": { "type": "string", "minLength": 1, "description": "the terminal tile it came from" }
+      },
+      "additionalProperties": false
+    },
     "DiagramProps": {
       "type": "object",
-      "description": "A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.",
+      "description": "A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.",
       "properties": {
-        "kind": { "enum": ["calls"], "default": "calls", "description": "what the diagram is of; more kinds (types, pipelines) will come" },
+        "kind": { "enum": ["calls", "graph"], "default": "calls", "description": "calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `knowledge.nodes` (id, label, detail, level, sources, status) and `knowledge.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success" },
         "symbol": { "type": "string", "description": "the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration" },
         "path": { "type": "string", "description": "the file declaring the root, board-relative (relative to your own checkout when you work in another worktree) or absolute" },
         "line": { "type": "integer", "minimum": 1, "description": "without `symbol`: the root's declaration line (or a line inside its body) in `path`. Only the first computation reads it: after that the root is re-found by the symbol found there" },
         "direction": { "enum": ["incoming", "outgoing", "both"], "default": "incoming", "description": "incoming: who calls it (callers left of it); outgoing: what it calls (right of it); both" },
         "depth": { "type": "integer", "minimum": 1, "maximum": 4, "default": 2, "description": "levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded" },
-        "expanded": { "type": "array", "items": { "type": "string" }, "description": "node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one" },
-        "title": { "type": "string", "description": "default: `Callers of <symbol>` (`Calls from`, `Calls around`)" },
+        "expanded": { "type": "array", "items": { "type": "string" }, "description": "kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one" },
+        "title": { "type": "string", "description": "default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph" },
         "graph": {
           "type": "object",
-          "description": "written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it)",
+          "description": "Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes",
           "properties": {
             "aim": { "type": "object", "description": "the kind, path, symbol, line and direction it was computed for" },
             "root": { "type": "string", "description": "the root node's id" },
@@ -531,17 +542,17 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "name", "kind", "path", "line", "lines", "excerpt", "level"],
+                "required": ["id", "name", "level"],
                 "properties": {
-                  "id": { "type": "string", "description": "`path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name" },
-                  "name": { "type": "string" },
-                  "container": { "type": "string" },
-                  "kind": { "type": "string", "description": "LSP symbol kind: method, function, constructor, …" },
-                  "path": { "type": "string", "description": "board-relative" },
-                  "line": { "type": "integer", "description": "1-based line of its name" },
-                  "lines": { "$ref": "#/definitions/LineRange", "description": "its whole declaration" },
-                  "excerpt": { "type": "array", "items": { "type": "object", "properties": { "line": { "type": "integer" }, "text": { "type": "string" } } } },
-                  "level": { "type": "integer", "description": "columns from the root (0): callers negative, callees positive" },
+                  "id": { "type": "string", "description": "path#Container.name, stable while the symbol exists. What expanded and arrow ends name" },
+                  "name": { "type": "string", "description": "The symbol name" },
+                  "container": { "type": "string", "description": "calls nodes: the enclosing type or module, when the server says" },
+                  "kind": { "type": "string", "description": "calls nodes: LSP symbol kind: method, function, constructor, …" },
+                  "path": { "type": "string", "description": "calls nodes: board-relative file" },
+                  "line": { "type": "integer", "description": "calls nodes: 1-based line of its name" },
+                  "lines": { "$ref": "#/definitions/LineRange", "description": "calls nodes: its whole declaration" },
+                  "excerpt": { "type": "array", "items": { "type": "object", "properties": { "line": { "type": "integer" }, "text": { "type": "string" } } }, "description": "calls nodes: 1-3 lines, a caller's calls toward the root or the signature" },
+                  "level": { "type": "integer", "description": "Columns from root 0, callers negative" },
                   "stale": { "type": "boolean", "description": "its symbol is gone from its file: shown as it last was, badged" },
                   "expandable": { "type": "boolean", "description": "its next level hasn't been asked for: a click (or adding its id to `expanded`) opens it" },
                   "expanded": { "type": "boolean", "description": "opened past `depth` (`expanded`)" }
@@ -552,11 +563,11 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["from", "to", "lines"],
+                "required": ["from", "to"],
                 "properties": {
                   "from": { "type": "string", "description": "the caller's node id" },
                   "to": { "type": "string", "description": "the callee's node id" },
-                  "lines": { "type": "array", "items": { "type": "integer" }, "description": "1-based lines of the calls, in the caller's file" },
+                  "lines": { "type": "array", "items": { "type": "integer" }, "description": "calls edges: 1-based lines of the calls, in the caller's file" },
                   "stale": { "type": "boolean" }
                 }
               }
@@ -564,6 +575,103 @@
             "error": { "type": "string", "description": "why the graph is empty or old: no language server for the file, the symbol isn't found, the server failed or has no call hierarchy. The last good graph stays" },
             "omitted": { "type": "integer", "description": "nodes left out past 60" },
             "computedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "knowledge": {
+          "type": "object",
+          "description": "Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge.",
+          "required": [
+            "nodes"
+          ],
+          "properties": {
+            "aim": {
+              "type": "object",
+              "description": "Written on normalization with kind graph and direction incoming"
+            },
+            "nodes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 500,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Non-empty caller id, at most 256 UTF-8 bytes"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Nonblank node label, at most 512 UTF-8 bytes; normalized to name"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Normalized label; accepted when label is absent"
+                  },
+                  "level": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Finite, exactly representable host integer; omitted levels are computed"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "Markdown or plain text, at most 8192 UTF-8 bytes"
+                  },
+                  "sources": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                      "$ref": "#/definitions/DiagramSource"
+                    }
+                  },
+                  "status": {
+                    "enum": [
+                      "taught",
+                      "practiced",
+                      "retained",
+                      "weak"
+                    ]
+                  }
+                }
+              }
+            },
+            "edges": {
+              "type": "array",
+              "maxItems": 2000,
+              "items": {
+                "type": "object",
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "At most 256 UTF-8 bytes"
+                  },
+                  "lines": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "description": "Written as an empty array on normalization"
+                  }
+                }
+              }
+            },
+            "computedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Normalization time"
+            }
           }
         },
         "zoom": { "$ref": "#/definitions/Zoom" },
@@ -574,7 +682,7 @@
     "QuestionProps": {
       "type": "object",
       "required": ["question", "options"],
-      "description": "A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.",
+      "description": "A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.",
       "properties": {
         "question": { "type": "string", "minLength": 1 },
         "options": {
@@ -592,6 +700,8 @@
           }
         },
         "recommended": { "type": "string", "description": "the id of the option the asker recommends; the tile marks it" },
+        "correct": { "type": "string", "description": "the id of the option that is right: easl stamps `answer.correct` (true for it, false for another) when the question is answered, and the closed tile marks it and shows its why. The tile never marks it while the question is open" },
+        "askConfidence": { "type": "boolean", "default": false, "description": "true adds a confidence slider to the open tile: the user sets 0–100% before answering (optional: skipping it leaves `answer.confidence` out), and the answer line the asker gets says how sure the user was" },
         "context": {
           "type": "array",
           "description": "what to look at before answering; each a link on the tile that opens beside it",
@@ -613,10 +723,12 @@
         "expiresAt": { "type": "string", "format": "date-time", "description": "when an open question stops waiting (RFC 3339); none by default" },
         "answer": {
           "type": "object",
-          "description": "with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered",
+          "description": "with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered",
           "properties": {
             "option": { "type": "string", "description": "an option id" },
             "note": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "how sure the user was, 0–1, on a question asked with `askConfidence`; absent when they answered without setting the slider. Callers may answer with it; without `askConfidence` it is invalid_params" },
+            "correct": { "type": "boolean", "description": "written by easl on a question with `correct`: true when the picked option is it, false when another is. Absent on a note-only answer; a caller may send only the value easl would stamp" },
             "at": { "type": "string", "format": "date-time" },
             "by": { "$ref": "#/definitions/Actor", "description": "who answered: the user, or an agent's terminal (`caller`)" }
           },
@@ -653,7 +765,7 @@
             "object": { "$ref": "#/definitions/Id" },
             "lines": { "$ref": "#/definitions/LineRange", "description": "on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile" },
             "selector": { "type": "string" },
-            "node": { "type": "string", "description": "on a diagram tile, a node id (`graph.nodes[].id`): the end attaches to that node's box as the tile draws it, and follows it when the graph is computed again. Other tiles: the whole tile" }
+            "node": { "type": "string", "description": "on a diagram tile, a node id (knowledge.nodes[].id for kind graph, graph.nodes[].id for kind calls): the end attaches to that node's box as the tile draws it, and follows it when the graph changes. Other tiles: the whole tile" }
           },
           "additionalProperties": false
         },
@@ -1556,7 +1668,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
+      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: kind graph reads `props.knowledge`; a calls diagram without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -1660,7 +1772,7 @@
       }
     },
     "object.reload": {
-      "description": "Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so an `easl get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves.",
+      "description": "Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so an `easl get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A calls diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). A kind graph diagram reads only `props.knowledge` and reload is a no-op success. Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves.",
       "params": {
         "type": "object",
         "required": ["id"],

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
+Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`). The HTML kit uses Tailwind CSS 4.3.3, Mermaid 11.17.2, and KaTeX 0.19.1 under MIT; Mermaid's bundled dependencies have their own notices and KaTeX's fonts use SIL OFL 1.1.
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |
@@ -8,6 +8,7 @@ Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`;
 | [Ghostty](https://github.com/ghostty-org/ghostty) (the `libghostty` binary libghostty-spm downloads) | commit 3c47ca159368 | MIT | (c) 2024 Mitchell Hashimoto, Ghostty contributors |
 | [MSDisplayLink](https://github.com/Lakr233/MSDisplayLink) | 2.2.0 | MIT | (c) 2024 Lakr Aream |
 | [swift-markdown](https://github.com/swiftlang/swift-markdown) | 0.9.0 | Apache-2.0 | (c) 2021 Apple Inc. and the Swift project authors |
+| [SwiftMath](https://github.com/mgriebling/SwiftMath) | 1.7.3 | MIT; math fonts: SIL OFL 1.1, except Latin Modern Math and TeX Gyre Termes Math under the GUST Font License (LPPL-1.3c-or-later) | (c) 2023 Computer Inspirations |
 | [swift-cmark](https://github.com/swiftlang/swift-cmark) (cmark-gfm) | 0.9.0 | BSD-2-Clause, with parts under MIT (see its COPYING below) | (c) 2014 John MacFarlane |
 | [SwiftTreeSitter](https://github.com/ChimeHQ/SwiftTreeSitter) | 0.25.0 | BSD-3-Clause | (c) 2021, Chime |
 | [tree-sitter](https://github.com/tree-sitter/tree-sitter) | 0.25.10 | MIT | (c) 2018-2024 Max Brunsfeld |

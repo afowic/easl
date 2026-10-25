@@ -17,6 +17,8 @@ public struct DiagramLayout: Equatable, Sendable {
     public static let nameHeight: CGFloat = 18
     public static let placeHeight: CGFloat = 16
     public static let excerptLineHeight: CGFloat = 16
+    /// Rows of a graph node's `detail` shown before a click expands it.
+    public static let detailLines = 2
     /// The tile's body when there is no graph yet (computing, or it failed).
     public static let emptySize = CGSize(width: 520, height: 160)
 
@@ -74,7 +76,11 @@ public struct DiagramLayout: Equatable, Sendable {
     }
 
     public static func height(of node: DiagramNode) -> CGFloat {
-        2 * padding + nameHeight + placeHeight + CGFloat(node.excerpt.count) * excerptLineHeight + (node.excerpt.isEmpty ? 0 : 4)
+        if node.detail != nil {
+            return 2 * padding + nameHeight + CGFloat(detailLines) * excerptLineHeight + 4
+        }
+        let excerpt = node.excerpt ?? []
+        return 2 * padding + nameHeight + placeHeight + CGFloat(excerpt.count) * excerptLineHeight + (excerpt.isEmpty ? 0 : 4)
     }
 
     /// The body a tile needs to show the whole graph at full size.
@@ -100,13 +106,14 @@ public struct DiagramLayout: Equatable, Sendable {
         let top = rect.minY + padding + nameHeight + placeHeight + 4
         guard y >= top else { return nil }
         let index = Int((y - top) / excerptLineHeight)
-        return node.excerpt.indices.contains(index) ? index : nil
+        let excerpt = node.excerpt ?? []
+        return excerpt.indices.contains(index) ? index : nil
     }
 
     /// Where a diagram tile at `frame` with `props` draws node `id`, in canvas coordinates (title
     /// bar and `props.zoom` included): what an arrow bound to the node attaches to.
     public static func canvasRect(of id: String, frame: Frame, props: JSONValue) -> CGRect? {
-        guard let graph = DiagramGraph(props["graph"]) else { return nil }
+        guard let graph = DiagramGraph.stored(in: props) else { return nil }
         let zoom = ObjectZoom.of(props), natural = ObjectZoom.natural(frame, zoom: zoom)
         let body = CGSize(width: CGFloat(natural.w), height: max(0, CGFloat(natural.h - RenderMath.tileTitleHeight)))
         guard let rect = DiagramLayout(graph).rect(of: id, in: body) else { return nil }

@@ -487,10 +487,22 @@ export type VideoProps = {
   key?: ObjectKey;
 };
 
-/** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
+/** Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board */
+export type DiagramSource = {
+  /** an agent session id (`props.agent.sessionId`) or session path (`props.agent.sessionPath`) of a terminal on the board */
+  session?: string;
+  /** the message or prompt the claim came from */
+  message?: string;
+  /** the board the tile is on; another board is not resolvable from this one */
+  board?: string;
+  /** the terminal tile it came from */
+  tile?: string;
+};
+
+/** A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
 export type DiagramProps = {
-  /** what the diagram is of; more kinds (types, pipelines) will come */
-  kind?: "calls";
+  /** calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `knowledge.nodes` (id, label, detail, level, sources, status) and `knowledge.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success */
+  kind?: "calls" | "graph";
   /** the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration */
   symbol?: string;
   /** the file declaring the root, board-relative (relative to your own checkout when you work in another worktree) or absolute */
@@ -501,34 +513,37 @@ export type DiagramProps = {
   direction?: "incoming" | "outgoing" | "both";
   /** levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded */
   depth?: number;
-  /** node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one */
+  /** kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one */
   expanded?: string[];
-  /** default: `Callers of <symbol>` (`Calls from`, `Calls around`) */
+  /** default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph */
   title?: string;
-  /** written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it) */
+  /** Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes */
   graph?: {
     /** the kind, path, symbol, line and direction it was computed for */
     aim?: Record<string, unknown>;
     /** the root node's id */
     root?: string;
     nodes?: {
-      /** `path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name */
+      /** path#Container.name, stable while the symbol exists. What expanded and arrow ends name */
       id: string;
+      /** The symbol name */
       name: string;
+      /** calls nodes: the enclosing type or module, when the server says */
       container?: string;
-      /** LSP symbol kind: method, function, constructor, … */
-      kind: string;
-      /** board-relative */
-      path: string;
-      /** 1-based line of its name */
-      line: number;
-      /** its whole declaration */
-      lines: LineRange;
-      excerpt: {
+      /** calls nodes: LSP symbol kind: method, function, constructor, … */
+      kind?: string;
+      /** calls nodes: board-relative file */
+      path?: string;
+      /** calls nodes: 1-based line of its name */
+      line?: number;
+      /** calls nodes: its whole declaration */
+      lines?: LineRange;
+      /** calls nodes: 1-3 lines, a caller's calls toward the root or the signature */
+      excerpt?: {
         line?: number;
         text?: string;
       }[];
-      /** columns from the root (0): callers negative, callees positive */
+      /** Columns from root 0, callers negative */
       level: number;
       /** its symbol is gone from its file: shown as it last was, badged */
       stale?: boolean;
@@ -542,8 +557,8 @@ export type DiagramProps = {
       from: string;
       /** the callee's node id */
       to: string;
-      /** 1-based lines of the calls, in the caller's file */
-      lines: number[];
+      /** calls edges: 1-based lines of the calls, in the caller's file */
+      lines?: number[];
       stale?: boolean;
     }[];
     /** why the graph is empty or old: no language server for the file, the symbol isn't found, the server failed or has no call hierarchy. The last good graph stays */
@@ -552,11 +567,40 @@ export type DiagramProps = {
     omitted?: number;
     computedAt?: string;
   };
+  /** Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge. */
+  knowledge?: {
+    /** Written on normalization with kind graph and direction incoming */
+    aim?: Record<string, unknown>;
+    nodes: ({
+      /** Non-empty caller id, at most 256 UTF-8 bytes */
+      id: string;
+      /** Nonblank node label, at most 512 UTF-8 bytes; normalized to name */
+      label?: string;
+      /** Normalized label; accepted when label is absent */
+      name?: string;
+      /** Finite, exactly representable host integer; omitted levels are computed */
+      level?: number;
+      /** Markdown or plain text, at most 8192 UTF-8 bytes */
+      detail?: string;
+      sources?: DiagramSource[];
+      status?: "taught" | "practiced" | "retained" | "weak";
+    })[];
+    edges?: {
+      from: string;
+      to: string;
+      /** At most 256 UTF-8 bytes */
+      label?: string;
+      /** Written as an empty array on normalization */
+      lines?: number[];
+    }[];
+    /** Normalization time */
+    computedAt?: string;
+  };
   zoom?: Zoom;
   key?: ObjectKey;
 };
 
-/** A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`. */
+/** A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`. */
 export type QuestionProps = {
   question: string;
   /** what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note */
@@ -569,6 +613,10 @@ export type QuestionProps = {
   }[];
   /** the id of the option the asker recommends; the tile marks it */
   recommended?: string;
+  /** the id of the option that is right: easl stamps `answer.correct` (true for it, false for another) when the question is answered, and the closed tile marks it and shows its why. The tile never marks it while the question is open */
+  correct?: string;
+  /** true adds a confidence slider to the open tile: the user sets 0–100% before answering (optional: skipping it leaves `answer.confidence` out), and the answer line the asker gets says how sure the user was */
+  askConfidence?: boolean;
   /** what to look at before answering; each a link on the tile that opens beside it */
   context?: ({
     object: Id;
@@ -589,11 +637,15 @@ export type QuestionProps = {
   status?: "open" | "answered" | "cancelled" | "expired";
   /** when an open question stops waiting (RFC 3339); none by default */
   expiresAt?: string;
-  /** with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered */
+  /** with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered */
   answer?: {
     /** an option id */
     option?: string;
     note?: string;
+    /** how sure the user was, 0–1, on a question asked with `askConfidence`; absent when they answered without setting the slider. Callers may answer with it; without `askConfidence` it is invalid_params */
+    confidence?: number;
+    /** written by easl on a question with `correct`: true when the picked option is it, false when another is. Absent on a note-only answer; a caller may send only the value easl would stamp */
+    correct?: boolean;
     at?: string;
     /** who answered: the user, or an agent's terminal (`caller`) */
     by?: Actor;
@@ -627,7 +679,7 @@ export type Binding = {
   /** on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile */
   lines?: LineRange;
   selector?: string;
-  /** on a diagram tile, a node id (`graph.nodes[].id`): the end attaches to that node's box as the tile draws it, and follows it when the graph is computed again. Other tiles: the whole tile */
+  /** on a diagram tile, a node id (knowledge.nodes[].id for kind graph, graph.nodes[].id for kind calls): the end attaches to that node's box as the tile draws it, and follows it when the graph changes. Other tiles: the whole tile */
   node?: string;
 } | {
   point: number[];
@@ -2415,7 +2467,7 @@ export interface CanvasApi {
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Find objects by what they are instead of by id: `key` returns the object holding that `props.key` (ObjectKey) as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none; `type` lists every object of that type, oldest first, and with `status` only those whose `props.status` is it (`type: question, status: open`: the questions still waiting on the user). One of key, keyPrefix, type. Per board: `board` defaults as for object.create. */
     find(params?: ObjectFindParams): Promise<ObjectFindResult>;
-    /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
+    /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: kind graph reads `props.knowledge`; a calls diagram without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame, stacking order z, and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
@@ -2425,7 +2477,7 @@ export interface CanvasApi {
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
     /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 1546, 200 columns) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). A tile with `zoom` lays out at `width` ÷ zoom, and its frame is the 26-pt title bar plus that body times zoom (as wide as its natural width times zoom). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
-    /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so an `easl get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves. */
+    /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so an `easl get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A calls diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). A kind graph diagram reads only `props.knowledge` and reload is a no-op success. Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves. */
     reload(params: ObjectReloadParams): Promise<ObjectReloadResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/upsert/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id op n created (or, an upsert, created or updated) (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;

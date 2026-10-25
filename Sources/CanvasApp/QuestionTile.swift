@@ -17,6 +17,9 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     private var spec: QuestionSpec
     /// The option picked with a click or its number key, waiting for Return or Answer.
     private var picked: String?
+    /// How sure the user is, 0–1, on a question asked with `askConfidence`: nil until they set the
+    /// slider (left/right arrow or a click), and left out of the answer when they never do.
+    private var confidence: Double?
     private let scroll = OverlayScrollView()
     private let page = QuestionPage()
     private let noteScroll = OverlayScrollView()
@@ -99,7 +102,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     @objc private func relayout() {
         let width = max(120, scroll.contentSize.width)
         let painter = QuestionPainter(spec: spec, object: object, board: board, width: width, scale: ChromeText.scale, picked: picked,
-                                      note: note.string, editing: window?.firstResponder === note)
+                                      confidence: confidence, note: note.string, editing: window?.firstResponder === note)
         self.painter = painter
         let previous = controlElements
         controlElements = painter.controls.map { control in
@@ -148,14 +151,27 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         let text = note.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard spec.status == .open, picked != nil || !text.isEmpty else { return }
         do {
-            try board.answerQuestion(object.id, option: picked, note: text.isEmpty ? nil : text)
+            try board.answerQuestion(object.id, option: picked, note: text.isEmpty ? nil : text, confidence: confidence)
             picked = nil
+            confidence = nil
             note.string = ""
             noteUndo.removeAllActions()
             leave()
         } catch {
             NSSound.beep()
         }
+    }
+
+    /// Sets the slider, snapped to 5% steps within 0–1 (`askConfidence` questions only).
+    private func setConfidence(_ value: Double) {
+        guard spec.askConfidence, spec.status == .open else { return }
+        confidence = min(1, max(0, (value * 20).rounded() / 20))
+        relayout()
+    }
+
+    /// ← and → move the slider by 10%; VoiceOver's press does too.
+    fileprivate func adjustConfidence(by delta: Double) {
+        setConfidence((confidence ?? 0.5) + delta)
     }
 
     private func dismiss() {
@@ -216,7 +232,10 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
             self.press = press
             return
         }
-        if let hit = painter?.hit(point) {
+        if let value = painter?.confidenceValue(at: point) {
+            window?.makeFirstResponder(self)
+            setConfidence(value)
+        } else if let hit = painter?.hit(point) {
             perform(hit)
         } else if takesKeyboardFocus {
             window?.makeFirstResponder(self)
@@ -249,6 +268,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         case .answer: confirm()
         case .dismiss: dismiss()
         case .archive: archive()
+        case .confidence: adjustConfidence(by: 0.1)
         }
     }
 
@@ -294,8 +314,9 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     /// (`takesKeyboardFocus`).
     override var acceptsFirstResponder: Bool { true }
 
-    /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note. Closed: Return
-    /// archives. Esc gives the keyboard back to the canvas.
+    /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note, and on a
+    /// question asked with `askConfidence` ←/→ set how sure the user is. Closed: Return archives.
+    /// Esc gives the keyboard back to the canvas.
     override func keyDown(with event: NSEvent) {
         guard (window?.windowController as? CanvasWindowController)?.hostBoardClosed != true else { return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
@@ -306,6 +327,12 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         case 36, 76: return open ? confirm() : archive()
         case 48 where open:
             window?.makeFirstResponder(note)
+            return
+        case 123 where open && spec.askConfidence:
+            adjustConfidence(by: -0.1)
+            return
+        case 124 where open && spec.askConfidence:
+            adjustConfidence(by: 0.1)
             return
         default: break
         }
@@ -366,7 +393,8 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     func setLive(_ live: Bool) {}
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked, note: note.string)
+        let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked,
+                                      confidence: confidence, note: note.string)
         let content = CGSize(width: request.size.width, height: painter.height)
         let size = request.full ? CGSize(width: request.size.width, height: max(request.size.height, content.height)) : request.size
         let image = request.image(size: size) { bounds in
@@ -406,6 +434,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         self.object = object
         spec = QuestionSpec(object.props)
         if let picked, spec.option(picked) == nil || spec.status != .open { self.picked = nil }
+        if spec.status != .open || !spec.askConfidence { confidence = nil }
         // Reworded: the selection's offsets were into the old text.
         if spec.question != asked {
             press = nil
@@ -528,14 +557,18 @@ private final class QuestionControlElement: NSAccessibilityElement {
             case .option: .radioButton
             case .context, .link: .link
             case .answer, .dismiss, .archive: .button
+            case .confidence: .slider
             }
         }
     }
     override func accessibilityLabel() -> String? { onMain { $0.control.label } }
     override func accessibilityValue() -> Any? {
         onMain { element in
-            guard case .option = element.control.hit else { return nil }
-            return NSNumber(value: element.control.picked ? 1 : 0)
+            switch element.control.hit {
+            case .option: return NSNumber(value: element.control.picked ? 1 : 0)
+            case .confidence: return NSNumber(value: Int(((element.control.value ?? 0.5) * 100).rounded()))
+            default: return nil
+            }
         }
     }
     override func isAccessibilityEnabled() -> Bool { onMain { $0.control.enabled } }
@@ -550,6 +583,21 @@ private final class QuestionControlElement: NSAccessibilityElement {
         onMain { element in
             guard element.control.enabled, let tile = element.page?.tile else { return false }
             tile.perform(element.control.hit)
+            return true
+        }
+    }
+    /// VoiceOver's slider adjustment steps the confidence the way ←/→ do.
+    override func accessibilityPerformIncrement() -> Bool {
+        onMain { element in
+            guard element.control.enabled, case .confidence = element.control.hit, let tile = element.page?.tile else { return false }
+            tile.adjustConfidence(by: 0.1)
+            return true
+        }
+    }
+    override func accessibilityPerformDecrement() -> Bool {
+        onMain { element in
+            guard element.control.enabled, case .confidence = element.control.hit, let tile = element.page?.tile else { return false }
+            tile.adjustConfidence(by: -0.1)
             return true
         }
     }
@@ -568,7 +616,7 @@ private final class QuestionControlElement: NSAccessibilityElement {
 @MainActor
 struct QuestionPainter {
     enum Hit: Equatable {
-        case option(String), context(QuestionSpec.Context), link(WebLink.Match), answer, dismiss, archive
+        case option(String), context(QuestionSpec.Context), link(WebLink.Match), answer, dismiss, archive, confidence
     }
 
     /// Something on the page that acts: where it is, what it does, and what it says, for
@@ -585,6 +633,8 @@ struct QuestionPainter {
         /// Where it takes a click when that isn't all of `rect`: a web link in the question's
         /// text, a rect per line it runs over (`rect` holds them all).
         var areas: [NSRect] = []
+        /// The confidence slider's value, 0–1, for accessibility.
+        var value: Double?
 
         var clickable: [NSRect] { areas.isEmpty ? [rect] : areas }
     }
@@ -602,12 +652,15 @@ struct QuestionPainter {
     private let scale: CGFloat
     private let width: CGFloat
     private let picked: String?
+    private let confidence: Double?
     private let noting: Bool
     private let noteText: String
     private let editing: Bool
     private var items: [(rect: NSRect, draw: () -> Void)] = []
     private(set) var controls: [Control] = []
     private(set) var noteRect: NSRect?
+    /// The confidence slider's track while a question asks (`askConfidence`).
+    private(set) var confidenceTrack: NSRect?
     private(set) var height: CGFloat = 0
     /// The question's text, which selects and holds web links, and its index in `items`.
     private(set) var question: PaintedText?
@@ -615,11 +668,13 @@ struct QuestionPainter {
 
     var clickable: [NSRect] { controls.filter(\.enabled).flatMap(\.clickable) }
 
-    init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, note: String, editing: Bool = false) {
+    init(spec: QuestionSpec, object: CanvasObject, board: Board, width: CGFloat, scale: Double, picked: String?, confidence: Double? = nil,
+         note: String, editing: Bool = false) {
         self.spec = spec
         self.scale = CGFloat(scale)
         self.width = width
         self.picked = picked
+        self.confidence = confidence
         noting = !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         noteText = note
         self.editing = editing
@@ -704,6 +759,9 @@ struct QuestionPainter {
                 y = placeOption(option, index: index, x: inset, y: y, width: inner) + points(6)
             }
             y = placeContext(x: inset, y: y + points(2), width: inner, board: board)
+            if spec.askConfidence {
+                y = placeConfidence(x: inset, y: y + points(2), width: inner) + points(8)
+            }
             let line = ceil(Self.noteLayout.defaultLineHeight(for: font(Self.noteFont)))
             let measured = noteText.isEmpty || noteText.hasSuffix("\n") ? noteText + " " : noteText
             let height = Self.measure(text(measured, Self.noteFont, .labelColor), width: inner - 2 * Self.notePadding.width).height
@@ -755,6 +813,47 @@ struct QuestionPainter {
         }))
         controls.append(Control(rect: row, hit: .option(option.id), label: Self.optionLabel(option, number: index + 1, recommended: recommended), picked: isPicked))
         return row.maxY
+    }
+
+    /// The confidence slider: its label, the percentage set (— until it is), and the track, which
+    /// a click sets and ←/→ step. Nothing on it says which option is right.
+    private mutating func placeConfidence(x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let rowHeight = points(26)
+        let label = text("Confidence", Self.metaFont, .secondaryLabelColor)
+        let value = text(confidence.map(QuestionSpec.percent) ?? "—", Self.metaFont, .secondaryLabelColor)
+        let labelSize = Self.measure(label, width: width)
+        let valueSize = Self.measure(value, width: width)
+        let trackX = x + labelSize.width + points(10)
+        let trackWidth = max(40, width - labelSize.width - points(10) - valueSize.width - points(10))
+        let track = NSRect(x: trackX, y: y + (rowHeight - points(4)) / 2, width: trackWidth, height: points(4))
+        let set = confidence
+        let fraction = CGFloat(set ?? 0.5)
+        let knob = NSRect(x: track.minX + track.width * fraction - points(6), y: track.midY - points(6), width: points(12), height: points(12))
+        let labelPoint = NSPoint(x: x, y: y + (rowHeight - labelSize.height) / 2)
+        let valuePoint = NSPoint(x: x + width - valueSize.width, y: y + (rowHeight - valueSize.height) / 2)
+        let row = NSRect(x: x, y: y, width: width, height: rowHeight)
+        items.append((row, {
+            label.draw(at: labelPoint)
+            value.draw(at: valuePoint)
+            NSColor.quaternaryLabelColor.withAlphaComponent(0.35).setFill()
+            NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
+            if let set {
+                NSColor.controlAccentColor.setFill()
+                let filled = NSRect(x: track.minX, y: track.minY, width: max(track.height, track.width * CGFloat(set)), height: track.height)
+                NSBezierPath(roundedRect: filled, xRadius: track.height / 2, yRadius: track.height / 2).fill()
+            }
+            (set == nil ? NSColor.tertiaryLabelColor : NSColor.controlAccentColor).setFill()
+            NSBezierPath(ovalIn: knob).fill()
+        }))
+        confidenceTrack = track
+        controls.append(Control(rect: track.insetBy(dx: -6, dy: -8), hit: .confidence, label: "Confidence", value: confidence))
+        return row.maxY
+    }
+
+    /// Where a click on the slider's track or knob falls, 0–1; nil off it.
+    func confidenceValue(at point: NSPoint) -> Double? {
+        guard let track = confidenceTrack, track.insetBy(dx: -6, dy: -8).contains(point) else { return nil }
+        return min(1, max(0, Double((point.x - track.minX) / max(1, track.width))))
     }
 
     private mutating func placeContext(x: CGFloat, y: CGFloat, width: CGFloat, board: Board) -> CGFloat {
@@ -832,6 +931,21 @@ struct QuestionPainter {
         return answer.maxY
     }
 
+    /// The right option, marked in green with its why, under a wrong pick.
+    private mutating func placeCorrect(_ option: QuestionSpec.Option, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
+        let pad = points(6)
+        let string = NSMutableAttributedString(attributedString: text("✓ " + option.label, Self.labelFont, .labelColor))
+        if let why = option.why, !why.isEmpty { string.append(text(": " + why, Self.whyFont, .secondaryLabelColor)) }
+        let size = Self.measure(string, width: width - 2 * pad)
+        let row = NSRect(x: x, y: y, width: width, height: size.height + 2 * pad)
+        items.append((row, {
+            NSColor.systemGreen.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: row, xRadius: 6, yRadius: 6).fill()
+            string.draw(with: row.insetBy(dx: pad, dy: pad), options: [.usesLineFragmentOrigin, .usesFontLeading])
+        }))
+        return row.maxY
+    }
+
     private mutating func placeOutcome(object: CanvasObject, board: Board, x: CGFloat, y: CGFloat, width: CGFloat) -> CGFloat {
         var y = y
         let headline: String
@@ -839,9 +953,11 @@ struct QuestionPainter {
         switch spec.status {
         case .answered:
             let answer = spec.answer
-            headline = "✓ " + (spec.option(answer?.option).map(\.label) ?? answer?.option ?? "Answered")
+            let label = spec.option(answer?.option).map(\.label) ?? answer?.option ?? "Answered"
+            headline = (answer?.correct == false ? "✗ " : "✓ ") + label
             byline = "Answered by \(who(answer?.by, board: board))"
             if let at = answer?.at { byline += " · \(Self.when(at))" }
+            if spec.askConfidence, let confidence = answer?.confidence { byline += " · \(QuestionSpec.percent(confidence)) confident" }
         case .cancelled:
             headline = "Cancelled"
             byline = "Cancelled · \(Self.when(object.updatedAt))"
@@ -854,6 +970,13 @@ struct QuestionPainter {
         }
         byline += " · asked by \(asker(board: board))"
         y = place(text(headline, Self.questionFont, spec.status == .answered ? .labelColor : .secondaryLabelColor), x: x, y: y, width: width) + points(4)
+        if spec.status == .answered, let rightID = spec.correct, let right = spec.option(rightID), let rightPick = spec.answer?.correct {
+            if rightPick {
+                if let why = right.why, !why.isEmpty { y = place(text(why, Self.whyFont, .secondaryLabelColor), x: x, y: y, width: width) + points(4) }
+            } else {
+                y = placeCorrect(right, x: x, y: y, width: width) + points(4)
+            }
+        }
         if spec.status == .answered, let note = spec.answer?.note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             y = place(text("“\(note)”", Self.noteFont, .labelColor), x: x, y: y, width: width) + points(6)
         }
@@ -874,6 +997,9 @@ struct QuestionPainter {
         for (index, option) in spec.options.enumerated() {
             lines.append(Self.optionLabel(option, number: index + 1, recommended: option.id == spec.recommended))
         }
+        if spec.askConfidence {
+            lines.append("Confidence: " + (confidence.map(QuestionSpec.percent) ?? "not set"))
+        }
         if !spec.context.isEmpty {
             lines.append("Context: " + spec.context.map { Self.contextTitle($0, board: board) }.joined(separator: ", "))
         }
@@ -886,6 +1012,8 @@ struct QuestionPainter {
         case .answered:
             let answer = spec.answer
             var line = (spec.option(answer?.option)?.label ?? answer?.option).map { "Answered: \($0)" } ?? "Answered"
+            if let right = answer?.correct, spec.correct != nil { line += right ? ", correct" : ", incorrect" }
+            if let confidence = answer?.confidence { line += ", \(QuestionSpec.percent(confidence)) confident" }
             if let note = answer?.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { line += ", note: \(note)" }
             line += ", by \(who(answer?.by, board: board))"
             if let at = answer?.at { line += ", \(Self.when(at))" }

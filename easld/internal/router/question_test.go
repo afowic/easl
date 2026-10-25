@@ -83,7 +83,7 @@ func TestAQuestionIsCreatedOpenAskedByItsCallerAndSizedByItsProps(t *testing.T) 
 		t.Errorf("framed %v", got)
 	}
 	odd := f.result("object.create", map[string]any{"type": "question", "props": questionProps(map[string]any{"volume": 11.0})})
-	if w, _ := odd["warnings"].([]any); len(w) != 1 || !strings.Contains(w[0].(string), `unknown prop "volume" for question`) || !strings.Contains(w[0].(string), "question props: answer, archiveAfter, archived, asker, context, expiresAt, keep, key, options, question, recommended, status, zoom") {
+	if w, _ := odd["warnings"].([]any); len(w) != 1 || !strings.Contains(w[0].(string), `unknown prop "volume" for question`) || !strings.Contains(w[0].(string), "question props: answer, archiveAfter, archived, askConfidence, asker, context, correct, expiresAt, keep, key, options, question, recommended, status, zoom") {
 		t.Errorf("warnings %v", odd["warnings"])
 	}
 }

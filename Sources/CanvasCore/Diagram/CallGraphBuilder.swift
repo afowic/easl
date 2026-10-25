@@ -278,9 +278,9 @@ public enum CallGraphBuilder {
             let path: String
             if let given = spec.path {
                 path = given
-            } else if let root = previous?.root.flatMap({ previous?.node($0) }) {
+            } else if let root = previous?.root.flatMap({ previous?.node($0) }), let known = root.path {
                 // Found before: the root is re-found in its file below.
-                path = root.path
+                path = known
             } else if let symbol = spec.symbol {
                 path = try await locate(symbol)
             } else {
@@ -295,9 +295,10 @@ public enum CallGraphBuilder {
             let declared: LSPSymbol
             if let rootID = previous?.root, let root = previous?.node(rootID) {
                 // Where the symbol the diagram was of is now, however the code around it moved.
-                rootFile = url(root.path)
+                guard let rootPath = root.path else { throw Failure.rootGone("\(root.qualifiedName) has no file") }
+                rootFile = url(rootPath)
                 guard let symbol = try await declaration(root.qualifiedName, in: rootFile) else {
-                    throw Failure.rootGone("\(root.qualifiedName) is no longer declared in \(root.path)")
+                    throw Failure.rootGone("\(root.qualifiedName) is no longer declared in \(rootPath)")
                 }
                 declared = symbol
             } else if let wanted = spec.symbol {
@@ -452,7 +453,8 @@ public enum CallGraphBuilder {
 
         /// Whether `node`'s symbol is no longer declared in its file (or the file is gone).
         mutating func isGone(_ node: DiagramNode) async throws -> Bool {
-            let file = url(node.path)
+            guard let path = node.path else { return true }
+            let file = url(path)
             guard try await source(file) != nil else { return true }
             return try await declaration(node.qualifiedName, in: file) == nil
         }

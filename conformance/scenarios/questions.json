@@ -1,5 +1,5 @@
 {
-  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, tile shrunk, the answer handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
+  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit; a graded one with correct and askConfidence), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, answer.correct for a graded question, tile shrunk, the answer and its confidence and correctness handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
   "steps": [
     {
       "call": "object.create",
@@ -238,6 +238,68 @@
     {
       "call": "object.update",
       "params": { "id": "{{q5.object.id}}", "props": { "status": "answered", "answer": { "note": "no option needed" } } }
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "correct": "z", "asker": { "name": "cos" } }, "frame": { "x": 3000, "y": 0, "w": 460, "h": 200 } },
+      "note": "correct not an option"
+    },
+    {
+      "call": "object.create",
+      "params": { "board": "{{board}}", "type": "question", "props": { "question": "Q?", "options": [{ "id": "a", "label": "A" }], "askConfidence": "yes", "asker": { "name": "cos" } }, "frame": { "x": 3000, "y": 0, "w": 460, "h": 200 } }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": {
+          "question": "Which stack is the regression on?",
+          "options": [
+            { "id": "swift", "label": "Swift core", "why": "the frame math lives there" },
+            { "id": "go", "label": "Go daemon" }
+          ],
+          "correct": "swift",
+          "askConfidence": true
+        },
+        "caller": "{{t.object.id}}"
+      },
+      "save": "q6",
+      "note": "graded with a confidence slider: sized 460 wide, 194 + 2*50 + 30 tall without a frame"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q6.object.id}}", "props": { "status": "answered", "answer": { "option": "swift", "confidence": 0.8, "correct": false } } },
+      "note": "answer.correct is the server's: a caller cannot flip it"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q6.object.id}}", "props": { "status": "answered", "answer": { "option": "swift", "confidence": 1.5 } } }
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q6.object.id}}", "props": { "status": "answered", "answer": { "option": "swift", "confidence": 0.8 } } },
+      "note": "the right pick: answer.correct true, stamped against correct"
+    },
+    {
+      "call": "tray.drain",
+      "params": { "board": "{{board}}", "caller": "{{t.object.id}}", "peek": true },
+      "note": "the mention says correct and how sure the user was"
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "question",
+        "props": { "question": "Right pick?", "options": [{ "id": "a", "label": "A", "why": "because" }, { "id": "b", "label": "B" }], "correct": "a", "asker": { "name": "cos" } },
+        "frame": { "x": 3600, "y": 0, "w": 460, "h": 294 }
+      },
+      "save": "q7"
+    },
+    {
+      "call": "object.update",
+      "params": { "id": "{{q7.object.id}}", "props": { "status": "answered", "answer": { "option": "b" } } },
+      "note": "the wrong pick: answer.correct false, no confidence on a question that does not ask"
     },
     {
       "call": "object.find",

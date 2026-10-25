@@ -512,3 +512,23 @@ func TestAdoptionPreservesMalformedUnresolvedLedgerEntriesAcrossLoads(t *testing
 		firstLedger = current
 	}
 }
+
+func TestRerootKeepsAuthoredIDsAndBoundArrows(t *testing.T) {
+	knowledge := map[string]any{"nodes": []any{map[string]any{
+		"id": "claim#one", "name": "A", "level": 0.0, "detail": "Keep me", "status": "weak",
+		"sources": []any{map[string]any{"message": "m"}},
+	}}, "edges": []any{}}
+	diagram := adoptedObject("obj_graph", model.Diagram, 0, map[string]any{"kind": "graph", "knowledge": knowledge})
+	arrow := adoptedObject("obj_arrow", model.Arrow, 0, map[string]any{
+		"from": map[string]any{"object": diagram.ID, "node": "claim#one"},
+		"to":   map[string]any{"x": 100.0, "y": 100.0},
+	})
+	r := rerooter{oldRoot: "/old/sub", top: "/old", live: true, anchor: anchorMain,
+		destinationRoot: "/new", knowledgeDiagrams: map[string]bool{diagram.ID: true}}
+	if got := r.reroot(diagram.Clone()); !reflect.DeepEqual(got.Props, diagram.Props) {
+		t.Errorf("authored graph rerooted: %v", got.Props)
+	}
+	if got := r.reroot(arrow.Clone()); !reflect.DeepEqual(got.Props, arrow.Props) {
+		t.Errorf("authored binding rerooted: %v", got.Props)
+	}
+}

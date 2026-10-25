@@ -136,8 +136,8 @@ func (t ObjectType) KnownProps() []string {
 		Changes:  {"root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"},
 		Image:    {"path", "caption", "title"},
 		Video:    {"path", "poster", "loop", "muted", "autoplay", "startTime", "title"},
-		Diagram:  {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"},
-		Question: {"question", "options", "recommended", "context", "asker", "status", "expiresAt", "answer", "archived", "keep", "archiveAfter", "zoom"},
+		Diagram:  {"kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "knowledge", "zoom"},
+		Question: {"question", "options", "recommended", "correct", "askConfidence", "context", "asker", "status", "expiresAt", "answer", "archived", "keep", "archiveAfter", "zoom"},
 		Shape:    {"kind", "text", "points", "color", "fill", "textSize"},
 		Arrow:    {"from", "to", "relation", "label", "color", "route"},
 		Group:    {"members", "title", "color", "padding", "flow"},
@@ -487,6 +487,27 @@ func Merge(base, patch any) any {
 		}
 	}
 	return out
+}
+
+// DiagramGraphValue selects authored knowledge independently of the old calls cache.
+func DiagramGraphValue(props map[string]any) any {
+	if props["kind"] == "graph" {
+		knowledge, _ := props["knowledge"].(map[string]any)
+		aim, _ := knowledge["aim"].(map[string]any)
+		if aim["kind"] != "graph" {
+			return nil
+		}
+		nodes, _ := knowledge["nodes"].([]any)
+		for _, value := range nodes {
+			node, _ := value.(map[string]any)
+			level, ok := node["level"].(float64)
+			if !ok || math.IsNaN(level) || math.IsInf(level, 0) || level < 0 || level != math.Trunc(level) || level >= 9223372036854775808.0 {
+				return nil
+			}
+		}
+		return knowledge
+	}
+	return props["graph"]
 }
 
 // Int reads an integral JSON number (JSONValue.int: a number with no fractional part).
