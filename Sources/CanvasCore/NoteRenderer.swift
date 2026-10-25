@@ -23,7 +23,7 @@ public final class NoteRenderer {
     private let out = NSMutableAttributedString()
     private var diagramBudget = NoteDiagram.Budget()
     private let diagramAppearance: NSAppearance
-    private var diagrams: [String: NoteDiagram.Outcome] = [:]
+    private var preparedDiagrams: ArraySlice<NoteDiagram.Outcome> = []
     public private(set) var hasPendingDiagrams = false
     /// Tables and diagrams, including pending diagrams, depend on their rendering width.
     public private(set) var fitsWidth = false
@@ -54,6 +54,7 @@ public final class NoteRenderer {
 
     /// Uses completed diagrams only. Call `renderPrepared` when final image dimensions are required.
     public func render(_ document: Document, placeholder: String) -> NSAttributedString {
+        defer { preparedDiagrams = [] }
         out.setAttributedString(NSAttributedString(string: ""))
         diagramBudget = NoteDiagram.Budget()
         fitsWidth = false
@@ -90,15 +91,28 @@ public final class NoteRenderer {
         }
         walk(document)
         var budget = NoteDiagram.Budget()
+        var prepared: [NoteDiagram.Outcome] = []
+        var imagesBySource: [String: NoteDiagram.Outcome] = [:]
         for source in sources {
             guard !Task.isCancelled else { return NSAttributedString(string: "") }
-            guard budget.admit(source) == nil, diagrams[source] == nil else { continue }
-            guard let outcome = await NoteDiagram.image(source: source, width: lineWidth, appearance: diagramAppearance) else {
+            if let problem = budget.admit(source) {
+                prepared.append(.failure(problem))
+                continue
+            }
+            let outcome: NoteDiagram.Outcome
+            if let image = imagesBySource[source] {
+                outcome = image
+            } else if let ready = await NoteDiagram.image(source: source, width: lineWidth, appearance: diagramAppearance) {
+                outcome = ready
+            } else {
                 return NSAttributedString(string: "")
             }
-            diagrams[source] = outcome
+            let admitted = budget.admit(outcome)
+            prepared.append(admitted)
+            if case .image = admitted { imagesBySource[source] = admitted }
         }
         guard !Task.isCancelled else { return NSAttributedString(string: "") }
+        preparedDiagrams = prepared[...]
         return render(document, placeholder: placeholder)
     }
 
@@ -607,17 +621,18 @@ public final class NoteRenderer {
     private func diagram(_ body: [String], context: Context, line: Int) {
         let source = body.joined(separator: "\n")
         fitsWidth = true
+        let prepared = preparedDiagrams.popFirst()
         let outcome: NoteDiagram.Outcome
         if let problem = diagramBudget.admit(source) {
             outcome = .failure(problem)
         } else {
-            guard let ready = diagrams[source] ?? NoteDiagram.completed(source: source, width: lineWidth, appearance: diagramAppearance) else {
+            guard let ready = prepared ?? NoteDiagram.completed(source: source, width: lineWidth, appearance: diagramAppearance) else {
                 hasPendingDiagrams = true
                 rows(diagramPreview(body, maxLines: 8), context: context,
                      markdownLine: line + 1, numberWidth: 0, referenceLinks: false)
                 return
             }
-            outcome = ready
+            outcome = diagramBudget.admit(ready)
         }
         switch outcome {
         case .image(let image):

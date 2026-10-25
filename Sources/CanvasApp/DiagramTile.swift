@@ -290,11 +290,15 @@ final class DiagramTile: NSView, TileContent {
     }
 
     private func paint(in bounds: CGRect) {
+        let panel = detailPanel(in: bounds)
+        paint(in: bounds, graph: graph, layout: layout, panel: panel, scrollOffset: detailScrollOffset)
+    }
+
+    private func paint(in bounds: CGRect, graph: DiagramGraph?, layout: DiagramLayout, panel: DetailPanel?, scrollOffset: CGFloat) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
-        drawHeader(in: bounds)
+        drawHeader(in: bounds, graph: graph)
         guard let graph, let context = NSGraphicsContext.current?.cgContext, !graph.nodes.isEmpty else { return }
-        let panel = detailPanel(in: bounds)
         let body = CGSize(width: bounds.width, height: max(1, bounds.height - (panel?.height ?? 0)))
         let (scale, origin) = layout.placement(in: body)
         context.saveGState()
@@ -308,17 +312,17 @@ final class DiagramTile: NSView, TileContent {
         }
         for node in graph.nodes {
             guard let rect = layout.rects[node.id] else { continue }
-            if isGraph {
+            if graph.aim.kind == .graph {
                 drawGraphNode(node, in: rect)
             } else {
                 drawNode(node, in: rect, isRoot: node.id == graph.root)
             }
         }
         context.restoreGState()
-        if let panel { drawDetailPanel(panel, in: bounds) }
+        if let panel { drawDetailPanel(panel, in: bounds, scrollOffset: scrollOffset) }
     }
 
-    private func drawHeader(in bounds: CGRect) {
+    private func drawHeader(in bounds: CGRect, graph: DiagramGraph?) {
         let text: String
         var color = NSColor.secondaryLabelColor
         let error = hostFailure ?? graph?.error
@@ -552,6 +556,14 @@ final class DiagramTile: NSView, TileContent {
         var textHeight: CGFloat
         var height: CGFloat
         var width: CGFloat
+
+        init(node: DiagramNode, text: NSAttributedString, textHeight: CGFloat, in bounds: CGRect) {
+            self.node = node
+            self.text = text
+            self.textHeight = textHeight
+            height = min(textHeight + 46, min(320, max(0, bounds.height * 0.4)))
+            width = max(1, bounds.width - 24)
+        }
     }
 
     private struct DetailLayout {
@@ -571,7 +583,7 @@ final class DiagramTile: NSView, TileContent {
         detailLayout = nil
     }
 
-    private func detailPanel(in bounds: CGRect, prepare: Bool = false) -> DetailPanel? {
+    private func detailPanel(in bounds: CGRect) -> DetailPanel? {
         guard isGraph, let id = expandedNode, let node = graph?.node(id), let detail = node.detail, !detail.isEmpty else {
             cancelDetail()
             detailScrollOffset = 0
@@ -590,7 +602,7 @@ final class DiagramTile: NSView, TileContent {
             detailLayout = DetailLayout(id: id, detail: detail, width: width, zoom: object.zoom,
                                         appearance: appearance, text: text, textHeight: ceil(measured))
             detailScrollOffset = 0
-            if renderer.hasPendingDiagrams, live || prepare {
+            if renderer.hasPendingDiagrams, live {
                 let generation = detailGeneration
                 detailTask = Task { [weak self] in
                     let text = await renderer.renderPrepared(document, placeholder: "")
@@ -607,12 +619,12 @@ final class DiagramTile: NSView, TileContent {
             }
         }
         guard let cached = detailLayout else { return nil }
-        let height = min(cached.textHeight + 46, min(320, max(0, bounds.height * 0.4)))
-        detailScrollOffset = min(detailScrollOffset, max(0, cached.textHeight - max(0, height - 36)))
-        return DetailPanel(node: node, text: cached.text, textHeight: cached.textHeight, height: height, width: width)
+        let panel = DetailPanel(node: node, text: cached.text, textHeight: cached.textHeight, in: bounds)
+        detailScrollOffset = min(detailScrollOffset, max(0, cached.textHeight - max(0, panel.height - 36)))
+        return panel
     }
 
-    private func drawDetailPanel(_ panel: DetailPanel, in bounds: CGRect) {
+    private func drawDetailPanel(_ panel: DetailPanel, in bounds: CGRect, scrollOffset: CGFloat) {
         let rect = CGRect(x: 0, y: bounds.maxY - panel.height, width: bounds.width, height: panel.height)
         NSColor.controlBackgroundColor.setFill()
         rect.fill()
@@ -632,7 +644,7 @@ final class DiagramTile: NSView, TileContent {
         let viewport = CGRect(x: 12, y: rect.minY + 28, width: panel.width, height: max(0, panel.height - 36))
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current?.cgContext.clip(to: viewport)
-        panel.text.draw(with: CGRect(x: viewport.minX, y: viewport.minY - detailScrollOffset,
+        panel.text.draw(with: CGRect(x: viewport.minX, y: viewport.minY - scrollOffset,
                                      width: panel.width, height: panel.textHeight),
                         options: [.usesLineFragmentOrigin, .usesFontLeading])
         NSGraphicsContext.restoreGraphicsState()
@@ -783,17 +795,36 @@ final class DiagramTile: NSView, TileContent {
     func render(_ request: TileRenderRequest) async -> TileRender {
         if graph == nil, case .local(_, let task) = computation { await task.value }
         guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let graph = graph, layout = layout, expandedNode = expandedNode
+        let appearance = effectiveAppearance
+        let scrollOffset = detailScrollOffset
         var content = layout.bodySize
         let width = request.full ? max(request.size.width, content.width) : request.size.width
-        let panelBounds = CGRect(origin: .zero, size: CGSize(width: width, height: content.height))
-        _ = detailPanel(in: panelBounds, prepare: true)
-        let generation = detailGeneration
-        if let task = detailTask { await task.value }
-        guard !Task.isCancelled, generation == detailGeneration else { return .placeholder(request, "detail changed while rendering") }
-        let panel = detailPanel(in: panelBounds, prepare: true)
+        var panel: DetailPanel?
+        if graph?.aim.kind == .graph, let id = expandedNode, let node = graph?.node(id),
+           let detail = node.detail, !detail.isEmpty {
+            let textWidth = max(1, width - 24)
+            let renderer = NoteRenderer(excerpts: [:], source: detail, width: textWidth, appearance: appearance)
+            let text = await renderer.renderPrepared(NoteMarkdown.parse(detail), placeholder: "")
+            let measured = text.boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+            panel = DetailPanel(node: node, text: text, textHeight: ceil(measured),
+                                in: CGRect(origin: .zero, size: CGSize(width: width, height: content.height)))
+        }
+        guard !Task.isCancelled, self.graph == graph, self.expandedNode == expandedNode,
+              effectiveAppearance.name == appearance.name else {
+            return .placeholder(request, "detail changed while rendering")
+        }
         content.height += panel?.height ?? 0
         let size = request.full ? CGSize(width: max(request.size.width, content.width), height: max(request.size.height, content.height)) : request.size
-        guard let image = request.image(size: size, { bounds in paint(in: bounds) }) else {
+        if let prepared = panel {
+            panel = DetailPanel(node: prepared.node, text: prepared.text, textHeight: prepared.textHeight,
+                                in: CGRect(origin: .zero, size: size))
+        }
+        let offset = min(scrollOffset, max(0, (panel?.textHeight ?? 0) - max(0, (panel?.height ?? 0) - 36)))
+        guard let image = request.image(size: size, { bounds in
+            paint(in: bounds, graph: graph, layout: layout, panel: panel, scrollOffset: offset)
+        }) else {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "bitmap allocation failed")
         }
         return TileRender(image: image, contentSize: content, state: .rendered)

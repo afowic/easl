@@ -28,10 +28,12 @@ public enum NoteDiagram {
     nonisolated static let maxFenceBytes = 16 * 1024
     nonisolated static let maxNoteFenceBytes = 128 * 1024
     nonisolated static let maxNoteFences = 32
+    nonisolated static let maxNoteRasterBytes = 128 * 1024 * 1024
 
     struct Budget {
         private var bytes = 0
         private var fences = 0
+        private var rasterBytes = 0
 
         mutating func admit(_ source: String) -> String? {
             guard source.utf8.count <= NoteDiagram.maxFenceBytes else { return "diagram exceeds the native rendering budget" }
@@ -40,6 +42,16 @@ public enum NoteDiagram {
             fences += 1
             bytes += source.utf8.count
             return nil
+        }
+
+        @MainActor
+        mutating func admit(_ outcome: Outcome) -> Outcome {
+            let cost = NoteDiagram.cost(outcome)
+            guard cost <= NoteDiagram.maxNoteRasterBytes - rasterBytes else {
+                return .failure("note exceeds the diagram rendering budget")
+            }
+            rasterBytes += cost
+            return outcome
         }
     }
 
@@ -396,13 +408,14 @@ private final class PeleEngine: @unchecked Sendable {
                         if (calendarWork > workLimit)
                             throw new Error("diagram exceeds the native calendar rendering budget");
                     }
-                    const groups = model.subgraphs?.length || 0;
-                    const nodes = model.nodes?.size || model.actors?.size || 0;
-                    const edges = model.edges?.length || model.messages?.length || 0;
+                    const groups = (model.subgraphs?.length || 0) + (model.boundaries?.length || 0);
+                    const nodes = model.nodes?.size || model.actors?.size || model.shapes?.length || 0;
+                    const edges = model.edges?.length || model.messages?.length || model.rels?.length || 0;
                     const subsets = model.subsets || [];
                     const sets = new Set(subsets.flatMap(subset => subset.sets));
                     const slices = model.sections instanceof Map ? model.sections.size : 0;
-                    const work = Math.max((groups + 1) * (nodes + edges),
+                    const work = Math.max((groups + 1) * (nodes + edges), groups * groups,
+                                          2 * (model.shapes?.length || 0) * (model.rels?.length || 0),
                                           subsets.length * sets.size * sets.size, slices * slices);
                     if (work > workLimit)
                         throw new Error("diagram exceeds the native structural rendering budget");

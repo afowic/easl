@@ -808,12 +808,11 @@ final class NoteTile: NSView, TileContent {
         }
         let inset = NSSize(width: 8, height: 10)
         let appearance = effectiveAppearance
-        let displayGeneration = diagramGeneration
         let text = await NoteRenderer(excerpts: resolved, images: pictures, source: source,
                                       width: request.size.width - 2 * inset.width, appearance: appearance)
             .renderPrepared(document, placeholder: Self.placeholder)
         guard !Task.isCancelled, generation == closureGeneration, markdown == source,
-              diagramGeneration == displayGeneration, effectiveAppearance.name == appearance.name else {
+              effectiveAppearance.name == appearance.name else {
             return .placeholder(request, "note changed while rendering")
         }
         let content = NSTextContentStorage()

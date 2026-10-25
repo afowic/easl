@@ -20,6 +20,60 @@ struct NoteDiagramTests {
         return (text, attachment)
     }
 
+    private func diagramImages(in text: NSAttributedString) -> [NSImage] {
+        var images: [NSImage] = []
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if let image = (value as? NSTextAttachment)?.image { images.append(image) }
+        }
+        return images
+    }
+
+    private func expectRasterBudget(in text: NSAttributedString) {
+        let images = diagramImages(in: text)
+        #expect(images.count == 2)
+        let bytes = images.flatMap(\.representations).reduce(0) {
+            $0 + $1.pixelsWide * $1.pixelsHigh * 4
+        }
+        #expect(bytes > 120 * 1024 * 1024)
+        #expect(bytes <= 128 * 1024 * 1024)
+        #expect(text.string.contains("note exceeds the diagram rendering budget"))
+    }
+
+    @Test func aggregateRasterBudgetSurvivesCacheEvictionAndRepeatedFences() async throws {
+        if try runIsolatedTestIfParallelNow("NoteDiagramTests/aggregateRasterBudgetSurvivesCacheEvictionAndRepeatedFences") { return }
+        let width: CGFloat = 360 - 2 * ObjectMeasure.noteInset.width
+        let appearance = NSAppearance(named: .aqua)!
+        let sources = (0..<3).map { salt in
+            (["sequenceDiagram", "%% raster-budget-\(salt)", "participant A", "participant B", "participant C"]
+                + (0..<430).map { "A->>C:\($0 % 10)" }).joined(separator: "\n")
+        }
+        let fences = sources.map { "```mermaid\n" + $0 + "\n```" }
+        let markdown = fences.joined(separator: "\n\n")
+        #expect(markdown.utf8.count < 12 * 1024)
+        do {
+            let renderer = NoteRenderer(excerpts: [:], width: width, appearance: appearance)
+            let text = await renderer.renderPrepared(NoteMarkdown.parse(markdown), placeholder: "")
+            expectRasterBudget(in: text)
+            #expect(!renderer.hasPendingDiagrams)
+            #expect(!text.string.contains("raster-budget-0"))
+            #expect(!text.string.contains("raster-budget-1"))
+            #expect(text.string.contains("raster-budget-2"))
+        }
+        let repeated = NoteMarkdown.parse(Array(repeating: fences[2], count: 3).joined(separator: "\n\n"))
+        do {
+            let renderer = NoteRenderer(excerpts: [:], width: width, appearance: appearance)
+            let text = renderer.render(repeated, placeholder: "")
+            expectRasterBudget(in: text)
+            #expect(!renderer.hasPendingDiagrams)
+        }
+        do {
+            let renderer = NoteRenderer(excerpts: [:], width: width, appearance: appearance)
+            let text = await renderer.renderPrepared(repeated, placeholder: "")
+            expectRasterBudget(in: text)
+            #expect(!renderer.hasPendingDiagrams)
+        }
+    }
+
     @Test func pendingDiagramsAreWidthDependentAndBecomePreparedBitmaps() async throws {
         let source = "graph TD\nA[Pending \(UUID().uuidString)]-->B[Ready]"
         let document = NoteMarkdown.parse("```mermaid\n" + source + "\n```")
@@ -183,6 +237,34 @@ struct NoteDiagramTests {
         #expect(attachment == nil)
         #expect(text.string.contains("subgraph s0"))
         #expect(text.string.contains("structural rendering budget"))
+    }
+
+    @Test func deeplyNestedLowEdgeFencesConsumeSharedStructuralWork() async {
+        let source = "graph TD\n"
+            + (0..<300).map { "subgraph s\($0)\n" }.joined()
+            + "A-->B\n" + String(repeating: "end\n", count: 300)
+        #expect(source.utf8.count < NoteDiagram.maxFenceBytes)
+        let (text, attachment) = await render("```mermaid\n" + source + "```")
+        #expect(attachment == nil)
+        #expect(text.string.contains("subgraph s0"))
+        #expect(text.string.contains("structural rendering budget"))
+    }
+
+    @Test func c4RelationsConsumeSharedStructuralWorkBelowTheSourceCap() async {
+        func source(systems: Int, relations: Int) -> String {
+            (["C4Context"]
+                + (0..<systems).map { "System(s\($0),\"S\")" }
+                + (0..<relations).map { "Rel(s\($0 % systems),s\(($0 * 7 + 1) % systems),\"r\")" })
+                .joined(separator: "\n")
+        }
+        let large = source(systems: 300, relations: 300)
+        #expect(large.utf8.count < NoteDiagram.maxFenceBytes)
+        let (text, attachment) = await render("```mermaid\n" + large + "\n```")
+        #expect(attachment == nil)
+        #expect(text.string.contains("C4Context"))
+        #expect(text.string.contains("structural rendering budget"))
+        let small = source(systems: 15, relations: 20)
+        #expect(await render("```mermaid\n" + small + "\n```").attachment?.image != nil)
     }
 
     @Test func expensiveCalendarAndBlockFencesKeepTheirSource() async {
