@@ -513,7 +513,7 @@ export type DiagramProps = {
   direction?: "incoming" | "outgoing" | "both";
   /** levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded */
   depth?: number;
-  /** node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one */
+  /** kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one */
   expanded?: string[];
   /** default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph */
   title?: string;
@@ -553,9 +553,9 @@ export type DiagramProps = {
       expanded?: boolean;
     }[];
     edges?: {
-      /** the caller's  node id */
+      /** the caller's node id */
       from: string;
-      /** the callee's  node id */
+      /** the callee's node id */
       to: string;
       /** calls edges: 1-based lines of the calls, in the caller's file */
       lines?: number[];
@@ -679,7 +679,7 @@ export type Binding = {
   /** on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile */
   lines?: LineRange;
   selector?: string;
-  /** on a diagram tile, a node id (`graph.nodes[].id`): the end attaches to that node's box as the tile draws it, and follows it when the graph is computed again. Other tiles: the whole tile */
+  /** on a diagram tile, a node id (knowledge.nodes[].id for kind graph, graph.nodes[].id for kind calls): the end attaches to that node's box as the tile draws it, and follows it when the graph changes. Other tiles: the whole tile */
   node?: string;
 } | {
   point: number[];

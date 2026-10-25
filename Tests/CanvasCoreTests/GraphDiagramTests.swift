@@ -291,6 +291,22 @@ final class GraphDiagramTests {
         // 4 * 300 wide, 3 * 76 between them, 36 either side.
         #expect(created["result"]?["object"]?["frame"]?["w"] == .number(1500))
     }
+
+    @Test func measurementKeepsDiagramKindsAndValidationErrorsSeparate() async throws {
+        let (_, _, server, client) = try await api()
+        defer { server.stop() }
+        let cases = [
+            (#"{"kind":"calls","symbol":"Foo.bar","knowledge":{"nodes":[{"id":"a","label":"A"}]}}"#, "unavailable"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","level":1.5}]}}"#, "invalid_params"),
+            (#"{"kind":"graph","knowledge":{"nodes":[]}}"#, "invalid_params"),
+        ]
+        for (index, entry) in cases.enumerated() {
+            let reply = try await call(client, "measure-\(index)", "object.measure", #"{"type":"diagram","props":\#(entry.0)}"#)
+            #expect(reply["ok"] == .bool(false))
+            #expect(reply["error"]?["code"]?.string == entry.1)
+        }
+    }
+
     @Test func graphLevelsRejectUnsafeNumbersAndKeepExactBoundaries() throws {
         let upper = Double(Int.max).nextDown
         for raw in [1e300, -1e300, 1.5, Double.nan, Double.infinity, -1, Double(Int.max)] {

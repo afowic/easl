@@ -530,7 +530,7 @@
         "line": { "type": "integer", "minimum": 1, "description": "without `symbol`: the root's declaration line (or a line inside its body) in `path`. Only the first computation reads it: after that the root is re-found by the symbol found there" },
         "direction": { "enum": ["incoming", "outgoing", "both"], "default": "incoming", "description": "incoming: who calls it (callers left of it); outgoing: what it calls (right of it); both" },
         "depth": { "type": "integer", "minimum": 1, "maximum": 4, "default": 2, "description": "levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded" },
-        "expanded": { "type": "array", "items": { "type": "string" }, "description": "node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one" },
+        "expanded": { "type": "array", "items": { "type": "string" }, "description": "kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one" },
         "title": { "type": "string", "description": "default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph" },
         "graph": {
           "type": "object",
@@ -565,8 +565,8 @@
                 "type": "object",
                 "required": ["from", "to"],
                 "properties": {
-                  "from": { "type": "string", "description": "the caller's  node id" },
-                  "to": { "type": "string", "description": "the callee's  node id" },
+                  "from": { "type": "string", "description": "the caller's node id" },
+                  "to": { "type": "string", "description": "the callee's node id" },
                   "lines": { "type": "array", "items": { "type": "integer" }, "description": "calls edges: 1-based lines of the calls, in the caller's file" },
                   "stale": { "type": "boolean" }
                 }
@@ -765,7 +765,7 @@
             "object": { "$ref": "#/definitions/Id" },
             "lines": { "$ref": "#/definitions/LineRange", "description": "on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile" },
             "selector": { "type": "string" },
-            "node": { "type": "string", "description": "on a diagram tile, a node id (`graph.nodes[].id`): the end attaches to that node's box as the tile draws it, and follows it when the graph is computed again. Other tiles: the whole tile" }
+            "node": { "type": "string", "description": "on a diagram tile, a node id (knowledge.nodes[].id for kind graph, graph.nodes[].id for kind calls): the end attaches to that node's box as the tile draws it, and follows it when the graph changes. Other tiles: the whole tile" }
           },
           "additionalProperties": false
         },

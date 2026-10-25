@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "03ea9c43ac2426ec"
+const SchemaHash = "9a9362fdcab146df"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -786,9 +786,9 @@ type DiagramPropsGraphNodes struct {
 }
 
 type DiagramPropsGraphEdges struct {
-	// the caller's  node id
+	// the caller's node id
 	From string `json:"from"`
-	// the callee's  node id
+	// the callee's node id
 	To string `json:"to"`
 	// calls edges: 1-based lines of the calls, in the caller's file
 	Lines []int `json:"lines,omitempty"`
@@ -859,7 +859,7 @@ type DiagramProps struct {
 	Direction *string `json:"direction,omitempty"`
 	// levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded
 	Depth *int `json:"depth,omitempty"`
-	// node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one
+	// kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one
 	Expanded []string `json:"expanded,omitempty"`
 	// default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph
 	Title *string `json:"title,omitempty"`

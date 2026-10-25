@@ -134,6 +134,7 @@ public enum NoteDiagram {
         }
         var output = ""
         output.reserveCapacity(svg.utf8.count)
+        let scalars = svg.unicodeScalars
         var index = svg.startIndex
         var inStyle = false
         while index < svg.endIndex {
@@ -145,19 +146,19 @@ public enum NoteDiagram {
                 output.append(contentsOf: text)
             }
             guard textEnd < svg.endIndex else { break }
-            var tagEnd = svg.index(after: textEnd)
-            var quote: Character?
+            var tagEnd = scalars.index(after: textEnd)
+            var quote: Unicode.Scalar?
             while tagEnd < svg.endIndex {
-                let character = svg[tagEnd]
+                let character = scalars[tagEnd]
                 if let active = quote {
                     if character == active { quote = nil }
                 } else if character == "\"" || character == "'" {
                     quote = character
                 } else if character == ">" {
-                    tagEnd = svg.index(after: tagEnd)
+                    tagEnd = scalars.index(after: tagEnd)
                     break
                 }
-                tagEnd = svg.index(after: tagEnd)
+                tagEnd = scalars.index(after: tagEnd)
             }
             let tag = svg[textEnd..<tagEnd]
             output.append(contentsOf: themedTag(tag, variables: variables))
@@ -169,7 +170,7 @@ public enum NoteDiagram {
     }
 
     private nonisolated static let styledAttributes: Set<Substring> = [
-        "style", "fill", "stroke", "color", "stop-color", "flood-color", "lighting-color",
+        "style", "fill", "stroke", "color", "stop-color", "flood-color", "lighting-color", "font-family",
     ]
 
     private nonisolated static func themedTag(_ tag: Substring, variables: [String: String]) -> String {
@@ -315,7 +316,28 @@ private final class PeleEngine: @unchecked Sendable {
                 context.evaluateScript(script)
                 context.evaluateScript("""
                 function easlRenderDiagram(source, options) {
+                    if (pele.detectType(source) === "block") {
+                        let spaces = 0;
+                        for (const match of source.matchAll(/\\bspace\\s*:\\s*(\\d+)/g)) {
+                            spaces += Number(match[1]);
+                            if (spaces > 64)
+                                throw new Error("diagram exceeds the native block parsing budget");
+                        }
+                    }
                     const model = pele.parse(source, {limit: 1024, maxEdges: 8});
+                    if (model.type === "gantt" && (model.excludes?.length || model.includes?.length))
+                        throw new Error("diagram exceeds the native calendar rendering budget");
+                    if (model.type === "venn") {
+                        if (model.subsets.length > 12)
+                            throw new Error("diagram exceeds the native Venn rendering budget");
+                        const sets = new Set();
+                        for (const subset of model.subsets)
+                            for (const name of subset.sets) {
+                                sets.add(name);
+                                if (sets.size > 5)
+                                    throw new Error("diagram exceeds the native Venn rendering budget");
+                            }
+                    }
                     const groups = model.subgraphs?.length || 0;
                     const nodes = model.nodes?.size || model.actors?.size || 0;
                     const edges = model.edges?.length || model.messages?.length || 0;
@@ -331,6 +353,8 @@ private final class PeleEngine: @unchecked Sendable {
                             seen.add(item);
                             const values = item instanceof Map ? [...item.values()] : Object.values(item);
                             entries += values.length;
+                            if (entries > 256)
+                                throw new Error("diagram exceeds the native rendering budget");
                             pending.push(...values);
                         }
                         if (entries > 256 || text > 4096)
@@ -360,7 +384,6 @@ private final class PeleEngine: @unchecked Sendable {
             "responsive": true,
             "autoDirection": false,
             "outputLimit": 100_000,
-            "maxEdges": 8,
             // Notes are untrusted markdown too: no navigation or network from a diagram.
             "links": false,
             "images": false,

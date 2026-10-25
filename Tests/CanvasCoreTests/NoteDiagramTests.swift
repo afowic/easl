@@ -74,6 +74,17 @@ struct NoteDiagramTests {
         #expect(result.contains("stroke=\"var(--unfinished\""))
     }
 
+    @Test func svgThemingPreservesCombiningLabelsAndResolvesFontFamilies() {
+        for scalar in ["\u{301}", "\u{200d}", "\u{fe0f}"] {
+            let label = scalar + "fill='var(--pele-fg)'"
+            let svg = "<svg><text>" + label + "</text><path fill='var(--pele-fg)'/><text font-family='var(--_fm)'>Rail</text></svg>"
+            let result = NoteDiagram.themed(svg, colors: ["fg": "#123456", "font-mono": "Menlo"])
+            #expect(result.contains("<text>" + label + "</text>"))
+            #expect(result.contains("<path fill='#123456'/>"))
+            #expect(result.contains("font-family='Menlo'"))
+        }
+    }
+
     @Test func extremeDiagramWidthsNeverTrapInMeasurement() async throws {
         if try runIsolatedTestIfParallelNow("NoteDiagramTests/extremeDiagramWidthsNeverTrapInMeasurement") { return }
         let markdown = "```mermaid\ngraph LR\nA-->B\n```"
@@ -101,6 +112,46 @@ struct NoteDiagramTests {
         let refused = render("```mermaid\n" + compact + "\n```")
         #expect(refused.attachment == nil)
         #expect(refused.text.string.contains("structural rendering budget"))
+    }
+
+    @Test func expensiveCalendarAndBlockFencesKeepTheirSource() {
+        var gantt = "gantt\ndateFormat DD.MM.YYYY HH:mm:ss.SSS\nexcludes weekends, 02.01.2024 00:00:00.000\nsection S\nT0 :t0, 01.01.2024 00:00:00.000, 20000d\n"
+        for i in 1...7 { gantt += "T\(i) :t\(i), after t\(i - 1), 20000d\n" }
+        for (source, marker) in [
+            (gantt, "T7 :t7, after t6, 20000d"),
+            ("gantt\ndateFormat YYYY-MM-DD\nincludes 2024-01-01\nsection S\nTask :a, 2024-01-01, 20000d", "includes 2024-01-01"),
+            ("block-beta\nspace:99999", "space:99999"),
+            ("block-beta\nspace:40\nspace:40", "space:40"),
+        ] {
+            let (text, attachment) = render("```mermaid\n" + source + "\n```")
+            #expect(attachment == nil)
+            #expect(text.string.contains(marker))
+            #expect(text.string.contains("budget"))
+        }
+    }
+
+    @Test func boundedCalendarAndBlockDiagramsStillRender() {
+        for source in [
+            "gantt\ndateFormat YYYY-MM-DD\nsection S\nTask :a, 2024-01-01, 2d",
+            "block-beta\ncolumns 3\nA space:1 B",
+            "graph LR\nA[\"space:99999\"]-->B",
+        ] {
+            let (_, attachment) = render("```mermaid\n" + source + "\n```")
+            #expect(attachment?.image != nil)
+        }
+    }
+
+    @Test func vennDiagramsBoundSetsAndSubsets() {
+        let five = "venn-beta\n" + (0..<5).map { "set S\($0): \(10 + $0 * 13)" }.joined(separator: "\n")
+        let unions = ["S0,S1", "S0,S2", "S0,S3", "S0,S4", "S1,S2", "S1,S3", "S1,S4", "S2,S3"]
+        let bounded = five + "\n" + unions.prefix(7).map { "union \($0): 1" }.joined(separator: "\n")
+        #expect(render("```mermaid\n" + bounded + "\n```").attachment?.image != nil)
+        for source in [five + "\nset S5", five + "\n" + unions.map { "union \($0): 1" }.joined(separator: "\n")] {
+            let (text, attachment) = render("```mermaid\n" + source + "\n```")
+            #expect(attachment == nil)
+            #expect(text.string.contains("venn-beta"))
+            #expect(text.string.contains("budget"))
+        }
     }
 
     @Test func noteDiagramBudgetAppliesEvenWhenImagesAreCached() {
