@@ -1,6 +1,6 @@
 # Third-party notices
 
-Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`). The HTML kit uses Tailwind CSS 4.3.3, Mermaid 11.17.2, and KaTeX 0.19.1 under MIT; Mermaid's bundled dependencies have their own notices and KaTeX's fonts use SIL OFL 1.1. Native notes use Pele 1.9.1 under MIT, with its Lucide ISC notice retained.
+Swift packages linked into easl, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with two patches (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`). The HTML kit uses Tailwind CSS 4.3.3, Mermaid 11.17.2, and KaTeX 0.19.1 under MIT; Mermaid's bundled dependencies have their own notices and KaTeX's fonts use SIL OFL 1.1.
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |

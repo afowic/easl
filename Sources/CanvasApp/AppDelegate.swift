@@ -88,8 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
-        // Warm the serial diagram worker so the first pending fence becomes a bitmap sooner.
-        NoteDiagram.prewarm()
         // app.metrics: main-thread stretches (and the app.log line naming a long one's cause).
         Metrics.shared.monitorMainThread()
         // A main thread stuck for a second gets `sample`d into <home>/stalls/ (docs/design.md,

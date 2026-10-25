@@ -102,14 +102,14 @@ struct NoteMathTests {
         #expect(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) == true)
     }
 
-    @Test func measuredNoteFitsTheMathItDraws() async {
+    @Test func measuredNoteFitsTheMathItDraws() {
         let markdown = #"""
         $$
         \frac{a}{b}
         $$
         """#
-        let plain = await ObjectMeasure.note(NoteMarkdown.parse("a"), markdown: "a", width: 400, excerpts: [:], images: [:])
-        let measured = await ObjectMeasure.note(NoteMarkdown.parse(markdown), markdown: markdown, width: 400, excerpts: [:], images: [:])
+        let plain = ObjectMeasure.note(NoteMarkdown.parse("a"), markdown: "a", width: 400, excerpts: [:], images: [:])
+        let measured = ObjectMeasure.note(NoteMarkdown.parse(markdown), markdown: markdown, width: 400, excerpts: [:], images: [:])
         #expect(measured.size.height > plain.size.height)
     }
 

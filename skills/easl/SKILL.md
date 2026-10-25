@@ -196,7 +196,7 @@ An anchored fence shows its code as it is on disk now and follows it as lines mo
 - Excerpt, rendered from disk: ```` ```ts file=src/store.ts#L41-60 ```` or ```` ```ts file=src/store.ts symbol=restore ```` (`symbol=Class.method` finds methods deep in long classes: prefer it for whole functions).
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence. An applied one shows "✓ applied"; no need to delete it.
 - Plain fences are free-written snippets; `file:line` references anywhere in a note become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir); `$…$` and a `$$…$$` paragraph typeset as math (LaTeX; `\$` is a literal dollar and code spans/fences stay as written).
-- A `mermaid` fence draws as a diagram at the note's width, in the note's light or dark theme (Pele, offline); invalid or over-budget sources keep their rows and an explanation. See the [native limits](references/ui.md#zoom-and-keys).
+- A `mermaid` fence is ordinary free-written code, including any math delimiters. Use an HTML tile to render a Mermaid diagram.
 
 Whether an excerpt still finds its code: `easl get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`; `relocated`: the code moved and the fence followed it; `stale`: the code it quoted is gone), not a render searched for badges.
 Table cells wrap to the note's width, so keep evidence timelines as `| time | event | evidence |` tables; `layout.check` `truncated` `{what: "table", x}` means too many columns: widen the note by `x` or split the table.
@@ -242,7 +242,7 @@ For "show me who calls X" (or what X calls), create a live call graph from the l
 ### HTML explainers
 
 `object.create --type html` with `{"html": "…", "title": "…"}` and `"size": "fit"` (with `frame` `{x, y, w}`, default width 640).
-Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, draw Mermaid diagrams with the vendored Mermaid.js build (offline, strict security, light or dark theme), and provide grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`). Pele is used only for native note fences.
+Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, draw Mermaid diagrams with the vendored Mermaid.js build (offline, strict security, light or dark theme), and provide grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
 Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting code.
 Read `references/html-explainers.md` before building an explainer: components, playbooks for plans, walkthroughs, comparisons and decisions, and Mermaid pitfalls.
 

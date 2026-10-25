@@ -42,8 +42,6 @@ final class NoteTile: NSView, TileContent {
     private var reading: LinkReading?
     private var resolveTask: Task<Void, Never>?
     private var resolveGeneration = 0
-    private var diagramTask: Task<Void, Never>?
-    private var diagramGeneration = 0
     private var pendingResolve: DispatchWorkItem?
     private var live = true
     private var hostBoardClosed = false
@@ -168,7 +166,6 @@ final class NoteTile: NSView, TileContent {
         let changed = object.props["markdown"] != self.object.props["markdown"]
         let rerooted = object.props["root"] != self.object.props["root"] || object.props["ref"] != self.object.props["ref"]
         self.object = object
-        if changed { cancelDiagrams() }
         if rerooted {
             reading = nil
             excerpts = [:]
@@ -216,28 +213,11 @@ final class NoteTile: NSView, TileContent {
     /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
-        cancelDiagrams()
         guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
-                                    appearance: effectiveAppearance)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
-        guard renderer.hasPendingDiagrams, !hostBoardClosed, !board.isClosed else { return }
-        let generation = diagramGeneration
-        let document = document
-        diagramTask = Task { [weak self] in
-            let prepared = await renderer.renderPrepared(document, placeholder: Self.placeholder)
-            guard !Task.isCancelled, let self, self.diagramGeneration == generation else { return }
-            self.diagramTask = nil
-            self.display.textStorage?.setAttributedString(prepared)
-        }
-    }
-
-    private func cancelDiagrams() {
-        diagramGeneration += 1
-        diagramTask?.cancel()
-        diagramTask = nil
     }
 
     // MARK: Live fences
@@ -431,7 +411,6 @@ final class NoteTile: NSView, TileContent {
 
     /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
     private func suspendWork() {
-        cancelDiagrams()
         resolveGeneration += 1
         pendingResolve?.cancel()
         pendingResolve = nil
@@ -803,18 +782,13 @@ final class NoteTile: NSView, TileContent {
             }
             pictures = await NoteImages.load(NoteImages.sources(in: document), root: linkRoot)
         }
-        guard !Task.isCancelled, generation == closureGeneration else {
-            return .placeholder(request, "board availability changed while rendering")
-        }
-        let inset = NSSize(width: 8, height: 10)
-        let appearance = effectiveAppearance
-        let text = await NoteRenderer(excerpts: resolved, images: pictures, source: source,
-                                      width: request.size.width - 2 * inset.width, appearance: appearance)
-            .renderPrepared(document, placeholder: Self.placeholder)
-        guard !Task.isCancelled, generation == closureGeneration, markdown == source,
-              effectiveAppearance.name == appearance.name else {
+        guard !Task.isCancelled, generation == closureGeneration, markdown == source else {
             return .placeholder(request, "note changed while rendering")
         }
+        let inset = NSSize(width: 8, height: 10)
+        let text = NoteRenderer(excerpts: resolved, images: pictures, source: source,
+                                width: request.size.width - 2 * inset.width)
+            .render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()

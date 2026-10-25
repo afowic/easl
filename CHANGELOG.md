@@ -4,9 +4,6 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Notes draw `mermaid` fences offline with Pele on a serial background worker, including SVG rasterization. Pending fences show source until their bitmap is ready. Source, width, and appearance changes discard stale results; size-to-fit, text measurement, and exports await the real images. Rejected fences show a bounded source preview and their explanation instead of laying out an entire hostile fence. HTML tiles keep the existing Mermaid.js renderer and layout.
-- Native graph-detail exports prepare their own images rather than sharing live preview state. Parked tiles and live redraws or resizes cannot replace an export's diagram with pending source or cancel an otherwise current export.
-- Native diagrams use shared source, model, layout-work, and bitmap caps instead of small per-chart budgets. A note's prepared and displayed attachments each stay within 128 MiB of rasters, including cached and repeated fences. State and block composites, architecture groups, and raster-area-scaled group work bound nested overdraw even on wide notes; C4 routing work bounds large shape/relation combinations. Block-space checks still prevent parse amplification, and calendar charts retain a scheduling-work bound without rejecting ordinary inclusions or exclusions. SVG theming preserves literal and combining-character labels, resolves diagram font families, and finite width normalization protects measurement.
 - Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
 - Diagram measurement respects the diagram kind and reports invalid authored graph input as `invalid_params`, consistent with easld.
 - Display math in blockquotes excludes the quote markers from the formula.

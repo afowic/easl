@@ -52,7 +52,7 @@ Never paste code you could anchor: pasted code is a copy that falls behind silen
 ## Mermaid
 
 HTML diagrams use the vendored Mermaid.js 11.17.2 build offline, with `securityLevel: 'strict'`
-and the tile's light or dark theme. Pele is used only for native note fences.
+and the tile's light or dark theme. A `mermaid` fence in a note stays ordinary code.
 
 - **Give diagrams the full width.** Mermaid scales a diagram down to fit its container,
   so a sequence diagram squeezed into a narrow column (a grid cell, one `canvas-compare` pane) renders its message text at ~9 px, unreadable at 100%.
