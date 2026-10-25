@@ -8,6 +8,13 @@ import (
 // diagramGraphMaxNodes is DiagramSpec.maxGraphNodes: calls graphs stop at
 // CallGraphBuilder.maxNodes, while a caller-supplied knowledge graph may be much larger.
 const diagramGraphMaxNodes = 500
+const diagramGraphMaxEdges = 2000
+const diagramGraphMaxIDBytes = 256
+const diagramGraphMaxNodeLabelBytes = 512
+const diagramGraphMaxEdgeLabelBytes = 256
+const diagramGraphMaxDetailBytes = 8192
+const diagramGraphMaxSources = 8
+const diagramGraphMaxSourceFieldBytes = 256
 
 type diagramGraphNodeInput struct {
 	id      string
@@ -58,6 +65,9 @@ func graphOf(props map[string]any) (map[string]any, string) {
 		if !ok || id == "" {
 			return nil, path + ".id must be a non-empty string"
 		}
+		if len(id) > diagramGraphMaxIDBytes {
+			return nil, path + ".id exceeds " + itoa(diagramGraphMaxIDBytes) + " UTF-8 bytes"
+		}
 		if ids[id] {
 			return nil, "duplicate node id \"" + id + "\""
 		}
@@ -79,6 +89,9 @@ func graphOf(props map[string]any) (map[string]any, string) {
 				label = s
 			}
 		}
+		if len(label) > diagramGraphMaxNodeLabelBytes {
+			return nil, path + ".label exceeds " + itoa(diagramGraphMaxNodeLabelBytes) + " UTF-8 bytes"
+		}
 		if strings.TrimSpace(label) == "" {
 			return nil, path + ".label must not be empty"
 		}
@@ -87,6 +100,9 @@ func graphOf(props map[string]any) (map[string]any, string) {
 			s, ok := v.(string)
 			if !ok {
 				return nil, path + ".detail must be text"
+			}
+			if len(s) > diagramGraphMaxDetailBytes {
+				return nil, path + ".detail exceeds " + itoa(diagramGraphMaxDetailBytes) + " UTF-8 bytes"
 			}
 			if s != "" {
 				detail = &s
@@ -106,6 +122,9 @@ func graphOf(props map[string]any) (map[string]any, string) {
 			if !ok {
 				return nil, path + ".sources must be an array"
 			}
+			if len(list) > diagramGraphMaxSources {
+				return nil, path + ".sources has " + itoa(len(list)) + " entries: at most " + itoa(diagramGraphMaxSources)
+			}
 			for j, entry := range list {
 				sourcePath := path + ".sources[" + itoa(j) + "]"
 				object, ok := entry.(map[string]any)
@@ -121,6 +140,9 @@ func graphOf(props map[string]any) (map[string]any, string) {
 					text, ok := field.(string)
 					if !ok || text == "" {
 						return nil, sourcePath + "." + key + " must be a non-empty string"
+					}
+					if len(text) > diagramGraphMaxSourceFieldBytes {
+						return nil, sourcePath + "." + key + " exceeds " + itoa(diagramGraphMaxSourceFieldBytes) + " UTF-8 bytes"
 					}
 					source[key] = text
 				}
@@ -142,10 +164,14 @@ func graphOf(props map[string]any) (map[string]any, string) {
 	}
 
 	var edges []diagramGraphEdgeInput
+	endpoints := map[[2]string]bool{}
 	if v, present := input["edges"]; present && v != nil {
 		list, ok := v.([]any)
 		if !ok {
 			return nil, "props.graph.edges must be an array"
+		}
+		if len(list) > diagramGraphMaxEdges {
+			return nil, "props.graph.edges has " + itoa(len(list)) + " edges: at most " + itoa(diagramGraphMaxEdges)
 		}
 		for i, value := range list {
 			path := "props.graph.edges[" + itoa(i) + "]"
@@ -167,11 +193,19 @@ func graphOf(props map[string]any) (map[string]any, string) {
 			if !ids[to] {
 				return nil, path + ".to \"" + to + "\" is not a node"
 			}
+			pair := [2]string{from, to}
+			if endpoints[pair] {
+				return nil, path + " duplicates directed edge \"" + from + "\" -> \"" + to + "\""
+			}
+			endpoints[pair] = true
 			label := ""
 			if v, present := raw["label"]; present && v != nil {
 				s, ok := v.(string)
 				if !ok {
 					return nil, path + ".label must be text"
+				}
+				if len(s) > diagramGraphMaxEdgeLabelBytes {
+					return nil, path + ".label exceeds " + itoa(diagramGraphMaxEdgeLabelBytes) + " UTF-8 bytes"
 				}
 				label = s
 			}

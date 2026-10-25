@@ -229,3 +229,178 @@ func TestPracticeStatusFeedsBackThroughObjectUpdate(t *testing.T) {
 		t.Errorf("an update keeps the detail: %v", nodes["cold"]["detail"])
 	}
 }
+
+func TestGraphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates(t *testing.T) {
+	f := newFixture(t)
+	nodes := make([]any, 0, 500)
+	for i := range 500 {
+		nodes = append(nodes, graphNode(fmt.Sprintf("n%d", i), fmt.Sprintf("Node %d", i), nil))
+	}
+	edges := make([]any, 0, 2001)
+	for from := 0; from < 500 && len(edges) < 2001; from++ {
+		for to := from + 1; to < 500 && len(edges) < 2001; to++ {
+			edges = append(edges, map[string]any{"from": fmt.Sprintf("n%d", from), "to": fmt.Sprintf("n%d", to)})
+		}
+	}
+	props := boundedGraphProps(nodes, edges[:2000])
+	id := createGraph(f, props)
+	if graph := storedGraph(f, id); len(graph["edges"].([]any)) != 2000 {
+		t.Fatalf("2000 distinct edges stored as %v", graph["edges"])
+	}
+	over := f.refused("object.create", map[string]any{"type": "diagram", "props": boundedGraphProps(nodes, edges)})
+	if !strings.Contains(over, "2001 edges: at most 2000") {
+		t.Errorf("edge cap refusal = %q", over)
+	}
+	repeated := make([]any, 10000)
+	for i := range repeated {
+		repeated[i] = map[string]any{"from": "a", "to": "b"}
+	}
+	attack := boundedGraphProps([]any{graphNode("a", "A", nil), graphNode("b", "B", nil)}, repeated)
+	for _, method := range []string{"object.create", "object.update"} {
+		params := map[string]any{"type": "diagram", "props": attack}
+		if method == "object.update" {
+			params = map[string]any{"id": id, "props": attack}
+		}
+		message := f.refused(method, params)
+		if !strings.Contains(message, "10000 edges: at most 2000") {
+			t.Errorf("%s refusal = %q", method, message)
+		}
+	}
+	graph := storedGraph(f, id)
+	if len(graph["nodes"].([]any)) != 500 || len(graph["edges"].([]any)) != 2000 {
+		t.Errorf("refused update changed stored graph")
+	}
+	got := f.result("object.get", map[string]any{"id": id})
+	if rev := got["object"].(map[string]any)["rev"]; rev != 1.0 {
+		t.Errorf("refused update changed revision to %v", rev)
+	}
+}
+
+func boundedGraphProps(nodes, edges []any) map[string]any {
+	return map[string]any{"kind": "graph", "graph": map[string]any{"nodes": nodes, "edges": edges}}
+}
+
+func TestGraphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel(t *testing.T) {
+	nodes := []any{
+		graphNode("a", "A", map[string]any{"level": 0.0}),
+		graphNode("b", "B", map[string]any{"level": 1.0}),
+	}
+	first := map[string]any{"from": "a", "to": "b", "label": "first"}
+	for _, label := range []any{nil, "first", "different", 7.0} {
+		duplicate := map[string]any{"from": "a", "to": "b", "label": label}
+		graph, problem := graphOf(boundedGraphProps(nodes, []any{first, duplicate}))
+		if graph != nil || problem != `props.graph.edges[1] duplicates directed edge "a" -> "b"` {
+			t.Errorf("label %v: graph = %v, problem = %q", label, graph, problem)
+		}
+	}
+	distinct := []any{first, map[string]any{"from": "b", "to": "a"}, map[string]any{"from": "a", "to": "a"}}
+	graph, problem := graphOf(boundedGraphProps(nodes, distinct))
+	if problem != "" || graph == nil {
+		t.Fatalf("distinct endpoints refused: %q", problem)
+	}
+	if len(graph["edges"].([]any)) != 3 {
+		t.Errorf("distinct edges = %v", graph["edges"])
+	}
+	collisionNodes := []any{
+		graphNode("a->b", "a->b", nil), graphNode("c", "c", nil),
+		graphNode("a", "a", nil), graphNode("b->c", "b->c", nil),
+	}
+	collisionEdges := []any{map[string]any{"from": "a->b", "to": "c"}, map[string]any{"from": "a", "to": "b->c"}}
+	graph, problem = graphOf(boundedGraphProps(collisionNodes, collisionEdges))
+	if problem != "" || graph == nil || len(graph["edges"].([]any)) != 2 {
+		t.Errorf("distinct endpoint pairs collided: %q", problem)
+	}
+}
+
+func graphTextProps(field, text string) map[string]any {
+	node := graphNode("a", "A", nil)
+	edges := []any{}
+	switch field {
+	case "edgeLabel":
+		edges = []any{map[string]any{"from": "a", "to": "b", "label": text}}
+	case "session", "message", "board", "tile":
+		node["sources"] = []any{map[string]any{field: text}}
+	case "name":
+		delete(node, "label")
+		node["name"] = text
+	default:
+		node[field] = text
+	}
+	return boundedGraphProps([]any{node, graphNode("b", "B", nil)}, edges)
+}
+
+func TestGraphTextLimitsCountUTF8BytesAndKeepBoundaryText(t *testing.T) {
+	fields := []struct {
+		field string
+		limit int
+		path  string
+	}{
+		{"id", 256, "props.graph.nodes[0].id"},
+		{"label", 512, "props.graph.nodes[0].label"},
+		{"name", 512, "props.graph.nodes[0].label"},
+		{"detail", 8192, "props.graph.nodes[0].detail"},
+		{"edgeLabel", 256, "props.graph.edges[0].label"},
+		{"session", 256, "props.graph.nodes[0].sources[0].session"},
+		{"message", 256, "props.graph.nodes[0].sources[0].message"},
+		{"board", 256, "props.graph.nodes[0].sources[0].board"},
+		{"tile", 256, "props.graph.nodes[0].sources[0].tile"},
+	}
+	for _, entry := range fields {
+		for _, unit := range []string{"x", "é", "🙂"} {
+			text := strings.Repeat(unit, entry.limit/len(unit))
+			graph, problem := graphOf(graphTextProps(entry.field, text))
+			if problem != "" || graph == nil {
+				t.Fatalf("%s boundary refused: %q", entry.field, problem)
+			}
+			node := graph["nodes"].([]any)[0].(map[string]any)
+			var stored any
+			switch entry.field {
+			case "edgeLabel":
+				stored = graph["edges"].([]any)[0].(map[string]any)["label"]
+			case "session", "message", "board", "tile":
+				stored = node["sources"].([]any)[0].(map[string]any)[entry.field]
+			case "label", "name":
+				stored = node["name"]
+			default:
+				stored = node[entry.field]
+			}
+			if stored != text {
+				t.Errorf("%s boundary text changed", entry.field)
+			}
+			graph, problem = graphOf(graphTextProps(entry.field, text+"x"))
+			want := fmt.Sprintf("%s exceeds %d UTF-8 bytes", entry.path, entry.limit)
+			if graph != nil || problem != want {
+				t.Errorf("%s excess: graph = %v, problem = %q, want %q", entry.field, graph, problem, want)
+			}
+		}
+	}
+}
+
+func TestGraphSourceCountsAndValidationOrderAreBounded(t *testing.T) {
+	sources := make([]any, 8)
+	for i := range sources {
+		sources[i] = map[string]any{"session": "s", "message": "m", "board": "b", "tile": "t"}
+	}
+	node := graphNode("a", "A", map[string]any{"sources": sources})
+	graph, problem := graphOf(boundedGraphProps([]any{node}, []any{}))
+	if problem != "" || graph == nil {
+		t.Fatalf("eight sources refused: %q", problem)
+	}
+	if len(graph["nodes"].([]any)[0].(map[string]any)["sources"].([]any)) != 8 {
+		t.Errorf("eight sources changed")
+	}
+	node["sources"] = make([]any, 9)
+	graph, problem = graphOf(boundedGraphProps([]any{node}, []any{}))
+	if graph != nil || problem != "props.graph.nodes[0].sources has 9 entries: at most 8" {
+		t.Errorf("source cap: graph = %v, problem = %q", graph, problem)
+	}
+	badEdges := make([]any, 2001)
+	plain := graphNode("a", "A", nil)
+	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.graph.edges has 2001 edges: at most 2000" {
+		t.Errorf("edge cap order: %q", problem)
+	}
+	plain["label"] = strings.Repeat("x", 513)
+	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.graph.nodes[0].label exceeds 512 UTF-8 bytes" {
+		t.Errorf("node validation order: %q", problem)
+	}
+}

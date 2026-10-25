@@ -27,6 +27,13 @@ public struct DiagramSpec: Equatable, Sendable {
     /// `CallGraphBuilder.maxNodes`; a knowledge graph is authored on purpose, so it may be much
     /// larger while the layered layout and render stay bounded.
     public static let maxGraphNodes = 500
+    public static let maxGraphEdges = 2000
+    public static let maxGraphIDBytes = 256
+    public static let maxGraphNodeLabelBytes = 512
+    public static let maxGraphEdgeLabelBytes = 256
+    public static let maxGraphDetailBytes = 8192
+    public static let maxGraphSources = 8
+    public static let maxGraphSourceFieldBytes = 256
 
     public var kind: DiagramKind
     /// The file declaring the root symbol: board-relative or absolute; nil to find `symbol`'s file.
@@ -96,6 +103,11 @@ public struct DiagramSpec: Equatable, Sendable {
         var label: String?
     }
 
+    private struct GraphEdgeEndpoints: Hashable {
+        var from: String
+        var to: String
+    }
+
     /// A `kind: "graph"` diagram's graph as `object.create`/`update` will store it: the caller's
     /// nodes and edges with reasoning levels computed where omitted (longest path from a source
     /// node; premises 0). Failure names the rule broken.
@@ -116,14 +128,17 @@ public struct DiagramSpec: Equatable, Sendable {
             let path = "props.graph.nodes[\(index)]"
             guard let raw = value.object else { return (nil, "\(path) must be an object") }
             guard let id = raw["id"]?.string, !id.isEmpty else { return (nil, "\(path).id must be a non-empty string") }
+            guard id.utf8.count <= maxGraphIDBytes else { return (nil, "\(path).id exceeds \(maxGraphIDBytes) UTF-8 bytes") }
             guard ids.insert(id).inserted else { return (nil, "duplicate node id \"\(id)\"") }
             let label = raw["label"]?.string ?? raw["name"]?.string ?? ""
+            guard label.utf8.count <= maxGraphNodeLabelBytes else { return (nil, "\(path).label exceeds \(maxGraphNodeLabelBytes) UTF-8 bytes") }
             guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return (nil, "\(path).label must not be empty")
             }
             var detail: String?
             if let value = raw["detail"], value != .null {
                 guard let text = value.string else { return (nil, "\(path).detail must be text") }
+                guard text.utf8.count <= maxGraphDetailBytes else { return (nil, "\(path).detail exceeds \(maxGraphDetailBytes) UTF-8 bytes") }
                 detail = text.isEmpty ? nil : text
             }
             var level: Int?
@@ -134,6 +149,7 @@ public struct DiagramSpec: Equatable, Sendable {
             var sources: [DiagramSource]?
             if let value = raw["sources"], value != .null {
                 guard let list = value.array else { return (nil, "\(path).sources must be an array") }
+                guard list.count <= maxGraphSources else { return (nil, "\(path).sources has \(list.count) entries: at most \(maxGraphSources)") }
                 var parsed: [DiagramSource] = []
                 for (sourceIndex, entry) in list.enumerated() {
                     let sourcePath = "\(path).sources[\(sourceIndex)]"
@@ -142,6 +158,7 @@ public struct DiagramSpec: Equatable, Sendable {
                     for key in ["session", "message", "board", "tile"] {
                         guard let field = object[key], field != .null else { continue }
                         guard let text = field.string, !text.isEmpty else { return (nil, "\(sourcePath).\(key) must be a non-empty string") }
+                        guard text.utf8.count <= maxGraphSourceFieldBytes else { return (nil, "\(sourcePath).\(key) exceeds \(maxGraphSourceFieldBytes) UTF-8 bytes") }
                         fields[key] = text
                     }
                     guard !fields.isEmpty else { return (nil, "\(sourcePath) needs a session, message, board, or tile") }
@@ -159,8 +176,10 @@ public struct DiagramSpec: Equatable, Sendable {
             nodes.append(GraphNodeInput(id: id, label: label, detail: detail, level: level, sources: sources, status: status))
         }
         var edges: [GraphEdgeInput] = []
+        var endpoints: Set<GraphEdgeEndpoints> = []
         if let value = input["edges"], value != .null {
             guard let list = value.array else { return (nil, "props.graph.edges must be an array") }
+            guard list.count <= maxGraphEdges else { return (nil, "props.graph.edges has \(list.count) edges: at most \(maxGraphEdges)") }
             for (index, entry) in list.enumerated() {
                 let path = "props.graph.edges[\(index)]"
                 guard let raw = entry.object else { return (nil, "\(path) must be an object") }
@@ -168,9 +187,13 @@ public struct DiagramSpec: Equatable, Sendable {
                 guard let to = raw["to"]?.string, !to.isEmpty else { return (nil, "\(path).to must be a node id") }
                 guard ids.contains(from) else { return (nil, "\(path).from \"\(from)\" is not a node") }
                 guard ids.contains(to) else { return (nil, "\(path).to \"\(to)\" is not a node") }
+                guard endpoints.insert(GraphEdgeEndpoints(from: from, to: to)).inserted else {
+                    return (nil, "\(path) duplicates directed edge \"\(from)\" -> \"\(to)\"")
+                }
                 var label: String?
                 if let value = raw["label"], value != .null {
                     guard let text = value.string else { return (nil, "\(path).label must be text") }
+                    guard text.utf8.count <= maxGraphEdgeLabelBytes else { return (nil, "\(path).label exceeds \(maxGraphEdgeLabelBytes) UTF-8 bytes") }
                     label = text.isEmpty ? nil : text
                 }
                 edges.append(GraphEdgeInput(from: from, to: to, label: label))

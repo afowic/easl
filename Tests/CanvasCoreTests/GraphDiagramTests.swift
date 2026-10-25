@@ -121,6 +121,140 @@ final class GraphDiagramTests {
         #expect(over["error"]?["message"]?.string?.contains("501 nodes: at most 500") == true, "\(over["error"] ?? .null)")
     }
 
+    @Test func graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates() async throws {
+        let (_, _, server, client) = try await api()
+        defer { server.stop() }
+        var distinct: [String] = []
+        for from in 0..<500 {
+            for to in (from + 1)..<500 where distinct.count < 2001 {
+                distinct.append(#"{"from":"n\#(from)","to":"n\#(to)"}"#)
+            }
+        }
+        let nodes = Self.nodeList(500)
+        let created = try await call(client, "at", "object.create",
+                                     #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(nodes)],"edges":[\#(distinct.prefix(2000).joined(separator: ","))]}}}"#)
+        #expect(created["ok"] == .bool(true), "\(created["error"] ?? .null)")
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let over = try await call(client, "over", "object.create",
+                                  #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(nodes)],"edges":[\#(distinct.joined(separator: ","))]}}}"#)
+        #expect(over["ok"] == .bool(false))
+        #expect(over["error"]?["message"]?.string?.contains("2001 edges: at most 2000") == true)
+        let repeated = Array(repeating: #"{"from":"a","to":"b"}"#, count: 10000).joined(separator: ",")
+        let props = #"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[\#(repeated)]}}"#
+        let refusedCreate = try await call(client, "duplicates", "object.create", #"{"type":"diagram","props":\#(props)}"#)
+        #expect(refusedCreate["ok"] == .bool(false))
+        #expect(refusedCreate["error"]?["message"]?.string?.contains("10000 edges: at most 2000") == true)
+        let refusedUpdate = try await call(client, "update", "object.update", #"{"id":"\#(id)","props":\#(props)}"#)
+        #expect(refusedUpdate["ok"] == .bool(false))
+        #expect(refusedUpdate["error"]?["message"]?.string?.contains("10000 edges: at most 2000") == true)
+        let got = try await call(client, "get", "object.get", #"{"id":"\#(id)"}"#)
+        let graph = try #require(DiagramGraph(got["result"]?["object"]?["props"]?["graph"]))
+        #expect(graph.nodes.count == 500)
+        #expect(graph.edges.count == 2000)
+        #expect(got["result"]?["object"]?["rev"]?.int == 1)
+    }
+
+    static func boundedGraphProps(nodes: [JSONValue], edges: [JSONValue] = []) -> JSONValue {
+        .object(["kind": "graph", "graph": .object(["nodes": .array(nodes), "edges": .array(edges)])])
+    }
+
+    @Test func graphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel() throws {
+        let nodes: [JSONValue] = [
+            .object(["id": "a", "label": "A", "level": 0]),
+            .object(["id": "b", "label": "B", "level": 1]),
+        ]
+        let first: JSONValue = .object(["from": "a", "to": "b", "label": "first"])
+        let labels: [JSONValue] = [.null, "first", "different", .number(7)]
+        for label in labels {
+            let duplicate: JSONValue = .object(["from": "a", "to": "b", "label": label])
+            let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: nodes, edges: [first, duplicate]))
+            #expect(result.graph == nil)
+            #expect(result.problem == #"props.graph.edges[1] duplicates directed edge "a" -> "b""#)
+        }
+        let distinct: [JSONValue] = [first, .object(["from": "b", "to": "a"]), .object(["from": "a", "to": "a"])]
+        let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: nodes, edges: distinct))
+        #expect(result.problem == nil)
+        let graph = try #require(result.graph)
+        #expect(graph.edges.count == 3)
+        let collisionNodes: [JSONValue] = ["a->b", "c", "a", "b->c"].map {
+            .object(["id": .string($0), "label": .string($0)])
+        }
+        let collisionEdges: [JSONValue] = [
+            .object(["from": "a->b", "to": "c"]), .object(["from": "a", "to": "b->c"]),
+        ]
+        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: collisionNodes, edges: collisionEdges)).graph?.edges.count == 2)
+    }
+
+    static func graphTextProps(_ field: String, _ text: String) -> JSONValue {
+        var node: [String: JSONValue] = ["id": "a", "label": "A"]
+        var edges: [JSONValue] = []
+        switch field {
+        case "edgeLabel":
+            edges = [.object(["from": "a", "to": "b", "label": .string(text)])]
+        case "session", "message", "board", "tile":
+            node["sources"] = .array([.object([field: .string(text)])])
+        case "name":
+            node.removeValue(forKey: "label")
+            node["name"] = .string(text)
+        default:
+            node[field] = .string(text)
+        }
+        return boundedGraphProps(nodes: [.object(node), .object(["id": "b", "label": "B"])], edges: edges)
+    }
+
+    @Test func graphTextLimitsCountUTF8BytesAndKeepBoundaryText() throws {
+        let fields: [(String, Int, String)] = [
+            ("id", 256, "props.graph.nodes[0].id"),
+            ("label", 512, "props.graph.nodes[0].label"),
+            ("name", 512, "props.graph.nodes[0].label"),
+            ("detail", 8192, "props.graph.nodes[0].detail"),
+            ("edgeLabel", 256, "props.graph.edges[0].label"),
+            ("session", 256, "props.graph.nodes[0].sources[0].session"),
+            ("message", 256, "props.graph.nodes[0].sources[0].message"),
+            ("board", 256, "props.graph.nodes[0].sources[0].board"),
+            ("tile", 256, "props.graph.nodes[0].sources[0].tile"),
+        ]
+        for (field, limit, path) in fields {
+            for unit in ["x", "é", "🙂"] {
+                let text = String(repeating: unit, count: limit / unit.utf8.count)
+                let accepted = DiagramSpec.graph(Self.graphTextProps(field, text))
+                #expect(accepted.problem == nil, "\(field): \(accepted.problem ?? "")")
+                let graph = try #require(accepted.graph)
+                let stored: String?
+                switch field {
+                case "edgeLabel": stored = graph.edges.first?.label
+                case "session", "message", "board", "tile":
+                    stored = graph.json["nodes"]?.array?.first?["sources"]?.array?.first?[field]?.string
+                case "label", "name": stored = graph.nodes.first?.name
+                case "detail": stored = graph.nodes.first?.detail
+                default: stored = graph.nodes.first?.id
+                }
+                #expect(stored == text)
+                let refused = DiagramSpec.graph(Self.graphTextProps(field, text + "x"))
+                #expect(refused.graph == nil)
+                #expect(refused.problem == "\(path) exceeds \(limit) UTF-8 bytes")
+            }
+        }
+    }
+
+    @Test func graphSourceCountsAndValidationOrderAreBounded() throws {
+        let source: JSONValue = .object(["session": "s", "message": "m", "board": "b", "tile": "t"])
+        let node: JSONValue = .object(["id": "a", "label": "A", "sources": .array(Array(repeating: source, count: 8))])
+        let accepted = DiagramSpec.graph(Self.boundedGraphProps(nodes: [node]))
+        #expect(accepted.problem == nil)
+        let graph = try #require(accepted.graph)
+        #expect(graph.nodes.first?.sources?.count == 8)
+        let tooMany: JSONValue = .object(["id": "a", "label": "A", "sources": .array(Array(repeating: .null, count: 9))])
+        let refused = DiagramSpec.graph(Self.boundedGraphProps(nodes: [tooMany]))
+        #expect(refused.graph == nil)
+        #expect(refused.problem == "props.graph.nodes[0].sources has 9 entries: at most 8")
+        let badEdges = Array(repeating: JSONValue.null, count: 2001)
+        let plain: JSONValue = .object(["id": "a", "label": "A"])
+        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [plain], edges: badEdges)).problem == "props.graph.edges has 2001 edges: at most 2000")
+        let badNode: JSONValue = .object(["id": "a", "label": .string(String(repeating: "x", count: 513))])
+        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [badNode], edges: badEdges)).problem == "props.graph.nodes[0].label exceeds 512 UTF-8 bytes")
+    }
+
     /// What practice shows feeds back as a node's status through `object.update`; a reload is a
     /// no-op success that neither recomputes nor overwrites the caller's graph.
     @Test func practiceStatusFeedsBackThroughObjectUpdateAndReloadKeepsTheGraph() async throws {
