@@ -146,12 +146,6 @@ final class NoteTile: NSView, TileContent {
         placeBanner()
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        // Diagrams bake their theme colors into their images; text resolves its colors at draw.
-        renderDisplay()
-    }
-
     var markdown: String { object.props["markdown"]?.string ?? "" }
     /// A code link the user clicked opened this code tile, or found one already showing the
     /// lines (`existing`); the canvas shows it.
@@ -207,7 +201,7 @@ final class NoteTile: NSView, TileContent {
 
     /// The width of the text container the note lays out in (`ObjectMeasure.noteInset`).
     private var textWidth: CGFloat { bounds.width - 2 * ObjectMeasure.noteInset.width }
-    /// The display width while tables or diagrams, including pending ones, depend on it.
+    /// The width the display's text was rendered for, while that text depends on it (a table).
     private var renderedWidth: CGFloat?
 
     /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
@@ -430,7 +424,6 @@ final class NoteTile: NSView, TileContent {
             suspendWork()
             if session != nil { finishEditing(returningFocus: false) }
         } else {
-            renderDisplay()
             resolve()
         }
     }
