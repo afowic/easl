@@ -4,7 +4,9 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Notes draw a `mermaid` fence as a diagram at the note's width, and HTML tiles draw Mermaid with the vendored Pele build instead of Mermaid.js: both are synchronous and offline, follow light/dark, and keep the source with the parser's explanation when a diagram can't be drawn.
+- Notes draw bounded `mermaid` fences offline with Pele, preserve declared direction, and keep rejected source with a short explanation. SVG theming leaves literal labels unchanged, and extreme measurement widths cannot overflow the cache key. Pele is native-note-only; HTML tiles keep the existing Mermaid.js renderer and layout.
+- Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
+- Display math in blockquotes excludes the quote markers from the formula.
 - Question tiles can be graded and ask how sure the user is: `correct` marks the right option once answered (✓ or ✗, the right option's why on a wrong pick, and `answer.correct` stamped by easl, never the caller), `askConfidence` adds an optional confidence slider whose value the answer carries, both reach the asker's mention, and `easl ask` takes `--correct` and `--confidence`.
 - HTML tiles take the keyboard for their text fields: Return on a selected tile, or a click in an input, textarea, select or contenteditable, gives the page the keyboard (typing, IME, copy/paste and Tab work), Esc or a click on the board hands it back, and a page that focuses a field on its own still cannot take it from the terminal.
 - HTML field clicks use an isolated script world and expire after 300 ms. Moving focus, another native click, or a window activation change cancels pending keyboard permission.
@@ -17,7 +19,7 @@ Each version's section is its GitHub release's notes.
 - Notes typeset LaTeX: `$…$` inline and `$$…$$` on its own centered line with SwiftMath (currency, `\$`, code and unparsable formulas stay as written), and HTML tiles load KaTeX only when a page has math; note measurement, `size: "fit"` and `layout.check` account for it.
 - Note math preprocessing bounds each entity search to 32 characters, so ampersand-heavy prose does not repeatedly scan the remaining note.
 - Native note math separates nesting depth from formula size and typesetting work, so ordinary wide formulas such as matrices need not fall back. Over-limit and malformed formulas keep their monospace source in display and size-to-fit measurement. Native `\textcolor` uses SwiftMath's non-indexing color path.
-- Diagram tiles draw caller-supplied knowledge and reasoning graphs (`kind: "graph"`): nodes with click-to-expand markdown detail, provenance that focuses the terminal it came from, and practice status (`taught`, `practiced`, `retained`, `weak`), up to 500 nodes laid out one column per reasoning depth. Nothing in them is computed from code.
+- Diagram tiles draw caller-supplied knowledge and reasoning graphs (`kind: "graph"`): nodes with click-to-expand markdown detail, provenance that focuses the terminal it came from, and practice status (`taught`, `practiced`, `retained`, `weak`), up to 500 nodes laid out one column per reasoning depth. Nothing in them is computed from code. Authored input and storage use only `props.knowledge`; old apps can refresh `props.graph` without replacing authored data. Unsafe graph levels return `invalid_params` before integer conversion.
 
 ## 0.3.1
 
