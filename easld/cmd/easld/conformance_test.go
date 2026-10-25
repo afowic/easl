@@ -21,7 +21,7 @@ import (
 // that starts passing is reported, so it can join the list.
 var passing = []string{
 	"agent-control", "agent-control-owned", "agents", "app-update-daemon", "app-update-validation", "archived-layout", "arrows", "batch", "board-close", "board-close-owned", "board-get-history", "board-lifecycle", "boards", "browser-drawing", "client-delegation", "client-failures", "client-mode", "client-surface-relay", "client-versions",
-	"code-tiles", "events", "follow-attention", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
+	"code-tiles", "events", "follow-attention", "graph-diagrams", "groups", "keys-upsert-find", "layout", "layout-check", "messages",
 	"metrics", "no-client", "object-cleanup", "objects-crud", "open-url", "owned-terminals", "placement", "protocol", "question-cleanup", "questions", "remote-attention", "remote-composer", "remote-undo", "tray", "video", "viewer-serve",
 }
 
