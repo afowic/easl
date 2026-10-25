@@ -317,8 +317,10 @@ private final class PeleEngine: @unchecked Sendable {
                 context.evaluateScript("""
                 function easlRenderDiagram(source, options) {
                     if (pele.detectType(source) === "block") {
+                        if (source.includes("%%{"))
+                            throw new Error("diagram exceeds the native block parsing budget");
                         let spaces = 0;
-                        for (const match of source.matchAll(/\\bspace\\s*:\\s*(\\d+)/g)) {
+                        for (const match of source.replaceAll(";", "").matchAll(/space\\s*:\\s*(\\d+)/g)) {
                             spaces += Number(match[1]);
                             if (spaces > 64)
                                 throw new Error("diagram exceeds the native block parsing budget");
@@ -327,6 +329,8 @@ private final class PeleEngine: @unchecked Sendable {
                     const model = pele.parse(source, {limit: 1024, maxEdges: 8});
                     if (model.type === "gantt" && (model.excludes?.length || model.includes?.length))
                         throw new Error("diagram exceeds the native calendar rendering budget");
+                    if (model.type === "pie" && model.sections.size > 32)
+                        throw new Error("diagram exceeds the native pie rendering budget");
                     if (model.type === "venn") {
                         if (model.subsets.length > 12)
                             throw new Error("diagram exceeds the native Venn rendering budget");
@@ -351,11 +355,14 @@ private final class PeleEngine: @unchecked Sendable {
                             text += item.length;
                         } else if (item && typeof item === "object" && !seen.has(item)) {
                             seen.add(item);
-                            const values = item instanceof Map ? [...item.values()] : Object.values(item);
-                            entries += values.length;
+                            const map = item instanceof Map;
+                            const values = map ? item.values() : Object.values(item);
+                            entries += map ? item.size * 2 : values.length;
                             if (entries > 256)
                                 throw new Error("diagram exceeds the native rendering budget");
-                            pending.push(...values);
+                            if (map)
+                                for (const key of item.keys()) pending.push(key);
+                            for (const value of values) pending.push(value);
                         }
                         if (entries > 256 || text > 4096)
                             throw new Error("diagram exceeds the native rendering budget");

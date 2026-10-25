@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import Markdown
 import Testing
@@ -130,6 +131,47 @@ struct NoteDiagramTests {
         }
     }
 
+    @Test func rejectedBlockSourcesCannotAmplifyParsingWork() throws {
+        if try runIsolatedTestIfParallelNow("NoteDiagramTests/rejectedBlockSourcesCannotAmplifyParsingWork") { return }
+        let appearance = NSAppearance(named: .aqua)!
+        let reference = "block-beta\n" + String(repeating: "space:2\n", count: 33)
+        let sources = [
+            "block-beta\nspace:1space:99999",
+            "block-beta\ncolumns 1space:99999",
+            "block-beta\nA:1space:99999",
+            "block-beta\nspace%%{wrap}%%:99999",
+            "block-beta\nspace:%%{wrap}%%99999",
+            "block-beta\nspace:9%%{wrap}%%9999",
+            "block-beta\nX[\"style:#\"]space;:99999",
+            "block-beta\nX[\"style:#\"]space:9;9999",
+            "---\ntitle: Blocks\n---\nblock-beta\ncolumns 1space:99999",
+        ]
+        func cpu() -> Double {
+            var usage = rusage()
+            precondition(getrusage(RUSAGE_SELF, &usage) == 0)
+            return Double(usage.ru_utime.tv_sec) + Double(usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+        }
+        func work(_ inputs: [String], width: Int) -> (cpu: Double, refusals: Int) {
+            var refusals = 0
+            let start = cpu()
+            for index in 0..<32 {
+                if case .failure = NoteDiagram.image(source: inputs[index % inputs.count],
+                                                     width: CGFloat(width + index), appearance: appearance) {
+                    refusals += 1
+                }
+            }
+            return (cpu() - start, refusals)
+        }
+        _ = work([reference], width: 800)
+        // Distinct widths bypass cached failures; isolated process CPU excludes CI scheduling delays.
+        let bounded = work([reference], width: 900)
+        let hostile = work(sources, width: 1000)
+        #expect(bounded.refusals == 32)
+        #expect(hostile.refusals == 32)
+        #expect(hostile.cpu <= bounded.cpu * 4)
+    }
+
     @Test func boundedCalendarAndBlockDiagramsStillRender() {
         for source in [
             "gantt\ndateFormat YYYY-MM-DD\nsection S\nTask :a, 2024-01-01, 2d",
@@ -151,6 +193,24 @@ struct NoteDiagramTests {
             #expect(attachment == nil)
             #expect(text.string.contains("venn-beta"))
             #expect(text.string.contains("budget"))
+        }
+    }
+
+    @Test func pieDiagramsBoundSlicesBeforeResponsiveLayout() {
+        let marker = String(repeating: "X", count: 80)
+        func source(_ count: Int, wideLabels: Bool = true) -> String {
+            "pie\n" + (0..<count).map { index in
+                let label = index == 0 ? marker
+                    : wideLabels ? String(format: "label%03d", index) : String(index, radix: 36)
+                return "\"\(label)\":1"
+            }.joined(separator: "\n")
+        }
+        #expect(render("```mermaid\n" + source(32) + "\n```").attachment?.image != nil)
+        for source in [source(33), source(100, wideLabels: false)] {
+            let (text, attachment) = render("```mermaid\n" + source + "\n```")
+            #expect(attachment == nil)
+            #expect(text.string.contains("pie"))
+            #expect(text.string.contains(marker))
         }
     }
 

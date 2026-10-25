@@ -5,7 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Notes draw bounded `mermaid` fences offline with Pele, preserve declared direction, and keep rejected source with a short explanation. SVG theming leaves literal labels unchanged, and extreme measurement widths cannot overflow the cache key. Pele is native-note-only; HTML tiles keep the existing Mermaid.js renderer and layout.
-- Native diagram budgets also bound block-space expansion before parsing and Venn layout, and keep Gantt charts with calendar inclusions or exclusions as source. SVG theming preserves combining-character labels and resolves diagram font families.
+- Native diagram budgets bound block-space expansion before parsing, including adjacent tokens and preprocessing splices. Pie charts stop at 32 slices, Map label keys count toward model budgets, and Venn layout is bounded. Gantt charts with calendar inclusions or exclusions stay as source. SVG theming preserves combining-character labels and resolves diagram font families.
 - Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
 - Diagram measurement respects the diagram kind and reports invalid authored graph input as `invalid_params`, consistent with easld.
 - Display math in blockquotes excludes the quote markers from the formula.
