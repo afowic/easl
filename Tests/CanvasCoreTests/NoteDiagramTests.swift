@@ -56,6 +56,85 @@ struct NoteDiagramTests {
         #expect(text.string.contains("Parse error"))
     }
 
+    @Test func svgThemingPreservesLiteralLabelsAndMetadata() {
+        let label = "var(--untrusted, " + String(repeating: "\u{00a0}", count: 40_000) + ")"
+        let svg = "<svg aria-label=\"var(--pele-fg,keep)\"><style>.node{fill:var(--pele-fg,#123456)}</style><text>" + label + "</text><path fill=\"var(--_fg)\" style=\"height:auto;stroke:var(--unknown, #654321)\"/></svg>"
+        let result = NoteDiagram.themed(svg, colors: ["fg": "#abcdef"])
+        #expect(result.contains("<text>" + label + "</text>"))
+        #expect(result.contains("aria-label=\"var(--pele-fg,keep)\""))
+        #expect(result.contains(".node{fill:#abcdef}"))
+        #expect(result.contains("fill=\"#abcdef\""))
+        #expect(result.contains("style=\"stroke:#654321\""))
+    }
+
+    @Test func svgThemingResolvesNestedFallbacksAndPreservesMalformedCSS() {
+        let svg = "<svg><path fill=\"var(--missing,var(--pele-fg,#123456))\" stroke=\"var(--unfinished\"/></svg>"
+        let result = NoteDiagram.themed(svg, colors: ["fg": "#abcdef"])
+        #expect(result.contains("fill=\"#abcdef\""))
+        #expect(result.contains("stroke=\"var(--unfinished\""))
+    }
+
+    @Test func extremeDiagramWidthsNeverTrapInMeasurement() async throws {
+        if try runIsolatedTestIfParallelNow("NoteDiagramTests/extremeDiagramWidthsNeverTrapInMeasurement") { return }
+        let markdown = "```mermaid\ngraph LR\nA-->B\n```"
+        for width in [CGFloat(1e300), .infinity, -.infinity, .nan] {
+            let (_, attachment) = render(markdown, noteWidth: width)
+            let image = try #require(attachment?.image)
+            #expect(image.size.width.isFinite && image.size.width > 0)
+            #expect(image.size.height.isFinite && image.size.height > 0)
+        }
+        let measured = try await ObjectMeasure.size(type: .note, props: .object(["markdown": .string(markdown)]),
+                                                   width: 1e300, root: URL(fileURLWithPath: "/tmp"))
+        #expect(measured.height.isFinite && measured.height > 0)
+    }
+
+    @Test func nestedCrossEdgeFencesFallBackBeforeExpensiveLayout() {
+        var source = "graph TD\n"
+        for i in 0..<50 { source += "subgraph s\(i)\nx\(i)-->x\(i + 1)\n" }
+        source += String(repeating: "end\n", count: 50)
+        for i in 0..<250 { source += "x\((i * 13) % 50)-->x\((i * 29) % 50)\n" }
+        let (text, attachment) = render("```mermaid\n" + source + "```")
+        #expect(attachment == nil)
+        #expect(text.string.contains("subgraph s0"))
+        #expect(text.string.contains("rendering budget"))
+        let compact = "graph TD\nsubgraph a\nsubgraph b\nsubgraph c\nA-->B\nend\nend\nend"
+        let refused = render("```mermaid\n" + compact + "\n```")
+        #expect(refused.attachment == nil)
+        #expect(refused.text.string.contains("structural rendering budget"))
+    }
+
+    @Test func noteDiagramBudgetAppliesEvenWhenImagesAreCached() {
+        let fence = "```mermaid\ngraph LR\nA-->B\n```"
+        _ = render(fence)
+        let (text, _) = render(Array(repeating: fence, count: NoteDiagram.maxNoteFences + 1).joined(separator: "\n\n"))
+        var attachments = 0
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if value != nil { attachments += 1 }
+        }
+        #expect(attachments == NoteDiagram.maxNoteFences)
+        #expect(text.string.contains("note exceeds the diagram rendering budget"))
+        #expect(text.string.contains("A-->B"))
+    }
+
+    @Test func noteDiagramBytesAreBoundedAcrossOtherwiseValidFences() {
+        let source = "graph LR\nA-->B\n%%" + String(repeating: "p", count: 880)
+        let fence = "```mermaid\n" + source + "\n```"
+        let (text, _) = render(fence + "\n\n" + fence)
+        var attachments = 0
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if value != nil { attachments += 1 }
+        }
+        #expect(attachments == 1)
+        #expect(text.string.contains("note exceeds the diagram rendering budget"))
+    }
+
+    @Test func nativeFlowchartKeepsDeclaredHorizontalDirection() throws {
+        let (_, attachment) = render("```mermaid\ngraph LR\nA[Start]-->B[Middle]-->C[Finish]\n```", noteWidth: 100)
+        let image = try #require(attachment?.image)
+        #expect(image.size.width > image.size.height)
+        #expect(image.size.width <= 100)
+    }
+
     @Test func otherFencesStayCodeRows() {
         let (text, attachment) = render("```swift\nlet x = 1\n```")
         #expect(attachment == nil)

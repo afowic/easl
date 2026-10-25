@@ -21,6 +21,7 @@ public final class NoteRenderer {
     /// their columns into it.
     private let lineWidth: CGFloat
     private let out = NSMutableAttributedString()
+    private var diagramBudget = NoteDiagram.Budget()
     /// Whether the text depends on the width it was rendered at (a table's cells wrap to it).
     public private(set) var fitsWidth = false
     /// Points of width the text container lacks to show every table cell whole: 0 unless a table
@@ -265,9 +266,33 @@ public final class NoteRenderer {
 
     /// The markdown source of a paragraph that is one display formula.
     private func displayMath(_ paragraph: Paragraph) -> (latex: String, source: String)? {
-        guard let index = sourceIndex, let range = paragraph.range, let raw = index.text(range),
-              let latex = NoteMath.displayMath(in: raw) else { return nil }
-        return (latex, raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let index = sourceIndex, let range = paragraph.range, let raw = index.text(range) else { return nil }
+        var quoteDepth = 0
+        var ancestor = paragraph.parent
+        while let container = ancestor {
+            if container is BlockQuote { quoteDepth += 1 }
+            ancestor = container.parent
+        }
+        var formulaSource = raw
+        if quoteDepth > 0 {
+            formulaSource = ""
+            formulaSource.reserveCapacity(raw.utf8.count)
+            for (lineIndex, line) in raw.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                var content = line
+                if lineIndex > 0 {
+                    formulaSource.append("\n")
+                    for _ in 0..<quoteDepth {
+                        let trimmed = content.drop(while: { $0 == " " || $0 == "\t" })
+                        guard trimmed.first == ">" else { break }
+                        content = trimmed.dropFirst()
+                        if content.first == " " || content.first == "\t" { content = content.dropFirst() }
+                    }
+                }
+                formulaSource.append(contentsOf: content)
+            }
+        }
+        guard let latex = NoteMath.displayMath(in: formulaSource) else { return nil }
+        return (latex, formulaSource.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// A display formula as its own line, centered. A formula SwiftMath can't typeset keeps its
@@ -525,7 +550,13 @@ public final class NoteRenderer {
     /// explanation when the diagram can't be drawn.
     private func diagram(_ body: [String], context: Context, line: Int) {
         let source = body.joined(separator: "\n")
-        switch NoteDiagram.image(source: source, width: lineWidth, appearance: NoteDiagram.appearance()) {
+        let outcome: NoteDiagram.Outcome
+        if let problem = diagramBudget.admit(source) {
+            outcome = .failure(problem)
+        } else {
+            outcome = NoteDiagram.image(source: source, width: lineWidth, appearance: NoteDiagram.appearance())
+        }
+        switch outcome {
         case .image(let image):
             let attachment = NoteImageAttachment()
             attachment.image = image

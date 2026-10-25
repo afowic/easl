@@ -54,6 +54,29 @@ struct NoteMathTests {
         #expect(style?.alignment == .center)
     }
 
+    @Test func blockquoteDisplayMathDoesNotTypesetContainerMarkers() throws {
+        let latex = #"\frac{x}{y} > \sqrt{2}"#
+        let expected = try #require(math(render("$$\n" + latex + "\n$$")).first)
+        for prefix in ["> ", "> > "] {
+            let markdown = prefix + "$$\n" + prefix + latex + "\n" + prefix + "$$"
+            let text = render(markdown)
+            let actual = try #require(math(text).first)
+            #expect(actual.bounds == expected.bounds)
+            #expect(!text.string.contains(">"))
+            let mark = (text.string as NSString).range(of: "\u{FFFC}")
+            let style = try #require(text.attribute(.paragraphStyle, at: mark.location, effectiveRange: nil) as? NSParagraphStyle)
+            #expect(style.alignment == .center)
+            #expect(style.headIndent > 0)
+        }
+    }
+
+    @Test func blockquoteDisplayFallbackRetainsFormulaWithoutQuoteMarkers() {
+        let formula = #"\notarealcommand{x > y}"#
+        let text = render("> $$\n> " + formula + "\n> $$")
+        #expect(math(text).isEmpty)
+        #expect(text.string == "$$\n" + formula + "\n$$")
+    }
+
     @Test func codeSpansAndFencesAreNeverMath() {
         let text = render(#"""
         Use `$x^2$` and `$$y$$`.

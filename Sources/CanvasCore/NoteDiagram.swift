@@ -28,6 +28,24 @@ public enum NoteDiagram {
     /// more often than sources change.
     static let cacheLimit = 64
 
+    nonisolated static let maxFenceBytes = 1024
+    nonisolated static let maxNoteFenceBytes = 1536
+    nonisolated static let maxNoteFences = 2
+
+    struct Budget {
+        private var bytes = 0
+        private var fences = 0
+
+        mutating func admit(_ source: String) -> String? {
+            guard source.utf8.count <= NoteDiagram.maxFenceBytes else { return "diagram exceeds the native rendering budget" }
+            guard fences < NoteDiagram.maxNoteFences,
+                  source.utf8.count <= NoteDiagram.maxNoteFenceBytes - bytes else { return "note exceeds the diagram rendering budget" }
+            fences += 1
+            bytes += source.utf8.count
+            return nil
+        }
+    }
+
     /// Builds the JSContext and compiles the common parsers off the main thread, so the first
     /// diagram a launch shows doesn't pay for it. Called at app launch.
     public static func prewarm() {
@@ -36,7 +54,8 @@ public enum NoteDiagram {
 
     /// `source` drawn at most `width` points wide for `appearance`.
     static func image(source: String, width: CGFloat, appearance: NSAppearance) -> Outcome {
-        let width = max(1, width.rounded())
+        guard source.utf8.count <= maxFenceBytes else { return .failure("diagram exceeds the native rendering budget") }
+        let width = width.isNaN ? 1 : min(max(1, width.rounded()), 16_384)
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let key = Key(source: source, width: Int(width), dark: dark)
         if let cached = cache[key] { return cached }
@@ -103,34 +122,140 @@ public enum NoteDiagram {
         return hex(palette[index - 1], over: background)
     }
 
-    /// `svg` with every Pele variable replaced by its value (and CoreSVG's unparseable
-    /// `height:auto` dropped; the root's width and height attributes carry the size).
     nonisolated static func themed(_ svg: String, colors theme: [String: String]) -> String {
-        var out = svg
-        for (name, value) in theme {
-            out = replacing(#"var\(--pele-\#(name),[^()]*\)"#, with: value, in: out)
-            out = replacing(#"var\(--pele-\#(name)\)"#, with: value, in: out)
+        var variables = theme.reduce(into: [String: String]()) { $0["--pele-" + $1.key] = $1.value }
+        for (alias, name, fallback) in [
+            ("bg", "bg", "#ffffff"), ("fg", "fg", "#1f1f1f"), ("m", "muted", "#6e6e6e"),
+            ("l", "line", "#1f1f1f"), ("s", "surface", "#f3f3f3"), ("a", "surface-alt", "#e6e6e6"),
+            ("b", "border", "#8a8a8a"), ("c", "accent", "#5b7bd5"), ("r", "radius", "4px"),
+            ("fm", "font-mono", "monospace"),
+        ] {
+            variables["--_" + alias] = theme[name] ?? fallback
         }
-        let aliases: [String: String] = [
-            "bg": theme["bg"] ?? "#ffffff", "fg": theme["fg"] ?? "#1f1f1f",
-            "m": theme["muted"] ?? "#6e6e6e", "l": theme["line"] ?? "#1f1f1f",
-            "s": theme["surface"] ?? "#f3f3f3", "a": theme["surface-alt"] ?? "#e6e6e6",
-            "b": theme["border"] ?? "#8a8a8a", "c": theme["accent"] ?? "#5b7bd5",
-            "r": theme["radius"] ?? "4px", "fm": theme["font-mono"] ?? "monospace",
-        ]
-        for (alias, value) in aliases {
-            out = replacing(#"var\(--_\#(alias)\)"#, with: value, in: out)
+        var output = ""
+        output.reserveCapacity(svg.utf8.count)
+        var index = svg.startIndex
+        var inStyle = false
+        while index < svg.endIndex {
+            let textEnd = svg[index...].firstIndex(of: "<") ?? svg.endIndex
+            let text = svg[index..<textEnd]
+            if inStyle {
+                output.append(contentsOf: css(text, variables: variables))
+            } else {
+                output.append(contentsOf: text)
+            }
+            guard textEnd < svg.endIndex else { break }
+            var tagEnd = svg.index(after: textEnd)
+            var quote: Character?
+            while tagEnd < svg.endIndex {
+                let character = svg[tagEnd]
+                if let active = quote {
+                    if character == active { quote = nil }
+                } else if character == "\"" || character == "'" {
+                    quote = character
+                } else if character == ">" {
+                    tagEnd = svg.index(after: tagEnd)
+                    break
+                }
+                tagEnd = svg.index(after: tagEnd)
+            }
+            let tag = svg[textEnd..<tagEnd]
+            output.append(contentsOf: themedTag(tag, variables: variables))
+            if tag.hasPrefix("<style>") || tag.hasPrefix("<style ") { inStyle = true }
+            if tag.hasPrefix("</style") { inStyle = false }
+            index = tagEnd
         }
-        // Anything Pele left to a fallback (a chart's own palette, say) takes it; a variable with
-        // no fallback has no meaning outside CSS.
-        out = replacing(#"var\(--[^(),]+,\s*([^()]*)\)"#, with: "$1", in: out)
-        out = replacing(#"var\(--[^(),]+\)"#, with: theme["fg"] ?? "#1f1f1f", in: out)
-        return out.replacingOccurrences(of: "height:auto;", with: "")
+        return output
     }
 
-    private nonisolated static func replacing(_ pattern: String, with template: String, in text: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
-        return regex.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length), withTemplate: template)
+    private nonisolated static let styledAttributes: Set<Substring> = [
+        "style", "fill", "stroke", "color", "stop-color", "flood-color", "lighting-color",
+    ]
+
+    private nonisolated static func themedTag(_ tag: Substring, variables: [String: String]) -> String {
+        var output = ""
+        var copied = tag.startIndex
+        var index = tag.startIndex
+        while index < tag.endIndex {
+            guard tag[index] == "=" else { index = tag.index(after: index); continue }
+            var nameEnd = index
+            while nameEnd > tag.startIndex, tag[tag.index(before: nameEnd)].isWhitespace { nameEnd = tag.index(before: nameEnd) }
+            var nameStart = nameEnd
+            while nameStart > tag.startIndex {
+                let previous = tag.index(before: nameStart)
+                guard tag[previous].isLetter || tag[previous] == "-" else { break }
+                nameStart = previous
+            }
+            index = tag.index(after: index)
+            while index < tag.endIndex, tag[index].isWhitespace { index = tag.index(after: index) }
+            guard index < tag.endIndex, tag[index] == "\"" || tag[index] == "'" else { continue }
+            let quote = tag[index]
+            let start = tag.index(after: index)
+            index = start
+            while index < tag.endIndex, tag[index] != quote { index = tag.index(after: index) }
+            guard index < tag.endIndex else { break }
+            if styledAttributes.contains(tag[nameStart..<nameEnd]) {
+                output.append(contentsOf: tag[copied..<start])
+                output.append(contentsOf: css(tag[start..<index], variables: variables))
+                copied = index
+            }
+            index = tag.index(after: index)
+        }
+        output.append(contentsOf: tag[copied...])
+        return output
+    }
+
+    private struct CSSVariable {
+        var start: Substring.Index
+        var name = ""
+        var fallback = ""
+        var hasFallback = false
+        var parentheses = 0
+    }
+
+    private nonisolated static func css(_ source: Substring, variables: [String: String]) -> String {
+        var output = ""
+        output.reserveCapacity(source.utf8.count)
+        var frames: [CSSVariable] = []
+        var index = source.startIndex
+        func append<Characters: Sequence>(_ text: Characters) where Characters.Element == Character {
+            if frames.isEmpty {
+                output.append(contentsOf: text)
+            } else if frames[frames.count - 1].hasFallback {
+                frames[frames.count - 1].fallback.append(contentsOf: text)
+            } else {
+                frames[frames.count - 1].name.append(contentsOf: text)
+            }
+        }
+        while index < source.endIndex {
+            if source[index...].hasPrefix("var(") {
+                guard frames.count < 32 else { return String(source) }
+                frames.append(CSSVariable(start: index))
+                index = source.index(index, offsetBy: 4)
+                continue
+            }
+            let character = source[index]
+            if character == "(", !frames.isEmpty {
+                frames[frames.count - 1].parentheses += 1
+                append(CollectionOfOne(character))
+            } else if character == ")", !frames.isEmpty, frames[frames.count - 1].parentheses > 0 {
+                frames[frames.count - 1].parentheses -= 1
+                append(CollectionOfOne(character))
+            } else if character == ")", let variable = frames.popLast() {
+                let name = variable.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = variables[name] ?? (variable.hasFallback
+                    ? variable.fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : variables["--pele-fg"] ?? "#1f1f1f")
+                append(value)
+            } else if character == ",", !frames.isEmpty, !frames[frames.count - 1].hasFallback {
+                frames[frames.count - 1].hasFallback = true
+            } else {
+                append(CollectionOfOne(character))
+            }
+            index = source.index(after: index)
+        }
+        if let incomplete = frames.first { output.append(contentsOf: source[incomplete.start...]) }
+        return output.replacingOccurrences(of: "height:auto;", with: "")
     }
 }
 
@@ -188,6 +313,32 @@ private final class PeleEngine: @unchecked Sendable {
             loaded = true
             if let script = Self.script, let context = JSContext() {
                 context.evaluateScript(script)
+                context.evaluateScript("""
+                function easlRenderDiagram(source, options) {
+                    const model = pele.parse(source, {limit: 1024, maxEdges: 8});
+                    const groups = model.subgraphs?.length || 0;
+                    const nodes = model.nodes?.size || model.actors?.size || 0;
+                    const edges = model.edges?.length || model.messages?.length || 0;
+                    if (groups > 2 || nodes > 12 || (groups + 1) * (nodes + edges) > 24)
+                        throw new Error("diagram exceeds the native structural rendering budget");
+                    const pending = [model], seen = new Set();
+                    let entries = 0, text = 0;
+                    while (pending.length) {
+                        const item = pending.pop();
+                        if (typeof item === "string") {
+                            text += item.length;
+                        } else if (item && typeof item === "object" && !seen.has(item)) {
+                            seen.add(item);
+                            const values = item instanceof Map ? [...item.values()] : Object.values(item);
+                            entries += values.length;
+                            pending.push(...values);
+                        }
+                        if (entries > 256 || text > 4096)
+                            throw new Error("diagram exceeds the native rendering budget");
+                    }
+                    return pele.render(model, options);
+                }
+                """)
                 if context.exception == nil { self.context = context }
             }
         }
@@ -197,8 +348,8 @@ private final class PeleEngine: @unchecked Sendable {
     /// On `queue`: Pele draws the source, its variables become `theme`'s colors, and the SVG is
     /// decoded at the size the note lays out.
     private func draw(source: String, width: CGFloat, theme: [String: String]) -> NoteDiagram.Outcome {
-        guard let context = load(), let pele = context.objectForKeyedSubscript("pele"), !pele.isUndefined,
-              let render = pele.objectForKeyedSubscript("render"), !render.isUndefined else {
+        guard let context = load(),
+              let render = context.objectForKeyedSubscript("easlRenderDiagram"), !render.isUndefined else {
             return .failure("Pele isn't available")
         }
         let options: [String: Any] = [
@@ -207,6 +358,9 @@ private final class PeleEngine: @unchecked Sendable {
             "fontFamilyMono": Self.monoFontFamily,
             "fontSize": Double(Self.fontSize),
             "responsive": true,
+            "autoDirection": false,
+            "outputLimit": 100_000,
+            "maxEdges": 8,
             // Notes are untrusted markdown too: no navigation or network from a diagram.
             "links": false,
             "images": false,
