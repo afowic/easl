@@ -149,8 +149,6 @@ enum NoteMath {
 
         static func prepare(_ latex: String) -> String? {
             guard latex.utf8.count <= 2048 else { return nil }
-            // Width/work is independent of nesting. Keep the existing byte boundary, but
-            // allow wide formulas such as matrices without spending the depth allowance.
             var work = 0
             for byte in latex.utf8 {
                 switch byte {
@@ -329,8 +327,6 @@ enum NoteMath {
                     }
                 }
             }
-            // Unfinished constructs cannot be typeset. Infix and implicit-table frames end
-            // at EOF; all other unmatched frames use the literal-source fallback.
             while frames.last == .remainder || frames.last == .table { frames.removeLast() }
             return frames.isEmpty
         }
