@@ -88,7 +88,7 @@ public struct QuestionSpec: Equatable, Sendable {
     /// Seconds a closed question stays in view after its last write (`archiveAt`).
     public var archiveAfter: TimeInterval
 
-    /// Reads props as stored (validated on the way in); anything unreadable is left out.
+    /// Reads stored or direct props, dropping unreadable answer fields.
     public init(_ props: JSONValue) {
         question = props["question"]?.string ?? ""
         options = (props["options"]?.array ?? []).compactMap { option in
@@ -107,12 +107,37 @@ public struct QuestionSpec: Equatable, Sendable {
         answer = props["answer"]?.object.map { _ in
             let by = props["answer"]?["by"].flatMap { try? $0.decode(Actor.self) }
             return Answer(option: props["answer"]?["option"]?.string, note: props["answer"]?["note"]?.string,
-                          confidence: props["answer"]?["confidence"]?.number, correct: props["answer"]?["correct"]?.bool,
+                          confidence: Self.confidence(props["answer"]?["confidence"]), correct: Self.correctness(props),
                           at: props["answer"]?["at"]?.string.flatMap(Self.date), by: by)
         }
         archived = props["archived"]?.bool == true
         keep = props["keep"]?.bool == true
         archiveAfter = props["archiveAfter"].flatMap(Self.archiveDelay) ?? Self.defaultArchiveAfter
+    }
+
+    static func confidence(_ value: JSONValue?) -> Double? {
+        guard let number = value?.number, number.isFinite, (0...1).contains(number) else { return nil }
+        return number
+    }
+
+    private static func correctness(_ props: JSONValue) -> Bool? {
+        guard let key = props["correct"]?.string, let option = props["answer"]?["option"]?.string else { return nil }
+        return option == key
+    }
+
+    static func normalized(_ props: JSONValue) -> JSONValue {
+        guard var fields = props.object, var answer = fields["answer"]?.object else { return props }
+        answer["confidence"] = confidence(answer["confidence"]).map(JSONValue.number)
+        answer["correct"] = correctness(props).map(JSONValue.bool)
+        fields["answer"] = .object(answer)
+        return .object(fields)
+    }
+
+    static func normalized(_ object: CanvasObject) -> CanvasObject {
+        guard object.type == .question else { return object }
+        var object = object
+        object.props = normalized(object.props)
+        return object
     }
 
     /// `props.status`; a question without a status it knows is open.
@@ -243,7 +268,7 @@ public struct QuestionSpec: Equatable, Sendable {
             }
             if !picked, !noted { return answerShape }
             if let confidence = answer["confidence"], confidence != .null {
-                guard let value = confidence.number, (0...1).contains(value) else { return "answer.confidence must be a number from 0 to 1" }
+                guard Self.confidence(confidence) != nil else { return "answer.confidence must be a number from 0 to 1" }
                 guard given("askConfidence")?.bool == true else { return "answer.confidence goes with a question asked with askConfidence" }
             }
             if let correct = answer["correct"], correct != .null {
@@ -331,7 +356,8 @@ public struct QuestionSpec: Equatable, Sendable {
 
     /// `80%`: how a confidence reads on the tile and in a mention.
     public static func percent(_ confidence: Double) -> String {
-        "\(Int((confidence * 100).rounded()))%"
+        guard Self.confidence(.number(confidence)) != nil else { return "—" }
+        return "\(Int((confidence * 100).rounded()))%"
     }
 
     // MARK: Size

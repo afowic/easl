@@ -139,6 +139,43 @@ func optString(m map[string]any, key string) *string {
 	return nil
 }
 
+func validConfidence(value any) (float64, bool) {
+	number, ok := value.(float64)
+	return number, ok && !math.IsNaN(number) && !math.IsInf(number, 0) && number >= 0 && number <= 1
+}
+
+func answerCorrect(props, answer map[string]any) (bool, bool) {
+	key, keyed := props["correct"].(string)
+	option, picked := answer["option"].(string)
+	return option == key, keyed && picked
+}
+
+// Normalize reads stored answers without trusting confidence or the derived correctness flag.
+// The returned maps do not share mutable answer fields with the caller.
+func Normalize(props map[string]any) map[string]any {
+	answer, ok := props["answer"].(map[string]any)
+	if !ok {
+		return props
+	}
+	fields := make(map[string]any, len(props))
+	for key, value := range props {
+		fields[key] = value
+	}
+	normalized := make(map[string]any, len(answer))
+	for key, value := range answer {
+		normalized[key] = value
+	}
+	if _, valid := validConfidence(answer["confidence"]); !valid {
+		delete(normalized, "confidence")
+	}
+	delete(normalized, "correct")
+	if correct, present := answerCorrect(props, answer); present {
+		normalized["correct"] = correct
+	}
+	fields["answer"] = normalized
+	return fields
+}
+
 // Read is QuestionSpec.init(_ props:).
 func Read(props map[string]any) Spec {
 	spec := Spec{Status: StatusOf(props)}
@@ -171,10 +208,10 @@ func Read(props map[string]any) Spec {
 	}
 	if answer, ok := props["answer"].(map[string]any); ok {
 		spec.Answer = &Answer{Option: optString(answer, "option"), Note: optString(answer, "note")}
-		if confidence, ok := answer["confidence"].(float64); ok {
+		if confidence, ok := validConfidence(answer["confidence"]); ok {
 			spec.Answer.Confidence = &confidence
 		}
-		if correct, ok := answer["correct"].(bool); ok {
+		if correct, ok := answerCorrect(props, answer); ok {
 			spec.Answer.Correct = &correct
 		}
 		if by, ok := decodeActor(answer["by"]); ok {
@@ -457,8 +494,8 @@ func Problem(patch any, before *model.Object) (message string, bad bool) {
 			return answerShape, true
 		}
 		if confidence := answer["confidence"]; confidence != nil {
-			value, isNumber := confidence.(float64)
-			if !isNumber || math.IsNaN(value) || value < 0 || value > 1 {
+			_, isNumber := validConfidence(confidence)
+			if !isNumber {
 				return "answer.confidence must be a number from 0 to 1", true
 			}
 			if ask, _ := props["askConfidence"].(bool); !ask {

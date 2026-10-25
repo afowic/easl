@@ -207,6 +207,9 @@ func FromSnapshot(s *store.Snapshot) *Board {
 	b.revision = s.Revision
 	for _, o := range s.Objects {
 		o = MigratedZoom(o.Clone())
+		if o.Type == model.Question {
+			o.Props = question.Normalize(o.Props)
+		}
 		if o.Type == model.Group {
 			if name, ok := o.Props["name"]; ok {
 				delete(o.Props, "name")
