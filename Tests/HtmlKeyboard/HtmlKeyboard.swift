@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import ObjectiveC.runtime
 
 @testable import CanvasApp
 @testable import CanvasCore
@@ -151,16 +152,61 @@ private enum HtmlKeyboard {
         let mirror = BoardMirror(hostName: host.name, board: "html-keyboard-remote",
                                  connection: absent, diagrams: EaslConnection(.unixSocket(host.socketPath)))
         try await exercise(root: root, remote: RemoteSource(host: host, mirror: mirror), kind: "remote")
+        try await exerciseWithoutSuppression(root: root.appendingPathComponent("missing-selector", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
     }
 
-    private static func exercise(root: URL, remote: RemoteSource?, kind: String) async throws {
+    private static func exerciseWithoutSuppression(root: URL) async throws {
+        let responds = #selector(NSObject.responds(to:))
+        let suppressed = NSSelectorFromString("_setShouldSuppressFirstResponderChanges:")
+        guard let inherited = class_getInstanceMethod(HtmlWebView.self, responds),
+              let encoding = method_getTypeEncoding(inherited) else {
+            throw Failure(message: "the native selector-availability fixture needs responds(to:)")
+        }
+        let original = method_getImplementation(inherited)
+        typealias Responds = @convention(c) (AnyObject, Selector, Selector) -> Bool
+        let originalResponds = unsafeBitCast(original, to: Responds.self)
+        let unavailable: @convention(block) (AnyObject, Selector) -> Bool = { object, selector in
+            if selector == suppressed { return false }
+            return originalResponds(object, responds, selector)
+        }
+        let replacement = imp_implementationWithBlock(unavailable)
+        guard class_addMethod(HtmlWebView.self, responds, replacement, encoding) else {
+            imp_removeBlock(replacement)
+            throw Failure(message: "the selector-availability fixture must not replace an existing override")
+        }
+        defer {
+            class_replaceMethod(HtmlWebView.self, responds, original, encoding)
+            imp_removeBlock(replacement)
+        }
+
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let web = HtmlWebView(frame: window.contentView!.bounds, configuration: WKWebViewConfiguration())
+        window.contentView!.addSubview(web)
+        try require(!web.responds(to: suppressed), "the fixture must hide the private suppression selector")
+        try require(!web.becomeFirstResponder(),
+                    "without the private selector, a native responder request must refuse an ungranted page")
+        _ = window.makeFirstResponder(web)
+        try require(window.firstResponder !== web && (window.firstResponder as? NSView)?.isDescendant(of: web) != true,
+                    "without the private selector, AppKit must not give an ungranted page the keyboard")
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let boardWindow = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
+                                       styleMask: [.titled], backing: .buffered, defer: false)
+        try await exercise(root: root, remote: nil, kind: "missing-selector", window: boardWindow)
+        check("absent suppression selector: focus-on-load refused; Return and native field clicks grant; Esc revokes")
+    }
+
+    private static func exercise(root: URL, remote: RemoteSource?, kind: String, window suppliedWindow: NSWindow? = nil) async throws {
         let board = remote.map { Board(remote: "html-keyboard-\(kind)", root: root, host: $0.mirror) }
             ?? Board(id: "html-keyboard-\(kind)", root: root)
         let canvas = CanvasView(board: board, viewport: nil, remote: remote)
         canvas.hasHorizontalScroller = false
         canvas.hasVerticalScroller = false
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
+        let window = suppliedWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         canvas.frame = window.contentView!.bounds
@@ -245,6 +291,8 @@ private enum HtmlKeyboard {
         try await Task.sleep(for: .milliseconds(250))
         post(key(53, "\u{1b}", in: window), in: window)
         try await wait(until: { window.firstResponder === canvas.document }, "Esc must leave the clicked page")
+        try require(!clickPage.acceptsFirstResponder, "Esc must revoke the clicked page's keyboard permission")
+        try require(!clickPage.becomeFirstResponder(), "a page must not regain the keyboard after Esc without another grant")
         try await click("#plain", in: clickPage, window: window)
         try await Task.sleep(for: .milliseconds(250))
         try require(window.firstResponder === canvas.document, "a click on plain page text must leave the keyboard with the canvas")

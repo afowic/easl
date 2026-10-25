@@ -1554,6 +1554,15 @@ final class CanvasWindow: NSWindow {
         NotificationCenter.default.addObserver(self, selector: #selector(cancelMiddlePan), name: NSApplication.didResignActiveNotification, object: nil)
     }
 
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        var view = responder as? NSView
+        while let current = view {
+            if let html = current as? HtmlWebView, !html.acceptsFirstResponder { return false }
+            view = current.superview
+        }
+        return super.makeFirstResponder(responder)
+    }
+
     override func close() {
         let app = NSApp.delegate as? AppDelegate
         if let controller = windowController as? CanvasWindowController, controller.remote != nil, controller.closing == nil {

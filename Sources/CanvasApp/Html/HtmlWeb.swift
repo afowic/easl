@@ -434,39 +434,31 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 /// typing in.
 final class HtmlWebView: WKWebView {
     private var allowsKeyboard = false
-    /// Whether WebKit's page-initiated first-responder changes are off (`init`).
-    private var suppressesPageFocus = false
     /// Esc in the page: the canvas takes the keyboard back (`CanvasView.leaveTile`). Set for the
     /// tile's live page; an offscreen render's page has none and never has the keyboard anyway.
     var onEscape: (@MainActor () -> Void)?
 
     override init(frame: NSRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
-        suppressesPageFocus = Self.suppressPageFocusChanges(in: self)
+        Self.suppressPageFocusChanges(in: self)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    /// WebKit changes the window's first responder when a page focuses a field, even in a page
-    /// nobody has clicked into (a script's `focus()` on load, a timer); that would take the
-    /// keyboard from the terminal the user is typing in. This suppresses only those page-initiated
-    /// changes: the app's own `makeFirstResponder` still moves it. Private API, like the remote
-    /// transport switches (`HtmlTile.disableDirectTransports`); an older WebKit without it keeps
-    /// its old behavior (a page's own `focus()` can take the keyboard) rather than leaving the
-    /// window as first responder.
-    private static func suppressPageFocusChanges(in web: WKWebView) -> Bool {
+    /// Best effort: suppress WebKit's page-initiated focus changes in addition to the native
+    /// keyboard permission gate. Explicit user grants still use `makeFirstResponder`.
+    private static func suppressPageFocusChanges(in web: WKWebView) {
         let selector = NSSelectorFromString("_setShouldSuppressFirstResponderChanges:")
-        guard web.responds(to: selector) else { return false }
+        guard web.responds(to: selector) else { return }
         typealias SetSuppressed = @convention(c) (AnyObject, Selector, Bool) -> Void
         unsafeBitCast(web.method(for: selector), to: SetSuppressed.self)(web, selector, true)
-        return true
     }
 
     override var acceptsFirstResponder: Bool { allowsKeyboard }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func becomeFirstResponder() -> Bool {
-        guard allowsKeyboard || !suppressesPageFocus else { return false }
+        guard allowsKeyboard else { return false }
         return super.becomeFirstResponder()
     }
 
