@@ -279,6 +279,7 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func loadPage(in web: WKWebView) {
+        (web as? HtmlWebView)?.resetKeyboardAuthorization()
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         hostImageFailures.removeAll()
         hostImageFailure?.removeFromSuperview()
@@ -847,6 +848,10 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         return schemes.contains(url.scheme ?? "") ? .allow : .cancel
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         probeSurface(webView)
         guard scrollY > 0 else { return }
@@ -855,6 +860,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        (webView as? HtmlWebView)?.resetKeyboardAuthorization()
         guard !hostBoardClosed, !board.isClosed else { return }
         if webView === self.webView {
             loadPage(in: webView)

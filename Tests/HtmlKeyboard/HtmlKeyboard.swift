@@ -157,6 +157,10 @@ private enum HtmlKeyboard {
         }
         let root = URL(fileURLWithPath: home).appendingPathComponent("board", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--document-grants") {
+            try await exerciseDocumentGrant(root: root)
+            return
+        }
         if CommandLine.arguments.contains("--missing-selector") {
             try await exerciseWithoutSuppression(root: root)
             return
@@ -173,6 +177,7 @@ private enum HtmlKeyboard {
         try await exerciseHostileClicks()
         try await exerciseStaleClicks()
         try await exerciseDOMClicks()
+        try await exerciseDocumentGrant(root: root.appendingPathComponent("replacement", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
     }
 
@@ -308,6 +313,84 @@ private enum HtmlKeyboard {
                            "\(attack.name): a new click inside the real editable must still grant")
             check("\(attack.name) refuses the outside click and accepts a real field click")
         }
+    }
+
+    private static func exerciseDocumentGrant(root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let board = Board(id: "html-keyboard-replacement", root: root)
+        let canvas = CanvasView(board: board, viewport: nil, remote: nil)
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        canvas.frame = window.contentView!.bounds
+        window.contentView!.addSubview(canvas)
+        board.onEvent = { canvas.apply($0) }
+        defer {
+            board.onEvent = nil
+            canvas.discard()
+            window.close()
+        }
+        window.orderFrontRegardless()
+        let frame = Frame(x: -350, y: -250, w: 700, h: 500)
+        canvas.show(Viewport(rect: Frame(x: -410, y: -310, w: 820, h: 620), zoom: 1))
+        let original = pageHTML().replacingOccurrences(of: "<script>", with: """
+        <script>
+        window.originalKeys = 0;
+        document.addEventListener('keydown', () => window.originalKeys++);
+        """)
+        let object = board.create(type: .html, props: .object(["html": .string(original)]), frame: frame)
+        let tile = try htmlTile(canvas, object)
+        let web = try await page(in: tile)
+        try await loaded(web)
+        try await Task.sleep(for: .milliseconds(500))
+        canvas.setSelection([object.id])
+        try require(window.makeFirstResponder(canvas.document), "the canvas must hold keys before the grant")
+        try await click("#next", in: web, window: window)
+        try await wait(until: { window.firstResponder === web }, "the original document must receive a click grant")
+        let focused = await js(web, "({id: document.activeElement?.id, focused: document.hasFocus()})")
+        check("original document: selected=\(canvas.selection.contains(object.id)), DOM=\(String(describing: focused))")
+        typed("old", in: window)
+        try await pageTurn(web)
+        for _ in 0..<200 {
+            if await js(web, "window.originalKeys") as? Int == 3 { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let originalKeys = await js(web, "window.originalKeys") as? Int
+        check("original document: received keys=\(originalKeys ?? -1)")
+        try require(originalKeys == 3, "the original grant must deliver real keys")
+        let replacement = pageHTML()
+            .replacingOccurrences(of: "wire(next, 'next');", with: "wire(next, 'replacement');")
+            .replacingOccurrences(of: "<script>", with: """
+        <script>
+        window.replacementDocument = true;
+        window.replacementKeys = 0;
+        document.addEventListener('keydown', () => window.replacementKeys++);
+        """)
+        _ = try board.update(object.id, props: .object(["html": .string(replacement)]))
+        for _ in 0..<240 {
+            if await js(web, "window.replacementDocument") as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let replaced = await js(web, "window.replacementDocument") as? Bool
+        try require(replaced == true, "the agent HTML rewrite must commit a replacement document")
+        try await Task.sleep(for: .milliseconds(500))
+        typed("blocked", in: window)
+        try await pageTurn(web)
+        let keys = await js(web, "window.replacementKeys") as? Int
+        check("replacement document: received keys before new click=\(keys ?? -1)")
+        try require(keys == 0, "the replacement document must receive no keys from the old grant")
+        try require(!web.acceptsFirstResponder, "the replacement must revoke native keyboard authorization")
+        try await click("#next", in: web, window: window)
+        try await wait(until: { window.firstResponder === web }, "a new document click must grant the keyboard again")
+        typed("new", in: window)
+        try await pageTurn(web)
+        for _ in 0..<200 {
+            if await js(web, "window.replacementKeys") as? Int == 3 { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let newKeys = await js(web, "window.replacementKeys") as? Int
+        try require(newKeys == 3, "the new click must deliver keys to the replacement document")
+        check("an agent HTML rewrite revokes the old grant and a new click grants again")
     }
 
     private static func nativeClick(_ target: NativeClickTarget, window: NSWindow) throws {

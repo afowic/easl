@@ -13,6 +13,7 @@ Each version's section is its GitHub release's notes.
 - HTML tiles take the keyboard for their text fields: Return on a selected tile, or a click in an input, textarea, select or contenteditable, gives the page the keyboard (typing, IME, copy/paste and Tab work), Esc or a click on the board hands it back, and a page that focuses a field on its own still cannot take it from the terminal.
 - HTML field clicks use an isolated script world and expire after 300 ms. Moving focus, another native click, or a window activation change cancels pending keyboard permission.
 - HTML keyboard clicks read the real DOM prototype getters and must land inside the active editable. Named forms and stale DOM focus cannot grant the keyboard for an outside click.
+- HTML navigation commits, HTML or asset reloads, and web-content crashes revoke pending and granted keyboard permission. Rewriting a tile's page cannot carry its old keyboard grant into the replacement document.
 - Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.

@@ -544,6 +544,18 @@ final class HtmlWebView: WKWebView {
         return true
     }
 
+    func resetKeyboardAuthorization() {
+        keyboardAuthorization = .denied
+        guard let window, ownsKeyboard(in: window) else { return }
+        onEscape?()
+        if ownsKeyboard(in: window) { window.makeFirstResponder(nil) }
+    }
+
+    private func ownsKeyboard(in window: NSWindow) -> Bool {
+        guard let responder = window.firstResponder as? NSView else { return false }
+        return responder === self || responder.isDescendant(of: self)
+    }
+
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if window !== newWindow { keyboardAuthorization = .denied }
         super.viewWillMove(toWindow: newWindow)
