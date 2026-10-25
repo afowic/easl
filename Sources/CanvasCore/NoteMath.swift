@@ -106,24 +106,12 @@ enum NoteMath {
     /// A formula as a text attachment, or nil when SwiftMath can't typeset it. The picture draws
     /// in `NSColor.labelColor` at draw time, so it follows light and dark.
     static func attachment(latex: String, fontSize: CGFloat, display: Bool) -> NSTextAttachment? {
-        guard latex.utf8.count <= 2048 else { return nil }
-        // Count all potential recursive entries, not only balanced groups: commands can take
-        // unbraced arguments, and infix fractions recurse through the remaining expression.
-        var recursiveSyntax = 0
-        for byte in latex.utf8 {
-            switch byte {
-            case 0x5C, 0x7B, 0x5B, 0x5E, 0x5F, 0x26:
-                recursiveSyntax += 1
-                guard recursiveSyntax <= 16 else { return nil }
-            default:
-                break
-            }
-        }
+        guard let nativeLatex = NativeMathInput.prepare(latex) else { return nil }
         let label = MTMathUILabel()
         label.fontSize = fontSize
         label.labelMode = display ? .display : .text
         label.textAlignment = .left
-        label.latex = latex
+        label.latex = nativeLatex
         guard label.error == nil else { return nil }
         let fitting = label.fittingSize
         guard fitting.width > 0, fitting.height > 0 else { return nil }
@@ -142,6 +130,210 @@ enum NoteMath {
         attachment.image = image
         attachment.bounds = CGRect(x: 0, y: -list.descent, width: size.width, height: size.height)
         return attachment
+    }
+
+    // SwiftMath 1.7.3 recursively parses arguments, groups, infix denominators and table
+    // cells. This bounded structural scan builds no math tree and leaves syntax errors to it.
+    private struct NativeMathInput {
+        private enum Frame: Equatable {
+            case argument(Int), group, degree, left, environment(String), table, remainder
+        }
+
+        private let characters: String
+        private var index: String.Index
+        private var frames: [Frame] = []
+        private var colorCommands: [Range<String.Index>] = []
+        // Radicals and accents dominate the measured typesetter cost; breadth needs a
+        // budget independently of stack depth. Other structural entries cost one.
+        private var remainingWork = 128
+
+        static func prepare(_ latex: String) -> String? {
+            guard latex.utf8.count <= 2048 else { return nil }
+            // Width/work is independent of nesting. Keep the existing byte boundary, but
+            // allow wide formulas such as matrices without spending the depth allowance.
+            var work = 0
+            for byte in latex.utf8 {
+                switch byte {
+                case 0x5C, 0x7B, 0x5B, 0x5E, 0x5F, 0x26:
+                    work += 1
+                    guard work <= 256 else { return nil }
+                default:
+                    break
+                }
+            }
+            var input = Self(characters: latex, index: latex.startIndex)
+            guard input.scan() else { return nil }
+            guard !input.colorCommands.isEmpty else { return latex }
+            var normalized = ""
+            normalized.reserveCapacity(latex.utf8.count - 4 * input.colorCommands.count)
+            var start = latex.startIndex
+            for range in input.colorCommands {
+                normalized.append(contentsOf: input.characters[start..<range.lowerBound])
+                normalized.append(#"\color"#)
+                start = range.upperBound
+            }
+            normalized.append(contentsOf: input.characters[start...])
+            return normalized
+        }
+
+        private mutating func push(_ frame: Frame, cost: Int = 1) -> Bool {
+            guard frames.count < 16, remainingWork >= cost else { return false }
+            remainingWork -= cost
+            frames.append(frame)
+            return true
+        }
+
+        private mutating func completeArgument() {
+            while case .argument(let remaining) = frames.last {
+                frames.removeLast()
+                if remaining > 1 {
+                    frames.append(.argument(remaining - 1))
+                    return
+                }
+            }
+        }
+
+        private mutating func close(_ frame: Frame, completesArgument: Bool = true) -> Bool {
+            // One-character arguments return empty before }, ^, _, or &.
+            completeArgument()
+            while frames.last == .remainder { frames.removeLast() }
+            guard frames.last == frame else { return false }
+            frames.removeLast()
+            if completesArgument { completeArgument() }
+            return true
+        }
+
+        private mutating func command() -> String {
+            let start = index
+            if index < characters.endIndex, "{}$#%_| ,>;!\\".contains(characters[index]) {
+                characters.formIndex(after: &index)
+            } else {
+                while index < characters.endIndex,
+                      characters[index].isLowercase || characters[index].isUppercase {
+                    characters.formIndex(after: &index)
+                }
+            }
+            return String(characters[start..<index])
+        }
+
+        private mutating func skipSpaces() {
+            while index < characters.endIndex {
+                let character = characters[index]
+                if character.unicodeScalars.count == 1,
+                   let scalar = character.unicodeScalars.first,
+                   scalar.value >= 0x21, scalar.value <= 0x7E { return }
+                characters.formIndex(after: &index)
+            }
+        }
+
+        private mutating func metadata() -> String? {
+            skipSpaces()
+            guard index < characters.endIndex, characters[index] == "{" else { return nil }
+            characters.formIndex(after: &index)
+            let start = index
+            while index < characters.endIndex, characters[index] != "}" {
+                guard characters[index] != "{", characters[index] != "\\" else { return nil }
+                characters.formIndex(after: &index)
+            }
+            guard index < characters.endIndex else { return nil }
+            let value = String(characters[start..<index])
+            characters.formIndex(after: &index)
+            return value
+        }
+
+        private mutating func delimiter() -> Bool {
+            skipSpaces()
+            guard index < characters.endIndex else { return false }
+            let character = characters[index]
+            characters.formIndex(after: &index)
+            if character == "\\" { _ = command() }
+            return true
+        }
+
+        private mutating func separator() -> Bool {
+            completeArgument()
+            while frames.last == .remainder { frames.removeLast() }
+            // SwiftMath's currentEnv is shared by nested groups and table cells.
+            if frames.contains(where: {
+                if case .environment = $0 { return true }
+                return $0 == .table
+            }) { return true }
+            return push(.table)
+        }
+
+        private mutating func scan() -> Bool {
+            while index < characters.endIndex {
+                let start = index
+                let character = characters[index]
+                characters.formIndex(after: &index)
+                switch character {
+                case "{":
+                    guard push(.group) else { return false }
+                case "}":
+                    guard close(.group) else { return false }
+                case "]" where frames.last(where: { $0 != .remainder }) == .degree:
+                    guard close(.degree, completesArgument: false) else { return false }
+                case "^", "_":
+                    completeArgument()
+                    guard push(.argument(1)) else { return false }
+                case "&":
+                    guard separator() else { return false }
+                case "\\":
+                    let name = command()
+                    switch name {
+                    case "frac", "binom":
+                        guard push(.argument(2)) else { return false }
+                    case "sqrt":
+                        guard push(.argument(1), cost: 8) else { return false }
+                        if index < characters.endIndex, characters[index] == "[" {
+                            characters.formIndex(after: &index)
+                            guard push(.degree) else { return false }
+                        }
+                    case "left":
+                        guard delimiter(), push(.left) else { return false }
+                    case "right":
+                        guard delimiter(), close(.left) else { return false }
+                    case "begin":
+                        guard let name = metadata(), push(.environment(name)) else { return false }
+                    case "end":
+                        guard let name = metadata(), close(.environment(name)) else { return false }
+                    case "color", "textcolor", "colorbox":
+                        // Unlike .textcolor, SwiftMath's .color path never indexes
+                        // subDisplays or assumes its argument is a CT line.
+                        if name == "textcolor" { colorCommands.append(start..<index) }
+                        guard metadata() != nil, push(.argument(1)) else { return false }
+                    case "over", "atop", "choose", "brack", "brace":
+                        guard push(.remainder) else { return false }
+                    case "\\", "cr":
+                        guard separator() else { return false }
+                    case "limits", "nolimits":
+                        break
+                    default:
+                        if MTMathAtomFactory.accents[name] != nil {
+                            guard push(.argument(1), cost: 8) else { return false }
+                        } else if name == "overline" || name == "underline"
+                            || MTMathAtomFactory.fontStyleWithName(name) != nil {
+                            guard push(.argument(1)) else { return false }
+                        } else {
+                            completeArgument()
+                        }
+                    }
+                default:
+                    // Ignoring non-ASCII and non-atoms can only overestimate an argument's
+                    // lifetime. SwiftMath also ignores these except in text/font commands.
+                    if character.unicodeScalars.count == 1,
+                       let scalar = character.unicodeScalars.first,
+                       scalar.value >= 0x21, scalar.value <= 0x7E,
+                       !"$%#~'".contains(character) {
+                        completeArgument()
+                    }
+                }
+            }
+            // Unfinished constructs cannot be typeset. Infix and implicit-table frames end
+            // at EOF; all other unmatched frames use the literal-source fallback.
+            while frames.last == .remainder || frames.last == .table { frames.removeLast() }
+            return frames.isEmpty
+        }
     }
 
     // MARK: Source

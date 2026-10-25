@@ -70,4 +70,137 @@ struct NoteMathBoundsTests {
         #expect(NoteMath.attachment(latex: String(repeating: #"\sqrt "#, count: 16) + "x", fontSize: 13, display: true) != nil)
         #expect(NoteMath.attachment(latex: String(repeating: #"\sqrt "#, count: 17) + "x", fontSize: 13, display: true) == nil)
     }
+
+    @Test func prefixedTextColorsRenderWithoutTrapping() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/prefixedTextColorsRenderWithoutTrapping") { return }
+        let inputs = [
+            #"$x\textcolor{red}{\frac12}$"#,
+            #"$a=\textcolor{#f00}{\sqrt{2}}$"#,
+            #"$x\textcolor{red}{}$"#,
+            #"$$\frac{a}{b}=\textcolor{red}{\frac{c}{d}}$$"#,
+        ]
+        for markdown in inputs {
+            let text = NoteRenderer(excerpts: [:], source: markdown, width: 400)
+                .render(NoteMarkdown.parse(markdown), placeholder: "")
+            var attachmentCount = 0
+            text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+                if value != nil { attachmentCount += 1 }
+            }
+            #expect(attachmentCount == 1, "\(markdown)")
+            #expect(!text.string.contains("textcolor"), "\(markdown)")
+        }
+    }
+
+    @Test func prefixedColorAccentAndScriptFuzzRunsInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/prefixedColorAccentAndScriptFuzzRunsInChild") { return }
+        let arguments = [
+            "", "x", #"\frac12"#, #"\sqrt{2}"#, #"\left(x\right)"#,
+            #"\sum_{i=1}^{n}i"#, #"\begin{matrix}a&b\\c&d\end{matrix}"#,
+        ]
+        let wrappers: [(String) -> String] = [
+            { #"x\textcolor{FF0000}{"# + $0 + "}" },
+            { #"x\color{FF0000}{"# + $0 + "}" },
+            { #"x\colorbox{FF0000}{"# + $0 + "}" },
+            { #"x\hat{"# + $0 + "}" },
+            { #"x\widehat{"# + $0 + "}" },
+            { #"x\vec{"# + $0 + "}" },
+            { "x_{" + $0 + "}" },
+            { "x^{" + $0 + "}" },
+        ]
+        for argument in arguments {
+            for wrap in wrappers {
+                var latex = argument
+                for depth in 1...5 {
+                    latex = wrap(latex)
+                    for display in [false, true] {
+                        #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: display) != nil,
+                                "depth \(depth): \(latex)")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func malformedRadicalDegreesUseLiteralFallbackInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/malformedRadicalDegreesUseLiteralFallbackInChild") { return }
+        for latex in [#"\sqrt[}]{x}"#, #"\sqrt[2}]{x}"#, #"\sqrt[{x}}]{x}"#, #"x\sqrt[\frac1}]{x}"#] {
+            for display in [false, true] {
+                #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: display) == nil)
+            }
+            let markdown = "$$\n" + latex + "\n$$"
+            let text = NoteRenderer(excerpts: [:], source: markdown, width: 400)
+                .render(NoteMarkdown.parse(markdown), placeholder: "")
+            #expect(text.string.trimmingCharacters(in: .whitespacesAndNewlines) == markdown)
+        }
+    }
+
+    @Test func wideMathDoesNotSpendItsDepthAllowance() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/wideMathDoesNotSpendItsDepthAllowance") { return }
+        let row = Array(repeating: "x", count: 4).joined(separator: "&")
+        let matrix = #"\begin{matrix}"# + Array(repeating: row, count: 4).joined(separator: "\\\\") + #"\end{matrix}"#
+        for latex in [
+            #"\frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2}"#,
+            matrix,
+            String(repeating: #"\frac{a}{b}+"#, count: 24) + "1",
+        ] {
+            #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: true) != nil, "\(latex)")
+        }
+    }
+
+    @Test func allRecursiveConstructsHaveBoundedDepthInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/allRecursiveConstructsHaveBoundedDepthInChild") { return }
+        let recursive: [(Int) -> String] = [
+            { String(repeating: #"\frac1"#, count: $0) + "1" },
+            { String(repeating: #"\binom1"#, count: $0) + "1" },
+            { String(repeating: #"\sqrt "#, count: $0) + "x" },
+            { String(repeating: #"\hat "#, count: $0) + "x" },
+            { String(repeating: #"\mathbf "#, count: $0) + "x" },
+            { String(repeating: #"\overline "#, count: $0) + "x" },
+            { String(repeating: #"\underline "#, count: $0) + "x" },
+            { String(repeating: #"x\atop "#, count: $0) + "x" },
+            { String(repeating: #"x\choose "#, count: $0) + "x" },
+            { String(repeating: #"x\over "#, count: $0) + "x" },
+            { String(repeating: #"x\brack "#, count: $0) + "x" },
+            { String(repeating: #"x\brace "#, count: $0) + "x" },
+            { String(repeating: #"\color{FF0000}"#, count: $0) + "x" },
+            { String(repeating: #"\textcolor{FF0000}"#, count: $0) + "x" },
+            { String(repeating: #"\colorbox{FF0000}"#, count: $0) + "x" },
+            { String(repeating: #"\left("#, count: $0) + "x" + String(repeating: #"\right)"#, count: $0) },
+            { String(repeating: #"\sqrt["#, count: $0) + "2" + String(repeating: "]{x}", count: $0) },
+            { String(repeating: "x^{", count: $0) + "x" + String(repeating: "}", count: $0) },
+            { String(repeating: "x_{", count: $0) + "x" + String(repeating: "}", count: $0) },
+            { String(repeating: #"\begin{matrix}"#, count: $0) + "x" + String(repeating: #"\end{matrix}"#, count: $0) },
+        ]
+        for formula in recursive {
+            for display in [false, true] {
+                #expect(NoteMath.attachment(latex: formula(17), fontSize: 13, display: display) == nil)
+            }
+        }
+    }
+
+    @Test func colorRewriteMatchesWholeCommandsOnlyInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/colorRewriteMatchesWholeCommandsOnlyInChild") { return }
+        #expect(NoteMath.attachment(latex: #"x\textcolorful{red}{x}"#, fontSize: 13, display: true) == nil)
+        #expect(NoteMath.attachment(latex: #"x\textcoloré{red}{x}"#, fontSize: 13, display: true) == nil)
+        #expect(NoteMath.attachment(latex: #"\backslash textcolor"#, fontSize: 13, display: true) != nil)
+    }
+
+    @Test func workBoundaryIsIndependentOfDepthInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/workBoundaryIsIndependentOfDepthInChild") { return }
+        #expect(NoteMath.attachment(latex: String(repeating: #"\,x"#, count: 256), fontSize: 13, display: true) != nil)
+        #expect(NoteMath.attachment(latex: String(repeating: #"\,x"#, count: 257), fontSize: 13, display: true) == nil)
+    }
+
+    @Test func repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild() throws {
+        if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild") { return }
+        for command in [#"\sqrt "#, #"\hat "#] {
+            let chain = String(repeating: command, count: 16) + "x"
+            let latex = chain + "+" + chain
+            #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: true) == nil)
+            let markdown = "$$\n" + latex + "\n$$"
+            let text = NoteRenderer(excerpts: [:], source: markdown, width: 400)
+                .render(NoteMarkdown.parse(markdown), placeholder: "")
+            #expect(text.string.trimmingCharacters(in: .whitespacesAndNewlines) == markdown)
+        }
+    }
 }
