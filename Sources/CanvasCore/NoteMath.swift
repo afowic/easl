@@ -106,6 +106,19 @@ enum NoteMath {
     /// A formula as a text attachment, or nil when SwiftMath can't typeset it. The picture draws
     /// in `NSColor.labelColor` at draw time, so it follows light and dark.
     static func attachment(latex: String, fontSize: CGFloat, display: Bool) -> NSTextAttachment? {
+        guard latex.utf8.count <= 2048 else { return nil }
+        // Count all potential recursive entries, not only balanced groups: commands can take
+        // unbraced arguments, and infix fractions recurse through the remaining expression.
+        var recursiveSyntax = 0
+        for byte in latex.utf8 {
+            switch byte {
+            case 0x5C, 0x7B, 0x5B, 0x5E, 0x5F, 0x26:
+                recursiveSyntax += 1
+                guard recursiveSyntax <= 16 else { return nil }
+            default:
+                break
+            }
+        }
         let label = MTMathUILabel()
         label.fontSize = fontSize
         label.labelMode = display ? .display : .text

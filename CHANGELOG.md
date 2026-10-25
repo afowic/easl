@@ -16,6 +16,7 @@ Each version's section is its GitHub release's notes.
 - The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
 - Notes typeset LaTeX: `$…$` inline and `$$…$$` on its own centered line with SwiftMath (currency, `\$`, code and unparsable formulas stay as written), and HTML tiles load KaTeX only when a page has math; note measurement, `size: "fit"` and `layout.check` account for it.
 - Note math preprocessing bounds each entity search to 32 characters, so ampersand-heavy prose does not repeatedly scan the remaining note.
+- Native note math rejects formulas above 2,048 UTF-8 bytes or 16 potential recursive syntax entries before SwiftMath, preserving the existing monospace-source fallback for display and size-to-fit measurement.
 - Diagram tiles draw caller-supplied knowledge and reasoning graphs (`kind: "graph"`): nodes with click-to-expand markdown detail, provenance that focuses the terminal it came from, and practice status (`taught`, `practiced`, `retained`, `weak`), up to 500 nodes laid out one column per reasoning depth. Nothing in them is computed from code.
 
 ## 0.3.1
