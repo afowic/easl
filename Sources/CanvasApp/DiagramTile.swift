@@ -49,11 +49,13 @@ final class DiagramTile: NSView, TileContent {
     /// A graph node whose full detail is expanded below the diagram.
     private var expandedNode: String? {
         didSet {
-            detailLayout = nil
+            cancelDetail()
             detailScrollOffset = 0
         }
     }
     private var detailLayout: DetailLayout?
+    private var detailTask: Task<Void, Never>?
+    private var detailGeneration = 0
     private var detailScrollOffset: CGFloat = 0
 
     /// Set by the canvas: focus the terminal tile a graph node's source names.
@@ -203,6 +205,7 @@ final class DiagramTile: NSView, TileContent {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
+            cancelDetail()
             stopWatching()
             pendingRefresh?.cancel()
             if remote != nil { dirty = true }
@@ -278,7 +281,7 @@ final class DiagramTile: NSView, TileContent {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        detailLayout = nil
+        cancelDetail()
         needsDisplay = true
     }
 
@@ -561,9 +564,16 @@ final class DiagramTile: NSView, TileContent {
         var textHeight: CGFloat
     }
 
-    private func detailPanel(in bounds: CGRect) -> DetailPanel? {
+    private func cancelDetail() {
+        detailGeneration += 1
+        detailTask?.cancel()
+        detailTask = nil
+        detailLayout = nil
+    }
+
+    private func detailPanel(in bounds: CGRect, prepare: Bool = false) -> DetailPanel? {
         guard isGraph, let id = expandedNode, let node = graph?.node(id), let detail = node.detail, !detail.isEmpty else {
-            detailLayout = nil
+            cancelDetail()
             detailScrollOffset = 0
             return nil
         }
@@ -571,12 +581,30 @@ final class DiagramTile: NSView, TileContent {
         let appearance = effectiveAppearance.name
         if detailLayout?.id != id || detailLayout?.detail != detail || detailLayout?.width != width
             || detailLayout?.zoom != object.zoom || detailLayout?.appearance != appearance {
-            let text = NoteRenderer(excerpts: [:], width: width).render(NoteMarkdown.parse(detail), placeholder: "")
+            cancelDetail()
+            let renderer = NoteRenderer(excerpts: [:], source: detail, width: width, appearance: effectiveAppearance)
+            let document = NoteMarkdown.parse(detail)
+            let text = renderer.render(document, placeholder: "")
             let measured = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
                                              options: [.usesLineFragmentOrigin, .usesFontLeading]).height
             detailLayout = DetailLayout(id: id, detail: detail, width: width, zoom: object.zoom,
                                         appearance: appearance, text: text, textHeight: ceil(measured))
             detailScrollOffset = 0
+            if renderer.hasPendingDiagrams, live || prepare {
+                let generation = detailGeneration
+                detailTask = Task { [weak self] in
+                    let text = await renderer.renderPrepared(document, placeholder: "")
+                    guard !Task.isCancelled, let self, self.detailGeneration == generation,
+                          self.expandedNode == id, self.graph?.node(id)?.detail == detail else { return }
+                    let measured = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                                     options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+                    self.detailLayout = DetailLayout(id: id, detail: detail, width: width, zoom: self.object.zoom,
+                                                     appearance: appearance, text: text, textHeight: ceil(measured))
+                    self.detailTask = nil
+                    self.needsDisplay = true
+                    self.laidOut()
+                }
+            }
         }
         guard let cached = detailLayout else { return nil }
         let height = min(cached.textHeight + 46, min(320, max(0, bounds.height * 0.4)))
@@ -720,7 +748,9 @@ final class DiagramTile: NSView, TileContent {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != bounds.width
         super.setFrameSize(newSize)
+        if widthChanged { cancelDetail() }
         needsDisplay = true
         laidOut()
     }
@@ -736,10 +766,12 @@ final class DiagramTile: NSView, TileContent {
         guard live != self.live else { return }
         self.live = live
         if live {
+            cancelDetail()
             watch()
             if dirty { refresh() }
         } else {
             stopWatching()
+            cancelDetail()
             if remote != nil {
                 pendingRefresh?.cancel()
                 pendingRefresh = nil
@@ -750,8 +782,15 @@ final class DiagramTile: NSView, TileContent {
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         if graph == nil, case .local(_, let task) = computation { await task.value }
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
         var content = layout.bodySize
-        let panel = detailPanel(in: CGRect(origin: .zero, size: CGSize(width: max(request.size.width, content.width), height: content.height)))
+        let width = request.full ? max(request.size.width, content.width) : request.size.width
+        let panelBounds = CGRect(origin: .zero, size: CGSize(width: width, height: content.height))
+        _ = detailPanel(in: panelBounds, prepare: true)
+        let generation = detailGeneration
+        if let task = detailTask { await task.value }
+        guard !Task.isCancelled, generation == detailGeneration else { return .placeholder(request, "detail changed while rendering") }
+        let panel = detailPanel(in: panelBounds, prepare: true)
         content.height += panel?.height ?? 0
         let size = request.full ? CGSize(width: max(request.size.width, content.width), height: max(request.size.height, content.height)) : request.size
         guard let image = request.image(size: size, { bounds in paint(in: bounds) }) else {
@@ -784,6 +823,7 @@ final class DiagramTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let previous = self.object
         self.object = object
+        if previous.zoom != object.zoom { cancelDetail() }
         if DiagramSpec(previous.props) != DiagramSpec(object.props) {
             refresh()
         } else if remote != nil, computing, object.rev != previous.rev {
@@ -791,6 +831,7 @@ final class DiagramTile: NSView, TileContent {
         }
         let graphKey = isGraph ? "knowledge" : "graph"
         guard previous.props["kind"] != object.props["kind"] || previous.props[graphKey] != object.props[graphKey] else { return }
+        cancelDetail()
         hostFailure = nil
         switch computation {
         case .asking, .hostComputing: computation = .idle

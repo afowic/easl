@@ -1,15 +1,12 @@
 import AppKit
 import JavaScriptCore
 
-/// A note's ```mermaid fence drawn as a diagram by the vendored Pele build
-/// (`resources/kit/vendor/pele.global.js`, MIT) running in JavaScriptCore: no web view, no
-/// network, synchronous. Colors come from the note's appearance and are resolved into the SVG
-/// before `NSImage` decodes it (CoreSVG doesn't resolve CSS variables). Decoded images are cached
-/// by source, width, and appearance; the engine's one JSContext lives on its own queue, warmed at
-/// launch, so the main thread only waits for a render.
+/// Native note diagrams rendered and rasterized on one serial JavaScriptCore worker.
+/// The main actor owns only completed bitmap results; it never waits synchronously for the worker.
 @MainActor
 public enum NoteDiagram {
-    enum Outcome {
+    /// A worker hands off an immutable bitmap and never touches it again.
+    enum Outcome: @unchecked Sendable {
         case image(NSImage)
         /// Why Pele couldn't draw the source, shown under the fence's source rows.
         case failure(String)
@@ -18,19 +15,19 @@ public enum NoteDiagram {
     private struct Key: Hashable {
         var source: String
         var width: Int
-        var dark: Bool
+        var colors: [String]
     }
 
     private static let engine = PeleEngine()
     private static var cache: [Key: Outcome] = [:]
     private static var order: [Key] = []
-    /// Enough for a board's visible diagrams at their note widths; a note's own renders repeat far
-    /// more often than sources change.
+    private static var cacheBytes = 0
     static let cacheLimit = 64
+    private static let maxCacheBytes = 128 * 1024 * 1024
 
-    nonisolated static let maxFenceBytes = 1024
-    nonisolated static let maxNoteFenceBytes = 1536
-    nonisolated static let maxNoteFences = 2
+    nonisolated static let maxFenceBytes = 16 * 1024
+    nonisolated static let maxNoteFenceBytes = 128 * 1024
+    nonisolated static let maxNoteFences = 32
 
     struct Budget {
         private var bytes = 0
@@ -52,20 +49,43 @@ public enum NoteDiagram {
         engine.prewarm()
     }
 
-    /// `source` drawn at most `width` points wide for `appearance`.
-    static func image(source: String, width: CGFloat, appearance: NSAppearance) -> Outcome {
+    private static func key(source: String, width: CGFloat, colors: [String: String]) -> Key {
+        Key(source: source, width: Int(normalizedWidth(width)),
+            colors: colors.map { "\($0.key)=\($0.value)" }.sorted())
+    }
+
+    nonisolated static func normalizedWidth(_ width: CGFloat) -> CGFloat {
+        width.isNaN ? 1 : min(max(1, width.rounded()), 16_384)
+    }
+
+    /// A completed result only. A miss must stay source/placeholder until `image` finishes.
+    static func completed(source: String, width: CGFloat, appearance: NSAppearance) -> Outcome? {
+        cache[key(source: source, width: width, colors: theme(appearance))]
+    }
+
+    static func image(source: String, width: CGFloat, appearance: NSAppearance) async -> Outcome? {
+        guard !Task.isCancelled else { return nil }
         guard source.utf8.count <= maxFenceBytes else { return .failure("diagram exceeds the native rendering budget") }
-        let width = width.isNaN ? 1 : min(max(1, width.rounded()), 16_384)
-        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let key = Key(source: source, width: Int(width), dark: dark)
+        let colors = theme(appearance)
+        let key = key(source: source, width: width, colors: colors)
         if let cached = cache[key] { return cached }
-        let outcome = engine.render(source: source, width: width, theme: theme(appearance))
+        guard let outcome = await engine.render(source: source, width: CGFloat(key.width), theme: colors),
+              !Task.isCancelled else { return nil }
+        if let cached = cache[key] { return cached }
         cache[key] = outcome
+        cacheBytes += cost(outcome)
         order.append(key)
-        while order.count > cacheLimit {
-            cache[order.removeFirst()] = nil
+        while order.count > cacheLimit || cacheBytes > maxCacheBytes {
+            if let removed = cache.removeValue(forKey: order.removeFirst()) { cacheBytes -= cost(removed) }
         }
         return outcome
+    }
+
+    private static func cost(_ outcome: Outcome) -> Int {
+        if case .image(let image) = outcome {
+            return Int(ceil(image.size.width * 2)) * Int(ceil(image.size.height * 2)) * 4
+        }
+        return 0
     }
 
     /// The appearance diagrams are drawn for: the app's, which follows the system and the
@@ -260,8 +280,7 @@ public enum NoteDiagram {
     }
 }
 
-/// Pele in JavaScriptCore. Its context is created and used only on `queue`; callers wait for a
-/// render, which is a few milliseconds once the build's script and parsers are warm.
+/// Context creation, parsing, SVG decoding and first painting are confined to `queue`.
 private final class PeleEngine: @unchecked Sendable {
     static let fontFamily = "Helvetica"
     static let monoFontFamily = "Menlo"
@@ -305,8 +324,26 @@ private final class PeleEngine: @unchecked Sendable {
         }
     }
 
-    func render(source: String, width: CGFloat, theme: [String: String]) -> NoteDiagram.Outcome {
-        queue.sync { draw(source: source, width: width, theme: theme) }
+    private final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    }
+
+    func render(source: String, width: CGFloat, theme: [String: String]) async -> NoteDiagram.Outcome? {
+        let cancellation = Cancellation()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    guard !cancellation.isCancelled else { continuation.resume(returning: nil); return }
+                    let outcome = autoreleasepool { draw(source: source, width: width, theme: theme) }
+                    continuation.resume(returning: cancellation.isCancelled ? nil : outcome)
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 
     private func load() -> JSContext? {
@@ -316,36 +353,58 @@ private final class PeleEngine: @unchecked Sendable {
                 context.evaluateScript(script)
                 context.evaluateScript("""
                 function easlRenderDiagram(source, options) {
+                    const workLimit = 8192;
                     if (pele.detectType(source) === "block") {
                         if (source.includes("%%{"))
                             throw new Error("diagram exceeds the native block parsing budget");
                         let spaces = 0;
                         for (const match of source.replaceAll(";", "").matchAll(/space\\s*:\\s*(\\d+)/g)) {
                             spaces += Number(match[1]);
-                            if (spaces > 64)
+                            if (spaces > workLimit)
                                 throw new Error("diagram exceeds the native block parsing budget");
                         }
                     }
-                    const model = pele.parse(source, {limit: 1024, maxEdges: 8});
-                    if (model.type === "gantt" && (model.excludes?.length || model.includes?.length))
-                        throw new Error("diagram exceeds the native calendar rendering budget");
-                    if (model.type === "pie" && model.sections.size > 32)
-                        throw new Error("diagram exceeds the native pie rendering budget");
-                    if (model.type === "venn") {
-                        if (model.subsets.length > 12)
-                            throw new Error("diagram exceeds the native Venn rendering budget");
-                        const sets = new Set();
-                        for (const subset of model.subsets)
-                            for (const name of subset.sets) {
-                                sets.add(name);
-                                if (sets.size > 5)
-                                    throw new Error("diagram exceeds the native Venn rendering budget");
+                    const model = pele.parse(source);
+                    if (model.type === "gantt" && (model.excludes?.length || model.includes?.length)) {
+                        // Calendar exclusions iterate dates; cap the span before Pele schedules them.
+                        let days = 0, earliest = Infinity, latest = -Infinity;
+                        for (const task of model.tasks || []) {
+                            const duration = task.raw?.end || "";
+                            const match = String(duration).trim().match(/^(\\d+(?:\\.\\d+)?)(ms|s|m|h|d|w|M|y)$/);
+                            if (match) {
+                                const units = {ms: 1/86400000, s: 1/86400, m: 1/1440, h: 1/24, d: 1, w: 7, M: 31, y: 366};
+                                days += Number(match[1]) * units[match[2]];
                             }
+                            for (const raw of [task.raw?.start, task.raw?.end]) {
+                                const token = String(raw || "").trim();
+                                if (!token || /^(after|until)\\b/.test(token) ||
+                                    /^(\\d+(?:\\.\\d+)?)(ms|s|m|h|d|w|M|y)$/.test(token)) continue;
+                                try {
+                                    const date = +model.getStartDate(token);
+                                    if (Number.isFinite(date)) {
+                                        earliest = Math.min(earliest, date);
+                                        latest = Math.max(latest, date);
+                                    }
+                                } catch (_) {
+                                    // Pele reports invalid dates when rendering the model.
+                                }
+                            }
+                        }
+                        const span = Number.isFinite(earliest) ? (latest - earliest) / 86400000 : 0;
+                        const calendarWork = (days + span) * Math.max(1, model.dateFormat.length / 10) *
+                            Math.max(1, model.excludes.length + model.includes.length);
+                        if (calendarWork > workLimit)
+                            throw new Error("diagram exceeds the native calendar rendering budget");
                     }
                     const groups = model.subgraphs?.length || 0;
                     const nodes = model.nodes?.size || model.actors?.size || 0;
                     const edges = model.edges?.length || model.messages?.length || 0;
-                    if (groups > 2 || nodes > 12 || (groups + 1) * (nodes + edges) > 24)
+                    const subsets = model.subsets || [];
+                    const sets = new Set(subsets.flatMap(subset => subset.sets));
+                    const slices = model.sections instanceof Map ? model.sections.size : 0;
+                    const work = Math.max((groups + 1) * (nodes + edges),
+                                          subsets.length * sets.size * sets.size, slices * slices);
+                    if (work > workLimit)
                         throw new Error("diagram exceeds the native structural rendering budget");
                     const pending = [model], seen = new Set();
                     let entries = 0, text = 0;
@@ -357,14 +416,14 @@ private final class PeleEngine: @unchecked Sendable {
                             seen.add(item);
                             const map = item instanceof Map;
                             const values = map ? item.values() : Object.values(item);
-                            entries += map ? item.size * 2 : values.length;
-                            if (entries > 256)
+                            entries += map ? item.size : values.length;
+                            if (entries > 16384)
                                 throw new Error("diagram exceeds the native rendering budget");
                             if (map)
                                 for (const key of item.keys()) pending.push(key);
                             for (const value of values) pending.push(value);
                         }
-                        if (entries > 256 || text > 4096)
+                        if (entries > 16384 || text > 65536)
                             throw new Error("diagram exceeds the native rendering budget");
                     }
                     return pele.render(model, options);
@@ -390,7 +449,7 @@ private final class PeleEngine: @unchecked Sendable {
             "fontSize": Double(Self.fontSize),
             "responsive": true,
             "autoDirection": false,
-            "outputLimit": 100_000,
+            "outputLimit": 1_000_000,
             // Notes are untrusted markdown too: no navigation or network from a diagram.
             "links": false,
             "images": false,
@@ -404,18 +463,30 @@ private final class PeleEngine: @unchecked Sendable {
         }
         guard let value, value.isObject,
               let svg = value.objectForKeyedSubscript("svg")?.toString(), !svg.isEmpty,
-              let drawnWidth = value.objectForKeyedSubscript("width")?.toDouble(), drawnWidth > 0,
-              let drawnHeight = value.objectForKeyedSubscript("height")?.toDouble(), drawnHeight > 0 else {
+              let drawnWidth = value.objectForKeyedSubscript("width")?.toDouble(), drawnWidth.isFinite, drawnWidth > 0,
+              let drawnHeight = value.objectForKeyedSubscript("height")?.toDouble(), drawnHeight.isFinite, drawnHeight > 0 else {
             return .failure("Pele couldn't draw this diagram")
         }
         let themed = NoteDiagram.themed(svg, colors: theme)
         guard let data = themed.data(using: .utf8), let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else {
             return .failure("Pele couldn't draw this diagram")
         }
-        // The attachment fits the image to the line; keeping its size at or under the note's width
-        // makes the measured height match what the note draws.
         let scale = min(1, width / CGFloat(drawnWidth))
-        image.size = CGSize(width: (CGFloat(drawnWidth) * scale).rounded(), height: (CGFloat(drawnHeight) * scale).rounded())
-        return .image(image)
+        let size = CGSize(width: max(1, (CGFloat(drawnWidth) * scale).rounded()),
+                          height: max(1, (CGFloat(drawnHeight) * scale).rounded()))
+        let pixelsWide = ceil(size.width * 2), pixelsHigh = ceil(size.height * 2)
+        guard pixelsWide <= 32_768, pixelsHigh <= 32_768, pixelsWide * pixelsHigh <= 16_777_216,
+              let bitmap = CGContext(data: nil, width: Int(pixelsWide), height: Int(pixelsHigh),
+                                     bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return .failure("diagram exceeds the native bitmap rendering budget")
+        }
+        bitmap.scaleBy(x: 2, y: 2)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: bitmap, flipped: false)
+        image.draw(in: CGRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let raster = bitmap.makeImage() else { return .failure("Pele couldn't draw this diagram") }
+        return .image(NSImage(cgImage: raster, size: size))
     }
 }

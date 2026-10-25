@@ -22,7 +22,10 @@ public final class NoteRenderer {
     private let lineWidth: CGFloat
     private let out = NSMutableAttributedString()
     private var diagramBudget = NoteDiagram.Budget()
-    /// Whether the text depends on the width it was rendered at (a table's cells wrap to it).
+    private let diagramAppearance: NSAppearance
+    private var diagrams: [String: NoteDiagram.Outcome] = [:]
+    public private(set) var hasPendingDiagrams = false
+    /// Tables and diagrams, including pending diagrams, depend on their rendering width.
     public private(set) var fitsWidth = false
     /// Points of width the text container lacks to show every table cell whole: 0 unless a table
     /// has more columns than the note has room for even with its words broken, when its rows
@@ -31,11 +34,13 @@ public final class NoteRenderer {
 
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
-    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil, width: CGFloat) {
+    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
+                width: CGFloat, appearance: NSAppearance? = nil) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
+        diagramAppearance = appearance ?? NoteDiagram.appearance()
     }
 
     /// Nesting state for block rendering.
@@ -47,7 +52,13 @@ public final class NoteRenderer {
         var markerWidth: CGFloat = 0
     }
 
+    /// Uses completed diagrams only. Call `renderPrepared` when final image dimensions are required.
     public func render(_ document: Document, placeholder: String) -> NSAttributedString {
+        out.setAttributedString(NSAttributedString(string: ""))
+        diagramBudget = NoteDiagram.Budget()
+        fitsWidth = false
+        hasPendingDiagrams = false
+        tableShortfall = 0
         if document.childCount == 0 {
             let style = NSMutableParagraphStyle()
             style.alignment = .center
@@ -63,6 +74,32 @@ public final class NoteRenderer {
         // Every block ends its paragraph; the last one needs no empty paragraph after it.
         if out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
+    }
+
+    /// Waits for this document's exact bitmap results, retaining them even if the shared cache evicts.
+    public func renderPrepared(_ document: Document, placeholder: String) async -> NSAttributedString {
+        var sources: [String] = []
+        func walk(_ markup: Markup) {
+            if let block = markup as? CodeBlock {
+                let fence = NoteFence(info: (block.language ?? "").trimmingCharacters(in: .whitespaces))
+                if fence.mode == .free, fence.language?.lowercased() == "mermaid" {
+                    sources.append(NoteSource.lines(of: block.code).joined(separator: "\n"))
+                }
+            }
+            for child in markup.children { walk(child) }
+        }
+        walk(document)
+        var budget = NoteDiagram.Budget()
+        for source in sources {
+            guard !Task.isCancelled else { return NSAttributedString(string: "") }
+            guard budget.admit(source) == nil, diagrams[source] == nil else { continue }
+            guard let outcome = await NoteDiagram.image(source: source, width: lineWidth, appearance: diagramAppearance) else {
+                return NSAttributedString(string: "")
+            }
+            diagrams[source] = outcome
+        }
+        guard !Task.isCancelled else { return NSAttributedString(string: "") }
+        return render(document, placeholder: placeholder)
     }
 
     // MARK: Blocks
@@ -546,15 +583,41 @@ public final class NoteRenderer {
         }
     }
 
+    private func diagramPreview(_ body: [String], maxLines: Int) -> [(text: String, number: Int?, block: NoteBlock, row: NoteCodeRow?)] {
+        var preview: [(text: String, number: Int?, block: NoteBlock, row: NoteCodeRow?)] = []
+        preview.reserveCapacity(min(maxLines, body.count) + 1)
+        var remaining = 2048
+        for line in body.prefix(maxLines) {
+            let prefix = line.unicodeScalars.prefix(remaining)
+            preview.append((String(prefix), nil, .authored, nil))
+            remaining -= prefix.count
+            if prefix.endIndex != line.endIndex || remaining == 0 {
+                if prefix.endIndex != line.endIndex || preview.count < body.count {
+                    preview.append(("…", nil, .authored, nil))
+                }
+                return preview
+            }
+        }
+        if preview.count < body.count { preview.append(("…", nil, .authored, nil)) }
+        return preview
+    }
+
     /// A ```mermaid fence drawn by Pele at the note's width, or its source rows and Pele's
     /// explanation when the diagram can't be drawn.
     private func diagram(_ body: [String], context: Context, line: Int) {
         let source = body.joined(separator: "\n")
+        fitsWidth = true
         let outcome: NoteDiagram.Outcome
         if let problem = diagramBudget.admit(source) {
             outcome = .failure(problem)
         } else {
-            outcome = NoteDiagram.image(source: source, width: lineWidth, appearance: NoteDiagram.appearance())
+            guard let ready = diagrams[source] ?? NoteDiagram.completed(source: source, width: lineWidth, appearance: diagramAppearance) else {
+                hasPendingDiagrams = true
+                rows(diagramPreview(body, maxLines: 8), context: context,
+                     markdownLine: line + 1, numberWidth: 0, referenceLinks: false)
+                return
+            }
+            outcome = ready
         }
         switch outcome {
         case .image(let image):
@@ -571,7 +634,7 @@ public final class NoteRenderer {
                 .noteMarkdownLine: line + 1,
             ])
         case .failure(let message):
-            rows(body.map { ($0, nil, NoteBlock.authored, nil) }, context: context, markdownLine: line + 1, numberWidth: 0, referenceLinks: false)
+            rows(diagramPreview(body, maxLines: 16), context: context, markdownLine: line + 1, numberWidth: 0, referenceLinks: false)
             let style = style(context, spacing: 8, before: 2)
             style.firstLineHeadIndent = context.indent + NoteBlockFragment.inset + 4
             style.headIndent = style.firstLineHeadIndent

@@ -162,6 +162,22 @@ final class DelegatedCallsTests {
         #expect(code(await measure("Chart:\n\n![chart](chart.png)")) == "unavailable")
     }
 
+    @Test func aDiagramMeasurementWaitsForItsPreparedImage() async throws {
+        let markdown = "```mermaid\ngraph TD\nA[Measure \(UUID().uuidString)]-->B[Final image]\n```"
+        let calls = delegated()
+        let reply = try await answer(calls, "text.measure", .object(["items": [
+            .object(["kind": "note", "text": .string(markdown), "width": 400]),
+        ]])).get()
+        let size = try await ObjectMeasure.size(type: .note, props: .object(["markdown": .string(markdown)]),
+                                               width: 400, root: dir)
+        let measured = try #require(reply["sizes"]?.array?.first)
+        #expect(measured["w"]?.number == Double(size.width))
+        #expect(measured["h"]?.number == Double(size.height))
+        let plain = try await ObjectMeasure.size(type: .note, props: .object(["markdown": "A line"]),
+                                                width: 400, root: dir)
+        #expect(size.height > plain.height + 40)
+    }
+
     /// next.md "Versions": a param this build doesn't know fails just that call, and a method it
     /// doesn't serve is refused.
     @Test func whatThisBuildDoesntKnowFailsOnlyItsOwnCall() async throws {

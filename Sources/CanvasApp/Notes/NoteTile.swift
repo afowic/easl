@@ -42,6 +42,8 @@ final class NoteTile: NSView, TileContent {
     private var reading: LinkReading?
     private var resolveTask: Task<Void, Never>?
     private var resolveGeneration = 0
+    private var diagramTask: Task<Void, Never>?
+    private var diagramGeneration = 0
     private var pendingResolve: DispatchWorkItem?
     private var live = true
     private var hostBoardClosed = false
@@ -166,6 +168,7 @@ final class NoteTile: NSView, TileContent {
         let changed = object.props["markdown"] != self.object.props["markdown"]
         let rerooted = object.props["root"] != self.object.props["root"] || object.props["ref"] != self.object.props["ref"]
         self.object = object
+        if changed { cancelDiagrams() }
         if rerooted {
             reading = nil
             excerpts = [:]
@@ -207,17 +210,34 @@ final class NoteTile: NSView, TileContent {
 
     /// The width of the text container the note lays out in (`ObjectMeasure.noteInset`).
     private var textWidth: CGFloat { bounds.width - 2 * ObjectMeasure.noteInset.width }
-    /// The width the display's text was rendered for, while that text depends on it (a table).
+    /// The display width while tables or diagrams, including pending ones, depend on it.
     private var renderedWidth: CGFloat?
 
     /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
+        cancelDiagrams()
         guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
+                                    appearance: effectiveAppearance)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
+        guard renderer.hasPendingDiagrams, !hostBoardClosed, !board.isClosed else { return }
+        let generation = diagramGeneration
+        let document = document
+        diagramTask = Task { [weak self] in
+            let prepared = await renderer.renderPrepared(document, placeholder: Self.placeholder)
+            guard !Task.isCancelled, let self, self.diagramGeneration == generation else { return }
+            self.diagramTask = nil
+            self.display.textStorage?.setAttributedString(prepared)
+        }
+    }
+
+    private func cancelDiagrams() {
+        diagramGeneration += 1
+        diagramTask?.cancel()
+        diagramTask = nil
     }
 
     // MARK: Live fences
@@ -411,6 +431,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
     private func suspendWork() {
+        cancelDiagrams()
         resolveGeneration += 1
         pendingResolve?.cancel()
         pendingResolve = nil
@@ -430,6 +451,7 @@ final class NoteTile: NSView, TileContent {
             suspendWork()
             if session != nil { finishEditing(returningFocus: false) }
         } else {
+            renderDisplay()
             resolve()
         }
     }
@@ -749,6 +771,7 @@ final class NoteTile: NSView, TileContent {
     /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let source = markdown, document = document
         let generation = closureGeneration
         let resolved: [String: NoteExcerpt]
         let pictures: [String: NSImage]
@@ -784,7 +807,15 @@ final class NoteTile: NSView, TileContent {
             return .placeholder(request, "board availability changed while rendering")
         }
         let inset = NSSize(width: 8, height: 10)
-        let text = NoteRenderer(excerpts: resolved, images: pictures, source: markdown, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
+        let appearance = effectiveAppearance
+        let displayGeneration = diagramGeneration
+        let text = await NoteRenderer(excerpts: resolved, images: pictures, source: source,
+                                      width: request.size.width - 2 * inset.width, appearance: appearance)
+            .renderPrepared(document, placeholder: Self.placeholder)
+        guard !Task.isCancelled, generation == closureGeneration, markdown == source,
+              diagramGeneration == displayGeneration, effectiveAppearance.name == appearance.name else {
+            return .placeholder(request, "note changed while rendering")
+        }
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()

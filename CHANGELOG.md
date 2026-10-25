@@ -4,8 +4,8 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Notes draw bounded `mermaid` fences offline with Pele, preserve declared direction, and keep rejected source with a short explanation. SVG theming leaves literal labels unchanged, and extreme measurement widths cannot overflow the cache key. Pele is native-note-only; HTML tiles keep the existing Mermaid.js renderer and layout.
-- Native diagram budgets bound block-space expansion before parsing, including adjacent tokens and preprocessing splices. Pie charts stop at 32 slices, Map label keys count toward model budgets, and Venn layout is bounded. Gantt charts with calendar inclusions or exclusions stay as source. SVG theming preserves combining-character labels and resolves diagram font families.
+- Notes draw `mermaid` fences offline with Pele on a serial background worker, including SVG rasterization. Pending fences show source until their bitmap is ready. Source, width, and appearance changes discard stale results; size-to-fit, text measurement, and exports await the real images. Rejected fences show a bounded source preview and their explanation instead of laying out an entire hostile fence. HTML tiles keep the existing Mermaid.js renderer and layout.
+- Native diagrams use shared source, model, layout-work, and bitmap caps instead of small per-chart budgets. Block-space checks still prevent parse amplification, and calendar charts retain a scheduling-work bound without rejecting ordinary inclusions or exclusions. SVG theming preserves literal and combining-character labels, resolves diagram font families, and finite width normalization protects measurement.
 - Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
 - Diagram measurement respects the diagram kind and reports invalid authored graph input as `invalid_params`, consistent with easld.
 - Display math in blockquotes excludes the quote markers from the formula.
