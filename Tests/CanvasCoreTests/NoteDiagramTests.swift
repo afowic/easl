@@ -250,6 +250,31 @@ struct NoteDiagramTests {
         #expect(text.string.contains("structural rendering budget"))
     }
 
+    @Test func nestedStateContainersConsumeSharedStructuralWork() async throws {
+        if try runIsolatedTestIfParallelNow("NoteDiagramTests/nestedStateContainersConsumeSharedStructuralWork") { return }
+        func source(depth: Int) -> String {
+            "stateDiagram-v2\n"
+                + (0..<depth).map { "state S\($0) {\n" }.joined()
+                + "A --> B\n" + String(repeating: "}\n", count: depth)
+        }
+        let large = source(depth: 300)
+        #expect(large.utf8.count < NoteDiagram.maxFenceBytes)
+        #expect(await render("```mermaid\n" + large + "```", noteWidth: 1400).attachment == nil)
+        let small = source(depth: 12)
+        #expect(await render("```mermaid\n" + small + "```", noteWidth: 1400).attachment?.image != nil)
+    }
+
+    @Test func wideNestedDiagramsConsumeSharedRasterWork() async throws {
+        if try runIsolatedTestIfParallelNow("NoteDiagramTests/wideNestedDiagramsConsumeSharedRasterWork") { return }
+        let source = "flowchart TD\n"
+            + (0..<90).map { "subgraph S\($0)\n" }.joined()
+            + "A --> B\n" + String(repeating: "end\n", count: 90)
+        #expect(source.utf8.count < NoteDiagram.maxFenceBytes)
+        let markdown = "```mermaid\n" + source + "```"
+        #expect(await render(markdown, noteWidth: 360).attachment?.image != nil)
+        #expect(await render(markdown, noteWidth: 1450).attachment == nil)
+    }
+
     @Test func c4RelationsConsumeSharedStructuralWorkBelowTheSourceCap() async {
         func source(systems: Int, relations: Int) -> String {
             (["C4Context"]

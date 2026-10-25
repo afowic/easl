@@ -297,6 +297,7 @@ private final class PeleEngine: @unchecked Sendable {
     static let fontFamily = "Helvetica"
     static let monoFontFamily = "Menlo"
     static let fontSize: CGFloat = 13
+    private static let workLimit = 8192
 
     private let queue = DispatchQueue(label: "easl.note.diagram", qos: .userInitiated)
     private var context: JSContext?
@@ -365,7 +366,7 @@ private final class PeleEngine: @unchecked Sendable {
                 context.evaluateScript(script)
                 context.evaluateScript("""
                 function easlRenderDiagram(source, options) {
-                    const workLimit = 8192;
+                    const workLimit = \(Self.workLimit);
                     if (pele.detectType(source) === "block") {
                         if (source.includes("%%{"))
                             throw new Error("diagram exceeds the native block parsing budget");
@@ -408,17 +409,16 @@ private final class PeleEngine: @unchecked Sendable {
                         if (calendarWork > workLimit)
                             throw new Error("diagram exceeds the native calendar rendering budget");
                     }
-                    const groups = (model.subgraphs?.length || 0) + (model.boundaries?.length || 0);
-                    const nodes = model.nodes?.size || model.actors?.size || model.shapes?.length || 0;
-                    const edges = model.edges?.length || model.messages?.length || model.rels?.length || 0;
+                    const count = items => items?.size || items?.length || 0;
+                    let groups = count(model.subgraphs) + count(model.boundaries) +
+                        count(model.groups) + count(model.namespaces) + count(model.boxes);
+                    const nodes = count(model.nodes) || count(model.actors) || count(model.shapes) ||
+                        count(model.states) || count(model.blocks) || count(model.classes) || count(model.entities);
+                    const edges = count(model.edges) || count(model.messages) || count(model.rels) ||
+                        count(model.relations) || count(model.relationships) || count(model.links);
                     const subsets = model.subsets || [];
                     const sets = new Set(subsets.flatMap(subset => subset.sets));
                     const slices = model.sections instanceof Map ? model.sections.size : 0;
-                    const work = Math.max((groups + 1) * (nodes + edges), groups * groups,
-                                          2 * (model.shapes?.length || 0) * (model.rels?.length || 0),
-                                          subsets.length * sets.size * sets.size, slices * slices);
-                    if (work > workLimit)
-                        throw new Error("diagram exceeds the native structural rendering budget");
                     const pending = [model], seen = new Set();
                     let entries = 0, text = 0;
                     while (pending.length) {
@@ -427,6 +427,8 @@ private final class PeleEngine: @unchecked Sendable {
                             text += item.length;
                         } else if (item && typeof item === "object" && !seen.has(item)) {
                             seen.add(item);
+                            if ((model.type === "state" && item.doc?.length) ||
+                                (model.type === "block" && item.type === "composite")) groups++;
                             const map = item instanceof Map;
                             const values = map ? item.values() : Object.values(item);
                             entries += map ? item.size : values.length;
@@ -439,7 +441,14 @@ private final class PeleEngine: @unchecked Sendable {
                         if (entries > 16384 || text > 65536)
                             throw new Error("diagram exceeds the native rendering budget");
                     }
-                    return pele.render(model, options);
+                    const work = Math.max((groups + 1) * (nodes + edges), groups * groups,
+                                          2 * (model.shapes?.length || 0) * (model.rels?.length || 0),
+                                          subsets.length * sets.size * sets.size, slices * slices);
+                    if (work > workLimit)
+                        throw new Error("diagram exceeds the native structural rendering budget");
+                    const rendered = pele.render(model, options);
+                    rendered.nativeGroups = groups;
+                    return rendered;
                 }
                 """)
                 if context.exception == nil { self.context = context }
@@ -477,19 +486,28 @@ private final class PeleEngine: @unchecked Sendable {
         guard let value, value.isObject,
               let svg = value.objectForKeyedSubscript("svg")?.toString(), !svg.isEmpty,
               let drawnWidth = value.objectForKeyedSubscript("width")?.toDouble(), drawnWidth.isFinite, drawnWidth > 0,
-              let drawnHeight = value.objectForKeyedSubscript("height")?.toDouble(), drawnHeight.isFinite, drawnHeight > 0 else {
-            return .failure("Pele couldn't draw this diagram")
-        }
-        let themed = NoteDiagram.themed(svg, colors: theme)
-        guard let data = themed.data(using: .utf8), let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else {
+              let drawnHeight = value.objectForKeyedSubscript("height")?.toDouble(), drawnHeight.isFinite, drawnHeight > 0,
+              let groups = value.objectForKeyedSubscript("nativeGroups")?.toDouble(), groups.isFinite, groups >= 0 else {
             return .failure("Pele couldn't draw this diagram")
         }
         let scale = min(1, width / CGFloat(drawnWidth))
         let size = CGSize(width: max(1, (CGFloat(drawnWidth) * scale).rounded()),
                           height: max(1, (CGFloat(drawnHeight) * scale).rounded()))
         let pixelsWide = ceil(size.width * 2), pixelsHigh = ceil(size.height * 2)
-        guard pixelsWide <= 32_768, pixelsHigh <= 32_768, pixelsWide * pixelsHigh <= 16_777_216,
-              let bitmap = CGContext(data: nil, width: Int(pixelsWide), height: Int(pixelsHigh),
+        guard pixelsWide <= 32_768, pixelsHigh <= 32_768, pixelsWide * pixelsHigh <= 16_777_216 else {
+            return .failure("diagram exceeds the native bitmap rendering budget")
+        }
+        // Translucent nested containers repaint their area at each level. Charge wide
+        // rasters against the same work cap before CoreSVG decodes or paints them.
+        let groupWork = groups * groups * max(1, Double(pixelsWide * pixelsHigh) / 4_194_304)
+        guard groupWork <= Double(Self.workLimit) else {
+            return .failure("diagram exceeds the native raster rendering budget")
+        }
+        let themed = NoteDiagram.themed(svg, colors: theme)
+        guard let data = themed.data(using: .utf8), let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else {
+            return .failure("Pele couldn't draw this diagram")
+        }
+        guard let bitmap = CGContext(data: nil, width: Int(pixelsWide), height: Int(pixelsHigh),
                                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             return .failure("diagram exceeds the native bitmap rendering budget")
