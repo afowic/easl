@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "2a71cdd990468b02"
+const SchemaHash = "03ea9c43ac2426ec"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -748,9 +748,9 @@ type DiagramSource struct {
 	// the message or prompt the claim came from
 	Message *string `json:"message,omitempty"`
 	// the board the tile is on; another board is not resolvable from this one
-	Board *Id `json:"board,omitempty"`
+	Board *string `json:"board,omitempty"`
 	// the terminal tile it came from
-	Tile *Id `json:"tile,omitempty"`
+	Tile *string `json:"tile,omitempty"`
 }
 
 type DiagramPropsGraphNodesExcerpt struct {
@@ -759,9 +759,9 @@ type DiagramPropsGraphNodesExcerpt struct {
 }
 
 type DiagramPropsGraphNodes struct {
-	// a calls node: `path#Container.name`, stable while the symbol exists (not its line); a graph node: the caller's node id. What `expanded` and arrow ends name
+	// path#Container.name, stable while the symbol exists. What expanded and arrow ends name
 	ID string `json:"id"`
-	// a calls node's symbol name; a graph node's `label`
+	// The symbol name
 	Name string `json:"name"`
 	// calls nodes: the enclosing type or module, when the server says
 	Container *string `json:"container,omitempty"`
@@ -775,14 +775,8 @@ type DiagramPropsGraphNodes struct {
 	Lines *LineRange `json:"lines,omitempty"`
 	// calls nodes: 1-3 lines, a caller's calls toward the root or the signature
 	Excerpt []DiagramPropsGraphNodesExcerpt `json:"excerpt,omitempty"`
-	// calls: columns from the root (0), callers negative; graph: reasoning depth from a premise (0), conclusions deeper
+	// Columns from root 0, callers negative
 	Level int `json:"level"`
-	// graph nodes: markdown (or plain text) shown as two rows in the node and expanded whole when the node is clicked
-	Detail *string `json:"detail,omitempty"`
-	// graph nodes: where the statement came from; the node shows a source badge
-	Sources []DiagramSource `json:"sources,omitempty"`
-	// graph nodes: what practice has shown of the claim, drawn as a coloured badge; update it with object.update so practice results feed back One of "taught", "practiced", "retained", "weak".
-	Status *string `json:"status,omitempty"`
 	// its symbol is gone from its file: shown as it last was, badged
 	Stale *bool `json:"stale,omitempty"`
 	// its next level hasn't been asked for: a click (or adding its id to `expanded`) opens it
@@ -792,18 +786,16 @@ type DiagramPropsGraphNodes struct {
 }
 
 type DiagramPropsGraphEdges struct {
-	// the caller's (or premise's) node id
+	// the caller's  node id
 	From string `json:"from"`
-	// the callee's (or conclusion's) node id
+	// the callee's  node id
 	To string `json:"to"`
 	// calls edges: 1-based lines of the calls, in the caller's file
 	Lines []int `json:"lines,omitempty"`
-	// graph edges: the reasoning step's word, drawn on the arrow
-	Label *string `json:"label,omitempty"`
-	Stale *bool   `json:"stale,omitempty"`
+	Stale *bool `json:"stale,omitempty"`
 }
 
-// DiagramPropsGraph: kind calls: written by the app (never an undo step, no rev): the graph as last computed; writing it changes nothing (the next computation replaces it). kind graph: the caller's input, normalized in the same create or update: omitted levels are computed as reasoning depth (longest path from source nodes, premises 0) and stored back; nodes keep label as `name`, detail, sources and status. At most 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and cycles with a missing level are invalid_params naming the rule
+// DiagramPropsGraph: Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes
 type DiagramPropsGraph struct {
 	// the kind, path, symbol, line and direction it was computed for
 	Aim map[string]any `json:"aim,omitempty"`
@@ -818,9 +810,44 @@ type DiagramPropsGraph struct {
 	ComputedAt *string `json:"computedAt,omitempty"`
 }
 
+type DiagramPropsKnowledgeNodes struct {
+	// Non-empty caller id, at most 256 UTF-8 bytes
+	ID string `json:"id"`
+	// Nonblank node label, at most 512 UTF-8 bytes; normalized to name
+	Label *string `json:"label,omitempty"`
+	// Normalized label; accepted when label is absent
+	Name *string `json:"name,omitempty"`
+	// Finite, exactly representable host integer; omitted levels are computed
+	Level *int `json:"level,omitempty"`
+	// Markdown or plain text, at most 8192 UTF-8 bytes
+	Detail  *string         `json:"detail,omitempty"`
+	Sources []DiagramSource `json:"sources,omitempty"`
+	// One of "taught", "practiced", "retained", "weak".
+	Status *string `json:"status,omitempty"`
+}
+
+type DiagramPropsKnowledgeEdges struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	// At most 256 UTF-8 bytes
+	Label *string `json:"label,omitempty"`
+	// Written as an empty array on normalization
+	Lines []int `json:"lines,omitempty"`
+}
+
+// DiagramPropsKnowledge: Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge.
+type DiagramPropsKnowledge struct {
+	// Written on normalization with kind graph and direction incoming
+	Aim   map[string]any               `json:"aim,omitempty"`
+	Nodes []DiagramPropsKnowledgeNodes `json:"nodes"`
+	Edges []DiagramPropsKnowledgeEdges `json:"edges,omitempty"`
+	// Normalization time
+	ComputedAt *string `json:"computedAt,omitempty"`
+}
+
 // DiagramProps: A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.
 type DiagramProps struct {
-	// calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `graph.nodes` (id, label, detail, level, sources, status) and `graph.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success One of "calls", "graph".
+	// calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `knowledge.nodes` (id, label, detail, level, sources, status) and `knowledge.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success One of "calls", "graph".
 	Kind *string `json:"kind,omitempty"`
 	// the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration
 	Symbol *string `json:"symbol,omitempty"`
@@ -836,10 +863,12 @@ type DiagramProps struct {
 	Expanded []string `json:"expanded,omitempty"`
 	// default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph
 	Title *string `json:"title,omitempty"`
-	// kind calls: written by the app (never an undo step, no rev): the graph as last computed; writing it changes nothing (the next computation replaces it). kind graph: the caller's input, normalized in the same create or update: omitted levels are computed as reasoning depth (longest path from source nodes, premises 0) and stored back; nodes keep label as `name`, detail, sources and status. At most 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and cycles with a missing level are invalid_params naming the rule
+	// Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes
 	Graph *DiagramPropsGraph `json:"graph,omitempty"`
-	Zoom  *Zoom              `json:"zoom,omitempty"`
-	Key   *ObjectKey         `json:"key,omitempty"`
+	// Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge.
+	Knowledge *DiagramPropsKnowledge `json:"knowledge,omitempty"`
+	Zoom      *Zoom                  `json:"zoom,omitempty"`
+	Key       *ObjectKey             `json:"key,omitempty"`
 }
 
 type QuestionPropsOptions struct {

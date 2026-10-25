@@ -90,6 +90,14 @@ func (r *Router) checkFit(g *fitGuard) error {
 // guard nil is a read-only measure: the requested props are the size, even if
 // the board changes while the client works.
 func (r *Router) measuredSize(typ model.ObjectType, props map[string]any, width *float64, b *board.Board, caller string, guard *fitGuard) (float64, float64, bool, error) {
+	if typ == model.Diagram && diagramKindOf(props) == "graph" && model.DiagramGraphValue(props) == nil {
+		graph, problem := graphOf(props)
+		if problem != "" {
+			return 0, 0, false, invalid("%s", problem)
+		}
+		props = cloneProps(props)
+		props["knowledge"] = graph
+	}
 	if typ == model.HTML {
 		return r.measureHTML(props, width, b, caller, guard)
 	}

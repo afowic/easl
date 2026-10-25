@@ -35,7 +35,7 @@ final class GraphDiagramTests {
         return try await client.next()
     }
 
-    static let reasoningProps = #" {"kind":"graph","title":"Why the cache lies","graph":{ "nodes":[ {"id":"cold","label":"Tests fail on a cold start","detail":"The first read after launch returns an empty cache.","sources":[{"session":"sess-1"}],"status":"weak"}, {"id":"stale","label":"The cache keeps a stale stamp","detail":"**Root cause**: the stamp is written before the read.","sources":[{"message":"m-9"}],"status":"taught"}, {"id":"fix","label":"Write the stamp after the read","sources":[{"tile":"obj_term"}],"status":"practiced"}, {"id":"verify","label":"Cold-start tests pass","status":"retained"} ], "edges":[ {"from":"cold","to":"stale","label":"observed by"}, {"from":"stale","to":"fix","label":"fixed by"}, {"from":"fix","to":"verify","label":"verified by"} ] }}"#
+    static let reasoningProps = #" {"kind":"graph","title":"Why the cache lies","knowledge":{ "nodes":[ {"id":"cold","label":"Tests fail on a cold start","detail":"The first read after launch returns an empty cache.","sources":[{"session":"sess-1"}],"status":"weak"}, {"id":"stale","label":"The cache keeps a stale stamp","detail":"**Root cause**: the stamp is written before the read.","sources":[{"message":"m-9"}],"status":"taught"}, {"id":"fix","label":"Write the stamp after the read","sources":[{"tile":"obj_term"}],"status":"practiced"}, {"id":"verify","label":"Cold-start tests pass","status":"retained"} ], "edges":[ {"from":"cold","to":"stale","label":"observed by"}, {"from":"stale","to":"fix","label":"fixed by"}, {"from":"fix","to":"verify","label":"verified by"} ] }}"#
 
     @Test func callerGraphsGetReasoningLevelsAndKeepDetailSourcesAndStatus() async throws {
         let (_, _, server, client) = try await api()
@@ -45,7 +45,7 @@ final class GraphDiagramTests {
         let id = try #require(created["result"]?["object"]?["id"]?.string)
         let got = try await call(client, "2", "object.get", #"{"id":"\#(id)"}"#)
         let props = try #require(got["result"]?["object"]?["props"])
-        let graph = try #require(DiagramGraph(props["graph"]))
+        let graph = try #require(DiagramGraph(props["knowledge"]))
 
         #expect(graph.aim.kind == .graph)
         #expect(graph.nodes.map(\.id) == ["cold", "stale", "fix", "verify"])
@@ -66,15 +66,15 @@ final class GraphDiagramTests {
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let cases: [(props: String, rule: String)] = [
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"},{"id":"a","label":"B"}]}}"#, "duplicate node id \"a\""),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"}],"edges":[{"from":"a","to":"ghost"}]}}"#, "edges[0].to \"ghost\" is not a node"),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"  "}]}}"#, "nodes[0].label must not be empty"),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}}"#, "cycle through node \"a\""),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A","status":"known"}]}}"#, "status must be one of taught, practiced, retained, weak"),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A","sources":[{"author":"me"}]}]}}"#, "needs a session, message, board, or tile"),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A","sources":[{"tile":""}]}]}}"#, "sources[0].tile must be a non-empty string"),
-            (#"{"kind":"graph","graph":{"nodes":[]}}"#, "needs at least one node"),
-            (#"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"}],"edges":[{"from":"a"}]}}"#, "edges[0].to must be a node id"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A"},{"id":"a","label":"B"}]}}"#, "duplicate node id \"a\""),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A"}],"edges":[{"from":"a","to":"ghost"}]}}"#, "edges[0].to \"ghost\" is not a node"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"  "}]}}"#, "nodes[0].label must not be empty"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}}"#, "cycle through node \"a\""),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","status":"known"}]}}"#, "status must be one of taught, practiced, retained, weak"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","sources":[{"author":"me"}]}]}}"#, "needs a session, message, board, or tile"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","sources":[{"tile":""}]}]}}"#, "sources[0].tile must be a non-empty string"),
+            (#"{"kind":"graph","knowledge":{"nodes":[]}}"#, "needs at least one node"),
+            (#"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A"}],"edges":[{"from":"a"}]}}"#, "edges[0].to must be a node id"),
         ]
         for (index, entry) in cases.enumerated() {
             let reply = try await call(client, "bad\(index)", "object.create", #"{"type":"diagram","props":\#(entry.props)}"#)
@@ -89,12 +89,12 @@ final class GraphDiagramTests {
     @Test func anExplicitlyLevelledCycleIsAccepted() async throws {
         let (_, _, server, client) = try await api()
         defer { server.stop() }
-        let props = #"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A","level":0},{"id":"b","label":"B","level":1}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}}"#
+        let props = #"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","level":0},{"id":"b","label":"B","level":1}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}}"#
         let created = try await call(client, "1", "object.create", #"{"type":"diagram","props":\#(props)}"#)
         #expect(created["ok"] == .bool(true), "\(created["error"] ?? .null)")
         let id = try #require(created["result"]?["object"]?["id"]?.string)
         let got = try await call(client, "2", "object.get", #"{"id":"\#(id)"}"#)
-        let graph = try #require(DiagramGraph(got["result"]?["object"]?["props"]?["graph"]))
+        let graph = try #require(DiagramGraph(got["result"]?["object"]?["props"]?["knowledge"]))
         #expect(graph.nodes.map(\.level) == [0, 1])
         #expect(graph.edges.count == 2)
     }
@@ -109,14 +109,14 @@ final class GraphDiagramTests {
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let atCap = try await call(client, "1", "object.create",
-                                    #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(Self.nodeList(500))],"edges":[]}}}"#)
+                                    #"{"type":"diagram","props":{"kind":"graph","knowledge":{"nodes":[\#(Self.nodeList(500))],"edges":[]}}}"#)
         #expect(atCap["ok"] == .bool(true), "\(atCap["error"] ?? .null)")
         let id = try #require(atCap["result"]?["object"]?["id"]?.string)
         let got = try await call(client, "2", "object.get", #"{"id":"\#(id)"}"#)
-        #expect(DiagramGraph(got["result"]?["object"]?["props"]?["graph"])?.nodes.count == 500)
+        #expect(DiagramGraph(got["result"]?["object"]?["props"]?["knowledge"])?.nodes.count == 500)
 
         let over = try await call(client, "3", "object.create",
-                                  #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(Self.nodeList(501))],"edges":[]}}}"#)
+                                  #"{"type":"diagram","props":{"kind":"graph","knowledge":{"nodes":[\#(Self.nodeList(501))],"edges":[]}}}"#)
         #expect(over["ok"] == .bool(false))
         #expect(over["error"]?["message"]?.string?.contains("501 nodes: at most 500") == true, "\(over["error"] ?? .null)")
     }
@@ -132,15 +132,15 @@ final class GraphDiagramTests {
         }
         let nodes = Self.nodeList(500)
         let created = try await call(client, "at", "object.create",
-                                     #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(nodes)],"edges":[\#(distinct.prefix(2000).joined(separator: ","))]}}}"#)
+                                     #"{"type":"diagram","props":{"kind":"graph","knowledge":{"nodes":[\#(nodes)],"edges":[\#(distinct.prefix(2000).joined(separator: ","))]}}}"#)
         #expect(created["ok"] == .bool(true), "\(created["error"] ?? .null)")
         let id = try #require(created["result"]?["object"]?["id"]?.string)
         let over = try await call(client, "over", "object.create",
-                                  #"{"type":"diagram","props":{"kind":"graph","graph":{"nodes":[\#(nodes)],"edges":[\#(distinct.joined(separator: ","))]}}}"#)
+                                  #"{"type":"diagram","props":{"kind":"graph","knowledge":{"nodes":[\#(nodes)],"edges":[\#(distinct.joined(separator: ","))]}}}"#)
         #expect(over["ok"] == .bool(false))
         #expect(over["error"]?["message"]?.string?.contains("2001 edges: at most 2000") == true)
         let repeated = Array(repeating: #"{"from":"a","to":"b"}"#, count: 10000).joined(separator: ",")
-        let props = #"{"kind":"graph","graph":{"nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[\#(repeated)]}}"#
+        let props = #"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[\#(repeated)]}}"#
         let refusedCreate = try await call(client, "duplicates", "object.create", #"{"type":"diagram","props":\#(props)}"#)
         #expect(refusedCreate["ok"] == .bool(false))
         #expect(refusedCreate["error"]?["message"]?.string?.contains("10000 edges: at most 2000") == true)
@@ -148,14 +148,14 @@ final class GraphDiagramTests {
         #expect(refusedUpdate["ok"] == .bool(false))
         #expect(refusedUpdate["error"]?["message"]?.string?.contains("10000 edges: at most 2000") == true)
         let got = try await call(client, "get", "object.get", #"{"id":"\#(id)"}"#)
-        let graph = try #require(DiagramGraph(got["result"]?["object"]?["props"]?["graph"]))
+        let graph = try #require(DiagramGraph(got["result"]?["object"]?["props"]?["knowledge"]))
         #expect(graph.nodes.count == 500)
         #expect(graph.edges.count == 2000)
         #expect(got["result"]?["object"]?["rev"]?.int == 1)
     }
 
     static func boundedGraphProps(nodes: [JSONValue], edges: [JSONValue] = []) -> JSONValue {
-        .object(["kind": "graph", "graph": .object(["nodes": .array(nodes), "edges": .array(edges)])])
+        .object(["kind": "graph", "knowledge": .object(["nodes": .array(nodes), "edges": .array(edges)])])
     }
 
     @Test func graphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel() throws {
@@ -169,7 +169,7 @@ final class GraphDiagramTests {
             let duplicate: JSONValue = .object(["from": "a", "to": "b", "label": label])
             let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: nodes, edges: [first, duplicate]))
             #expect(result.graph == nil)
-            #expect(result.problem == #"props.graph.edges[1] duplicates directed edge "a" -> "b""#)
+            #expect(result.problem == #"props.knowledge.edges[1] duplicates directed edge "a" -> "b""#)
         }
         let distinct: [JSONValue] = [first, .object(["from": "b", "to": "a"]), .object(["from": "a", "to": "a"])]
         let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: nodes, edges: distinct))
@@ -204,15 +204,15 @@ final class GraphDiagramTests {
 
     @Test func graphTextLimitsCountUTF8BytesAndKeepBoundaryText() throws {
         let fields: [(String, Int, String)] = [
-            ("id", 256, "props.graph.nodes[0].id"),
-            ("label", 512, "props.graph.nodes[0].label"),
-            ("name", 512, "props.graph.nodes[0].label"),
-            ("detail", 8192, "props.graph.nodes[0].detail"),
-            ("edgeLabel", 256, "props.graph.edges[0].label"),
-            ("session", 256, "props.graph.nodes[0].sources[0].session"),
-            ("message", 256, "props.graph.nodes[0].sources[0].message"),
-            ("board", 256, "props.graph.nodes[0].sources[0].board"),
-            ("tile", 256, "props.graph.nodes[0].sources[0].tile"),
+            ("id", 256, "props.knowledge.nodes[0].id"),
+            ("label", 512, "props.knowledge.nodes[0].label"),
+            ("name", 512, "props.knowledge.nodes[0].label"),
+            ("detail", 8192, "props.knowledge.nodes[0].detail"),
+            ("edgeLabel", 256, "props.knowledge.edges[0].label"),
+            ("session", 256, "props.knowledge.nodes[0].sources[0].session"),
+            ("message", 256, "props.knowledge.nodes[0].sources[0].message"),
+            ("board", 256, "props.knowledge.nodes[0].sources[0].board"),
+            ("tile", 256, "props.knowledge.nodes[0].sources[0].tile"),
         ]
         for (field, limit, path) in fields {
             for unit in ["x", "é", "🙂"] {
@@ -247,12 +247,12 @@ final class GraphDiagramTests {
         let tooMany: JSONValue = .object(["id": "a", "label": "A", "sources": .array(Array(repeating: .null, count: 9))])
         let refused = DiagramSpec.graph(Self.boundedGraphProps(nodes: [tooMany]))
         #expect(refused.graph == nil)
-        #expect(refused.problem == "props.graph.nodes[0].sources has 9 entries: at most 8")
+        #expect(refused.problem == "props.knowledge.nodes[0].sources has 9 entries: at most 8")
         let badEdges = Array(repeating: JSONValue.null, count: 2001)
         let plain: JSONValue = .object(["id": "a", "label": "A"])
-        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [plain], edges: badEdges)).problem == "props.graph.edges has 2001 edges: at most 2000")
+        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [plain], edges: badEdges)).problem == "props.knowledge.edges has 2001 edges: at most 2000")
         let badNode: JSONValue = .object(["id": "a", "label": .string(String(repeating: "x", count: 513))])
-        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [badNode], edges: badEdges)).problem == "props.graph.nodes[0].label exceeds 512 UTF-8 bytes")
+        #expect(DiagramSpec.graph(Self.boundedGraphProps(nodes: [badNode], edges: badEdges)).problem == "props.knowledge.nodes[0].label exceeds 512 UTF-8 bytes")
     }
 
     /// What practice shows feeds back as a node's status through `object.update`; a reload is a
@@ -266,7 +266,7 @@ final class GraphDiagramTests {
         let reply = try await call(client, "2", "object.update", #"{"id":"\#(id)","props":\#(stronger)}"#)
         #expect(reply["ok"] == .bool(true), "\(reply["error"] ?? .null)")
         let updated = try await call(client, "3", "object.get", #"{"id":"\#(id)"}"#)
-        let graph = try #require(DiagramGraph(updated["result"]?["object"]?["props"]?["graph"]))
+        let graph = try #require(DiagramGraph(updated["result"]?["object"]?["props"]?["knowledge"]))
         #expect(graph.nodes.map(\.status) == [.retained, .taught, .practiced, .retained])
         #expect(graph.nodes.map(\.level) == [0, 1, 2, 3], "an update recomputes the levels the caller left out")
         #expect(graph.node("cold")?.detail == "The first read after launch returns an empty cache.")
@@ -277,7 +277,7 @@ final class GraphDiagramTests {
         #expect(reloaded["result"]?["nodes"] == .number(4))
         #expect(self.computed == 0, "a graph diagram is never computed from code")
         let after = try await call(client, "5", "object.get", #"{"id":"\#(id)"}"#)
-        #expect(DiagramGraph(after["result"]?["object"]?["props"]?["graph"]) == graph)
+        #expect(DiagramGraph(after["result"]?["object"]?["props"]?["knowledge"]) == graph)
     }
 
     /// A fitted graph grows to its reasoning levels: four levels are four columns, whatever the
@@ -291,4 +291,100 @@ final class GraphDiagramTests {
         // 4 * 300 wide, 3 * 76 between them, 36 either side.
         #expect(created["result"]?["object"]?["frame"]?["w"] == .number(1500))
     }
+    @Test func graphLevelsRejectUnsafeNumbersAndKeepExactBoundaries() throws {
+        let upper = Double(Int.max).nextDown
+        for raw in [1e300, -1e300, 1.5, Double.nan, Double.infinity, -1, Double(Int.max)] {
+            let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: [
+                .object(["id": "a", "label": "A", "level": .number(raw)]),
+            ]))
+            #expect(result.graph == nil)
+            #expect(result.problem == "props.knowledge.nodes[0].level must be a non-negative integer")
+        }
+        for raw in [0.0, 1.0, upper] {
+            let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: [
+                .object(["id": "a", "label": "A", "level": .number(raw)]),
+            ]))
+            #expect(result.problem == nil)
+            #expect(result.graph?.nodes.first?.level == Int(exactly: raw))
+        }
+    }
+
+    @Test func sparseExtremeLevelsUseOnlyOccupiedColumnsAndSafeArrowArithmetic() throws {
+        for raw in [1e18, Double(Int.max).nextDown] {
+            let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: [
+                .object(["id": "a", "label": "A", "level": 0]),
+                .object(["id": "b", "label": "B", "level": .number(raw)]),
+            ], edges: [.object(["from": "a", "to": "b"]), .object(["from": "b", "to": "a"])]))
+            let graph = try #require(result.graph, "\(result.problem ?? "")")
+            #expect(DiagramLayout(graph).size.width == 748)
+            #expect(graph.nodes[1].level - graph.nodes[0].level == Int(exactly: raw))
+            #expect(graph.nodes[0].level - graph.nodes[1].level == -Int(exactly: raw)!)
+            let props: JSONValue = .object(["kind": "graph", "knowledge": graph.json])
+            #expect(DiagramLayout.canvasRect(of: "b", frame: Frame(x: 0, y: 0, w: 760, h: 480), props: props) != nil)
+        }
+    }
+
+    @Test func oldRefreshKeepsKnowledgeThroughSaveAndHeadReload() async throws {
+        let (board, _, server, client) = try await api()
+        defer { server.stop() }
+        let created = try await call(client, "create", "object.create", #"{"type":"diagram","props":\#(Self.reasoningProps)}"#)
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let before = try board.object(id)
+        let knowledge = try #require(before.props["knowledge"])
+        #expect(before.props["graph"] == nil)
+        let oldCache = DiagramGraph(aim: DiagramAim(kind: .calls, path: nil, symbol: nil, line: nil, direction: .incoming),
+                                    error: "the old app treats an unknown kind as calls")
+        try board.writeBookkeeping(id, props: .object(["graph": oldCache.json]))
+        let refreshed = try board.object(id)
+        #expect(refreshed.props["graph"] == oldCache.json)
+        #expect(refreshed.props["knowledge"] == knowledge)
+        #expect(refreshed.rev == before.rev)
+        #expect(DiagramGraph.stored(in: refreshed.props) == DiagramGraph(knowledge))
+        let data = try JSONEncoder().encode(board.snapshot)
+        let restored = Board(snapshot: try JSONDecoder().decode(BoardSnapshot.self, from: data))
+        let loaded = try restored.object(id)
+        #expect(loaded.props["knowledge"] == knowledge)
+        #expect(DiagramGraph.stored(in: loaded.props)?.nodes.map(\.status) == [.weak, .taught, .practiced, .retained])
+        let reload = try await call(client, "reload", "object.reload", #"{"id":"\#(id)"}"#)
+        #expect(reload["result"]?["loaded"] == .bool(true))
+        #expect(reload["result"]?["nodes"] == .number(4))
+        #expect(try board.object(id).props["knowledge"] == knowledge)
+        #expect(self.computed == 0)
+        let size = try await ObjectMeasure.size(type: .diagram, props: refreshed.props, width: nil, root: dir)
+        #expect(size.width == 1500)
+        #expect(DiagramLayout.canvasRect(of: "cold", frame: refreshed.frame, props: refreshed.props) != nil)
+    }
+
+    @Test func corruptedKnowledgeNeverFallsBackToLegacyGraph() throws {
+        let graph = try #require(DiagramSpec.graph(Self.boundedGraphProps(nodes: [
+            .object(["id": "a", "label": "A"]),
+        ])).graph)
+        let corruptions: [JSONValue] = [.null, .string("broken"), .object([:]),
+                               graph.json.merging(.object(["aim": .object(["kind": "calls", "direction": "incoming"])])),
+                               graph.json.merging(.object(["nodes": .array([.object(["id": "a", "name": "A", "level": -1])])]))]
+        for bad in corruptions {
+            let props: JSONValue = .object(["kind": "graph", "graph": graph.json, "knowledge": bad])
+            #expect(DiagramGraph.stored(in: props) == nil)
+            #expect(DiagramLayout.canvasRect(of: "a", frame: Frame(x: 0, y: 0, w: 760, h: 480), props: props) == nil)
+        }
+        #expect(DiagramGraph.stored(in: .object(["kind": "calls", "graph": graph.json])) == graph)
+    }
+
+    @Test func repositoryRerootKeepsAuthoredIDsAndBoundArrows() throws {
+        let board = Board(id: "brd_graph", root: dir)
+        let graph = try #require(DiagramSpec.graph(Self.boundedGraphProps(nodes: [
+            .object(["id": "claim#one", "label": "A", "detail": "Keep me", "status": "weak",
+                     "sources": .array([.object(["message": "m"])])]),
+        ])).graph)
+        let diagram = board.create(type: .diagram, props: .object(["kind": "graph", "knowledge": graph.json]))
+        let arrow = board.create(type: .arrow, props: .object([
+            "from": .object(["object": .string(diagram.id), "node": "claim#one"]),
+            "to": .object(["x": 100, "y": 100]),
+        ]))
+        var rerooter = Rerooter(oldRoot: "/old/sub", top: "/old", live: true, anchor: .main, destinationRoot: dir)
+        rerooter.knowledgeDiagrams = [diagram.id]
+        #expect(rerooter.reroot(diagram, branch: nil).props == diagram.props)
+        #expect(rerooter.reroot(arrow, branch: nil).props == arrow.props)
+    }
+
 }

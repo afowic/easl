@@ -23,7 +23,7 @@ func (n DiagramNode) QualifiedName() string {
 	return n.Name
 }
 
-// DiagramGraph is a diagram's `props.graph` as last computed (DiagramGraph.swift).
+// DiagramGraph is the stored calls cache or authored knowledge (DiagramGraph.swift).
 type DiagramGraph struct {
 	Root  *string
 	Nodes []DiagramNode
@@ -40,8 +40,8 @@ func (g DiagramGraph) Node(id string) (DiagramNode, bool) {
 	return DiagramNode{}, false
 }
 
-// DecodeDiagramGraph is DiagramGraph(props["graph"]): ok false when absent or not a whole graph
-// (it decodes as Codable would).
+// DecodeDiagramGraph decodes a selected stored graph value, returning false when absent or
+// unreadable.
 func DecodeDiagramGraph(v any) (DiagramGraph, bool) {
 	if _, ok := v.(map[string]any); !ok {
 		return DiagramGraph{}, false

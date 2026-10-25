@@ -88,7 +88,9 @@ func (r *Router) reloadDiagram(requestID any, b *board.Board, object model.Objec
 	spec := diagramSpecOf(object.Props)
 	// A graph diagram is the caller's graph: reload is a no-op success, never a viewer call.
 	if spec.aim.kind == "graph" {
-		return diagramSummary(object.ID, object.Props["graph"], true), nil
+		value := model.DiagramGraphValue(object.Props)
+		_, valid := checkedDiagramGraph(value)
+		return diagramSummary(object.ID, value, valid), nil
 	}
 	job := r.diagrams[object.ID]
 	if job != nil && (job.board != b || job.rev != object.Rev || !job.spec.equal(spec)) {
@@ -126,7 +128,7 @@ func (r *Router) awaitDiagram(w diagramWait) map[string]any {
 		}
 		return okReply(w.requestID, w.job.summary)
 	}
-	return okReply(w.requestID, diagramSummary(w.job.id, w.job.board.Objects()[w.job.id].Props["graph"], false))
+	return okReply(w.requestID, diagramSummary(w.job.id, model.DiagramGraphValue(w.job.board.Objects()[w.job.id].Props), false))
 }
 
 func (r *Router) computeDiagram(job *diagramJob) {

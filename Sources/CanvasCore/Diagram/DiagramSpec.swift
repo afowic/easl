@@ -112,20 +112,20 @@ public struct DiagramSpec: Equatable, Sendable {
     /// nodes and edges with reasoning levels computed where omitted (longest path from a source
     /// node; premises 0). Failure names the rule broken.
     public static func graph(_ props: JSONValue) -> (graph: DiagramGraph?, problem: String?) {
-        guard let input = props["graph"], input.object != nil else {
-            return (nil, "a graph diagram needs props.graph.nodes and props.graph.edges")
+        guard let input = props["knowledge"], input.object != nil else {
+            return (nil, "a graph diagram needs props.knowledge.nodes and props.knowledge.edges")
         }
         guard let nodeValues = input["nodes"]?.array else {
-            return (nil, "a graph diagram needs props.graph.nodes")
+            return (nil, "a graph diagram needs props.knowledge.nodes")
         }
-        guard !nodeValues.isEmpty else { return (nil, "props.graph.nodes needs at least one node") }
+        guard !nodeValues.isEmpty else { return (nil, "props.knowledge.nodes needs at least one node") }
         guard nodeValues.count <= maxGraphNodes else {
-            return (nil, "props.graph.nodes has \(nodeValues.count) nodes: at most \(maxGraphNodes)")
+            return (nil, "props.knowledge.nodes has \(nodeValues.count) nodes: at most \(maxGraphNodes)")
         }
         var nodes: [GraphNodeInput] = []
         var ids: Set<String> = []
         for (index, value) in nodeValues.enumerated() {
-            let path = "props.graph.nodes[\(index)]"
+            let path = "props.knowledge.nodes[\(index)]"
             guard let raw = value.object else { return (nil, "\(path) must be an object") }
             guard let id = raw["id"]?.string, !id.isEmpty else { return (nil, "\(path).id must be a non-empty string") }
             guard id.utf8.count <= maxGraphIDBytes else { return (nil, "\(path).id exceeds \(maxGraphIDBytes) UTF-8 bytes") }
@@ -143,7 +143,9 @@ public struct DiagramSpec: Equatable, Sendable {
             }
             var level: Int?
             if let value = raw["level"], value != .null {
-                guard let number = value.int, number >= 0 else { return (nil, "\(path).level must be a non-negative integer") }
+                guard let raw = value.number, raw.isFinite, raw >= 0, let number = Int(exactly: raw) else {
+                    return (nil, "\(path).level must be a non-negative integer")
+                }
                 level = number
             }
             var sources: [DiagramSource]?
@@ -178,10 +180,10 @@ public struct DiagramSpec: Equatable, Sendable {
         var edges: [GraphEdgeInput] = []
         var endpoints: Set<GraphEdgeEndpoints> = []
         if let value = input["edges"], value != .null {
-            guard let list = value.array else { return (nil, "props.graph.edges must be an array") }
-            guard list.count <= maxGraphEdges else { return (nil, "props.graph.edges has \(list.count) edges: at most \(maxGraphEdges)") }
+            guard let list = value.array else { return (nil, "props.knowledge.edges must be an array") }
+            guard list.count <= maxGraphEdges else { return (nil, "props.knowledge.edges has \(list.count) edges: at most \(maxGraphEdges)") }
             for (index, entry) in list.enumerated() {
-                let path = "props.graph.edges[\(index)]"
+                let path = "props.knowledge.edges[\(index)]"
                 guard let raw = entry.object else { return (nil, "\(path) must be an object") }
                 guard let from = raw["from"]?.string, !from.isEmpty else { return (nil, "\(path).from must be a node id") }
                 guard let to = raw["to"]?.string, !to.isEmpty else { return (nil, "\(path).to must be a node id") }
@@ -243,7 +245,14 @@ public struct DiagramSpec: Equatable, Sendable {
                 if let given = byID[id]?.level {
                     levels[id] = given
                 } else {
-                    levels[id] = (predecessors[id] ?? []).compactMap { levels[$0].map { $0 + 1 } }.max() ?? 0
+                    var deepest = 0
+                    for predecessor in predecessors[id] ?? [] {
+                        guard let level = levels[predecessor] else { continue }
+                        let (next, overflow) = level.addingReportingOverflow(1)
+                        guard !overflow else { return (nil, "graph reasoning depth exceeds the supported integer range") }
+                        deepest = max(deepest, next)
+                    }
+                    levels[id] = deepest
                 }
             }
         }

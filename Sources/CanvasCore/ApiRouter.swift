@@ -1752,7 +1752,7 @@ public final class ApiRouter {
             if type == .diagram, DiagramSpec(props).kind == .graph {
                 let (graph, problem) = DiagramSpec.graph(props)
                 if let problem { throw Failure("invalid_params", problem) }
-                if let graph { props = props.merging(.object(["graph": graph.json])) }
+                if let graph { props = props.merging(.object(["knowledge": graph.json])) }
             }
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             if type == .video, let problem = LocalVideo.problem(props) { throw Failure("invalid_params", problem) }
@@ -1777,10 +1777,10 @@ public final class ApiRouter {
             if let root = props?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
             if let patch = props, try board.object(id).type == .diagram {
                 let merged = try board.object(id).props.merging(patch)
-                if DiagramSpec(merged).kind == .graph, patch["graph"] != nil || patch["kind"] != nil {
+                if DiagramSpec(merged).kind == .graph, patch["knowledge"] != nil || patch["kind"] != nil {
                     let (graph, problem) = DiagramSpec.graph(merged)
                     if let problem { throw Failure("invalid_params", problem) }
-                    if let graph { props = patch.merging(.object(["graph": graph.json])) }
+                    if let graph { props = patch.merging(.object(["knowledge": graph.json])) }
                 } else if let problem = DiagramSpec.problem(merged) {
                     throw Failure("invalid_params", problem)
                 }
@@ -2004,7 +2004,7 @@ public final class ApiRouter {
         if object.type == .diagram {
             // A graph diagram is the caller's: there is nothing to compute (and no no-op rev).
             if DiagramSpec(object.props).kind == .graph {
-                let graph = DiagramGraph(object.props["graph"])
+                let graph = DiagramGraph.stored(in: object.props)
                 return DiagramRefresh.summary(id, graph: graph, computed: graph != nil)
             }
             return try await computeDiagram(board, id, timeoutMs: timeout)
@@ -2037,7 +2037,7 @@ public final class ApiRouter {
         }
         timer?.cancel()
         if let computed { return try computed.get() }
-        return DiagramRefresh.summary(id, graph: DiagramGraph(board.objects[id]?.props["graph"]), computed: false)
+        return DiagramRefresh.summary(id, graph: DiagramGraph.stored(in: board.objects[id]?.props), computed: false)
     }
 
     /// `object.measure`: the intrinsic frame size for a type and props (notes and text wrap at
@@ -2344,7 +2344,7 @@ public final class ApiRouter {
     /// The result adds `diagram`, `object.reload`'s summary; a graph still computing when the wait
     /// ends leaves the tile at the default size, with a warning. Nil for any other create.
     private func createFittedDiagram(_ p: JSONValue) async throws -> JSONValue? {
-        guard p["type"]?.string == ObjectType.diagram.rawValue, p["size"]?.string == "fit", DiagramGraph(p["props"]?["graph"]) == nil,
+        guard p["type"]?.string == ObjectType.diagram.rawValue, p["size"]?.string == "fit", DiagramGraph.stored(in: p["props"]) == nil,
               refreshDiagram != nil || DiagramSpec(p["props"] ?? .null).kind == .graph, var params = p.object else { return nil }
         params.removeValue(forKey: "size")
         let origin = p["frame"]?["x"]?.number.flatMap { x in p["frame"]?["y"]?.number.map { (x: x, y: $0) } }
@@ -2359,11 +2359,11 @@ public final class ApiRouter {
         let board = try board(forObject: id)
         let callerGraph = DiagramSpec(p["props"] ?? .null).kind == .graph
         let summary = callerGraph
-            ? DiagramRefresh.summary(id, graph: DiagramGraph(board.objects[id]?.props["graph"]), computed: true)
+            ? DiagramRefresh.summary(id, graph: DiagramGraph.stored(in: board.objects[id]?.props), computed: true)
             : try await computeDiagram(board, id, timeoutMs: diagramTimeoutMs)
         result["diagram"] = summary
         var warning: String?
-        if let object = board.objects[id], summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
+        if let object = board.objects[id], summary["loaded"] == .bool(true), DiagramGraph.stored(in: object.props) != nil {
             let size = try await ObjectMeasure.size(type: .diagram, props: object.props, width: nil, root: board.root)
             // Where it is now: the user may have moved it while it computed.
             if let current = board.objects[id]?.frame {

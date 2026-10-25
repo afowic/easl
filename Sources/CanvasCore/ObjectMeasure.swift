@@ -82,7 +82,7 @@ public enum ObjectMeasure {
         case .diagram:
             // The graph as last computed (or a graph diagram's caller-supplied graph), drawn at
             // full size under its status strip.
-            let graph = DiagramGraph(props["graph"]) ?? DiagramSpec.graph(props).graph
+            let graph = DiagramGraph.stored(in: props) ?? DiagramSpec.graph(props).graph
             guard let graph else {
                 throw Failure.unavailable("the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit")
             }

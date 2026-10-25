@@ -2,9 +2,14 @@ package router
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/twaldin/easl/easld/internal/board"
+	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/store"
 )
 
 func graphNode(id, label string, extra map[string]any) map[string]any {
@@ -18,7 +23,7 @@ func graphNode(id, label string, extra map[string]any) map[string]any {
 // reasoningGraphProps is a small knowledge graph: a premise, the two steps drawn from it, and
 // their conclusion, each with what practice has shown and where it came from.
 func reasoningGraphProps() map[string]any {
-	return map[string]any{"kind": "graph", "title": "Why the cache lies", "graph": map[string]any{
+	return map[string]any{"kind": "graph", "title": "Why the cache lies", "knowledge": map[string]any{
 		"nodes": []any{
 			graphNode("cold", "Tests fail on a cold start", map[string]any{
 				"detail": "The first read after launch returns an empty cache.", "status": "weak",
@@ -49,9 +54,9 @@ func createGraph(f *fixture, props map[string]any) string {
 
 func storedGraph(f *fixture, id string) map[string]any {
 	f.t.Helper()
-	graph, ok := propsOf(diagramObject(f, id))["graph"].(map[string]any)
+	graph, ok := propsOf(diagramObject(f, id))["knowledge"].(map[string]any)
 	if !ok {
-		f.t.Fatalf("%s has no props.graph", id)
+		f.t.Fatalf("%s has no props.knowledge", id)
 	}
 	return graph
 }
@@ -123,24 +128,24 @@ func TestInvalidGraphsAreRefusedWithTheRuleTheyBreak(t *testing.T) {
 		props map[string]any
 		rule  string
 	}{
-		{"duplicate id", map[string]any{"kind": "graph", "graph": map[string]any{"nodes": []any{
+		{"duplicate id", map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": []any{
 			graphNode("a", "A", nil), graphNode("a", "B", nil),
 		}}}, `duplicate node id "a"`},
-		{"endpoint", map[string]any{"kind": "graph", "graph": map[string]any{
+		{"endpoint", map[string]any{"kind": "graph", "knowledge": map[string]any{
 			"nodes": []any{graphNode("a", "A", nil)},
 			"edges": []any{map[string]any{"from": "a", "to": "ghost"}},
 		}}, `edges[0].to "ghost" is not a node`},
-		{"empty label", map[string]any{"kind": "graph", "graph": map[string]any{"nodes": []any{
+		{"empty label", map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": []any{
 			graphNode("a", "  ", nil),
 		}}}, "nodes[0].label must not be empty"},
-		{"cycle", map[string]any{"kind": "graph", "graph": map[string]any{
+		{"cycle", map[string]any{"kind": "graph", "knowledge": map[string]any{
 			"nodes": []any{graphNode("a", "A", nil), graphNode("b", "B", nil)},
 			"edges": []any{map[string]any{"from": "a", "to": "b"}, map[string]any{"from": "b", "to": "a"}},
 		}}, `cycle through node "a"`},
-		{"status", map[string]any{"kind": "graph", "graph": map[string]any{"nodes": []any{
+		{"status", map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": []any{
 			graphNode("a", "A", map[string]any{"status": "known"}),
 		}}}, "status must be one of taught, practiced, retained, weak"},
-		{"source", map[string]any{"kind": "graph", "graph": map[string]any{"nodes": []any{
+		{"source", map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": []any{
 			graphNode("a", "A", map[string]any{"sources": []any{map[string]any{"author": "me"}}}),
 		}}}, "sources[0] needs a session, message, board, or tile"},
 	}
@@ -155,7 +160,7 @@ func TestInvalidGraphsAreRefusedWithTheRuleTheyBreak(t *testing.T) {
 	// An update keeps the same rules: a graph that would break one is refused whole.
 	id := createGraph(f, reasoningGraphProps())
 	broken := reasoningGraphProps()
-	broken["graph"] = map[string]any{"nodes": []any{graphNode("a", "", nil)}}
+	broken["knowledge"] = map[string]any{"nodes": []any{graphNode("a", "", nil)}}
 	message := f.refused("object.update", map[string]any{"id": id, "props": broken})
 	if !strings.Contains(message, "label must not be empty") {
 		t.Errorf("update refusal = %q", message)
@@ -167,7 +172,7 @@ func TestInvalidGraphsAreRefusedWithTheRuleTheyBreak(t *testing.T) {
 
 func TestAnExplicitlyLevelledCycleIsAccepted(t *testing.T) {
 	f := newFixture(t)
-	props := map[string]any{"kind": "graph", "graph": map[string]any{
+	props := map[string]any{"kind": "graph", "knowledge": map[string]any{
 		"nodes": []any{
 			graphNode("a", "A", map[string]any{"level": 0.0}),
 			graphNode("b", "B", map[string]any{"level": 1.0}),
@@ -187,7 +192,7 @@ func TestTheGraphNodeCapIsFiveHundred(t *testing.T) {
 		for i := range count {
 			nodes = append(nodes, graphNode(fmt.Sprintf("n%d", i), fmt.Sprintf("Node %d", i), nil))
 		}
-		return map[string]any{"kind": "graph", "graph": map[string]any{"nodes": nodes, "edges": []any{}}}
+		return map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": nodes, "edges": []any{}}}
 	}
 	if nodes := graphNodesByID(f, storedGraph(f, createGraph(f, many(500)))); len(nodes) != 500 {
 		t.Fatalf("500 nodes stored as %d", len(nodes))
@@ -203,7 +208,7 @@ func TestPracticeStatusFeedsBackThroughObjectUpdate(t *testing.T) {
 	f := newFixture(t)
 	id := createGraph(f, reasoningGraphProps())
 	stronger := reasoningGraphProps()
-	stronger["graph"].(map[string]any)["nodes"] = []any{
+	stronger["knowledge"].(map[string]any)["nodes"] = []any{
 		graphNode("cold", "Tests fail on a cold start", map[string]any{
 			"detail": "The first read after launch returns an empty cache.", "status": "retained",
 			"sources": []any{map[string]any{"session": "sess-1"}},
@@ -277,7 +282,7 @@ func TestGraphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates(t *
 }
 
 func boundedGraphProps(nodes, edges []any) map[string]any {
-	return map[string]any{"kind": "graph", "graph": map[string]any{"nodes": nodes, "edges": edges}}
+	return map[string]any{"kind": "graph", "knowledge": map[string]any{"nodes": nodes, "edges": edges}}
 }
 
 func TestGraphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel(t *testing.T) {
@@ -289,7 +294,7 @@ func TestGraphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel(t *testing.T) 
 	for _, label := range []any{nil, "first", "different", 7.0} {
 		duplicate := map[string]any{"from": "a", "to": "b", "label": label}
 		graph, problem := graphOf(boundedGraphProps(nodes, []any{first, duplicate}))
-		if graph != nil || problem != `props.graph.edges[1] duplicates directed edge "a" -> "b"` {
+		if graph != nil || problem != `props.knowledge.edges[1] duplicates directed edge "a" -> "b"` {
 			t.Errorf("label %v: graph = %v, problem = %q", label, graph, problem)
 		}
 	}
@@ -335,15 +340,15 @@ func TestGraphTextLimitsCountUTF8BytesAndKeepBoundaryText(t *testing.T) {
 		limit int
 		path  string
 	}{
-		{"id", 256, "props.graph.nodes[0].id"},
-		{"label", 512, "props.graph.nodes[0].label"},
-		{"name", 512, "props.graph.nodes[0].label"},
-		{"detail", 8192, "props.graph.nodes[0].detail"},
-		{"edgeLabel", 256, "props.graph.edges[0].label"},
-		{"session", 256, "props.graph.nodes[0].sources[0].session"},
-		{"message", 256, "props.graph.nodes[0].sources[0].message"},
-		{"board", 256, "props.graph.nodes[0].sources[0].board"},
-		{"tile", 256, "props.graph.nodes[0].sources[0].tile"},
+		{"id", 256, "props.knowledge.nodes[0].id"},
+		{"label", 512, "props.knowledge.nodes[0].label"},
+		{"name", 512, "props.knowledge.nodes[0].label"},
+		{"detail", 8192, "props.knowledge.nodes[0].detail"},
+		{"edgeLabel", 256, "props.knowledge.edges[0].label"},
+		{"session", 256, "props.knowledge.nodes[0].sources[0].session"},
+		{"message", 256, "props.knowledge.nodes[0].sources[0].message"},
+		{"board", 256, "props.knowledge.nodes[0].sources[0].board"},
+		{"tile", 256, "props.knowledge.nodes[0].sources[0].tile"},
 	}
 	for _, entry := range fields {
 		for _, unit := range []string{"x", "é", "🙂"} {
@@ -391,16 +396,125 @@ func TestGraphSourceCountsAndValidationOrderAreBounded(t *testing.T) {
 	}
 	node["sources"] = make([]any, 9)
 	graph, problem = graphOf(boundedGraphProps([]any{node}, []any{}))
-	if graph != nil || problem != "props.graph.nodes[0].sources has 9 entries: at most 8" {
+	if graph != nil || problem != "props.knowledge.nodes[0].sources has 9 entries: at most 8" {
 		t.Errorf("source cap: graph = %v, problem = %q", graph, problem)
 	}
 	badEdges := make([]any, 2001)
 	plain := graphNode("a", "A", nil)
-	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.graph.edges has 2001 edges: at most 2000" {
+	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.knowledge.edges has 2001 edges: at most 2000" {
 		t.Errorf("edge cap order: %q", problem)
 	}
 	plain["label"] = strings.Repeat("x", 513)
-	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.graph.nodes[0].label exceeds 512 UTF-8 bytes" {
+	if _, problem := graphOf(boundedGraphProps([]any{plain}, badEdges)); problem != "props.knowledge.nodes[0].label exceeds 512 UTF-8 bytes" {
 		t.Errorf("node validation order: %q", problem)
+	}
+}
+
+func TestGraphLevelsRejectUnsafeNumbersAndKeepExactBoundaries(t *testing.T) {
+	for _, raw := range []float64{1e300, -1e300, 1.5, math.NaN(), math.Inf(1), -1, 9223372036854775808.0} {
+		graph, problem := graphOf(boundedGraphProps([]any{graphNode("a", "A", map[string]any{"level": raw})}, []any{}))
+		if graph != nil || problem != "props.knowledge.nodes[0].level must be a non-negative integer" {
+			t.Errorf("level %v: graph = %v, problem = %q", raw, graph, problem)
+		}
+	}
+	for _, raw := range []float64{0, 1, math.Nextafter(9223372036854775808.0, 0)} {
+		graph, problem := graphOf(boundedGraphProps([]any{graphNode("a", "A", map[string]any{"level": raw})}, []any{}))
+		if problem != "" || graph == nil {
+			t.Fatalf("boundary %v refused: %q", raw, problem)
+		}
+		if got := graph["nodes"].([]any)[0].(map[string]any)["level"]; got != raw {
+			t.Errorf("boundary %v stored as %v", raw, got)
+		}
+	}
+}
+
+func TestSparseExtremeLevelsUseOnlyOccupiedColumns(t *testing.T) {
+	f := newFixture(t)
+	for _, raw := range []float64{1e18, math.Nextafter(9223372036854775808.0, 0)} {
+		props := boundedGraphProps([]any{
+			graphNode("a", "A", map[string]any{"level": 0.0}),
+			graphNode("b", "B", map[string]any{"level": raw}),
+		}, []any{map[string]any{"from": "a", "to": "b"}, map[string]any{"from": "b", "to": "a"}})
+		measured := f.result("object.measure", map[string]any{"type": "diagram", "props": props})
+		if measured["w"] != 748.0 {
+			t.Errorf("sparse level %v expanded empty columns: %v", raw, measured)
+		}
+		created := f.result("object.create", map[string]any{"type": "diagram", "props": props, "size": "fit"})
+		if frameOf(created)["w"] != 748.0 {
+			t.Errorf("sparse level %v fit = %v", raw, frameOf(created))
+		}
+	}
+}
+
+func TestOldRefreshKeepsKnowledgeThroughSaveAndHeadReload(t *testing.T) {
+	f := newFixture(t)
+	id := createGraph(f, reasoningGraphProps())
+	before := diagramObject(f, id)
+	knowledge := model.Clone(propsOf(before)["knowledge"])
+	if propsOf(before)["graph"] != nil {
+		t.Fatal("create stored a duplicate calls cache")
+	}
+	oldCache := computedDiagram()
+	f.router.reg.Mu.Lock()
+	err := f.board.WriteBookkeeping(id, map[string]any{"graph": oldCache})
+	snapshot := f.board.Snapshot()
+	f.router.reg.Mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed := diagramObject(f, id)
+	if !reflect.DeepEqual(propsOf(refreshed)["knowledge"], knowledge) || !reflect.DeepEqual(propsOf(refreshed)["graph"], oldCache) || refreshed["rev"] != before["rev"] {
+		t.Fatalf("old refresh changed authored content or revision: %v", refreshed)
+	}
+	data, err := snapshot.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := store.DecodeSnapshot(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := board.FromSnapshot(decoded).Objects()[id]
+	if !reflect.DeepEqual(restored.Props["knowledge"], knowledge) || !reflect.DeepEqual(model.DiagramGraphValue(restored.Props), knowledge) {
+		t.Fatalf("saved knowledge changed: %v", restored.Props)
+	}
+	reload := f.result("object.reload", map[string]any{"id": id})
+	if reload["loaded"] != true || reload["nodes"] != 4.0 || reload["edges"] != 3.0 {
+		t.Errorf("reload read old calls cache: %v", reload)
+	}
+	if !reflect.DeepEqual(storedGraph(f, id), knowledge) {
+		t.Fatal("reload changed authored graph")
+	}
+	created := f.result("object.create", map[string]any{"type": "diagram", "size": "fit", "props": reasoningGraphProps()})
+	if frameOf(created)["w"] != 1500.0 {
+		t.Errorf("authored graph fit = %v", frameOf(created))
+	}
+}
+
+func TestCorruptedKnowledgeNeverFallsBackToLegacyGraph(t *testing.T) {
+	f := newFixture(t)
+	valid, problem := graphOf(reasoningGraphProps())
+	if problem != "" {
+		t.Fatal(problem)
+	}
+	wrongAim := model.Clone(valid).(map[string]any)
+	wrongAim["aim"] = map[string]any{"kind": "calls", "direction": "incoming"}
+	negative := model.Clone(valid).(map[string]any)
+	negative["nodes"].([]any)[0].(map[string]any)["level"] = -1.0
+	for _, bad := range []any{nil, "broken", map[string]any{}, wrongAim, negative} {
+		props := map[string]any{"kind": "graph", "graph": valid, "knowledge": bad}
+		if got := model.DiagramGraphValue(props); got != nil {
+			t.Errorf("corrupt knowledge selected a graph: %v", got)
+		}
+		f.router.reg.Mu.Lock()
+		object := f.board.Create(model.Diagram, props, nil, "", "")
+		f.router.reg.Mu.Unlock()
+		reload := f.result("object.reload", map[string]any{"id": object.ID})
+		if reload["loaded"] != false || reload["nodes"] != nil {
+			t.Errorf("corrupt knowledge reload = %v", reload)
+		}
+	}
+	if got := model.DiagramGraphValue(map[string]any{"kind": "calls", "graph": valid}); !reflect.DeepEqual(got, valid) {
+		t.Fatal("calls graph selection changed")
 	}
 }

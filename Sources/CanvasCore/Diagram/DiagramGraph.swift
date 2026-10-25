@@ -124,8 +124,8 @@ public struct DiagramEdge: Codable, Equatable, Sendable {
     }
 }
 
-/// A diagram as last computed (`props.graph`, written by the app, never an undo step):
-/// what the tile draws, `object.get` reports, and arrows bound to its nodes attach to.
+/// The graph a diagram draws, stored in `props.graph` for computed calls or `props.knowledge`
+/// for authored graphs.
 public struct DiagramGraph: Codable, Equatable, Sendable {
     public var aim: DiagramAim
     public var root: String?
@@ -149,10 +149,20 @@ public struct DiagramGraph: Codable, Equatable, Sendable {
         self.computedAt = computedAt
     }
 
-    /// `props.graph` as stored; nil when absent or unreadable.
+    /// A stored graph value; nil when absent or unreadable.
     public init?(_ json: JSONValue?) {
         guard let json, json.object != nil, let graph = try? json.decode(DiagramGraph.self) else { return nil }
         self = graph
+    }
+
+    public static func stored(in props: JSONValue?) -> DiagramGraph? {
+        guard let props else { return nil }
+        if props["kind"]?.string == "graph" {
+            guard let graph = DiagramGraph(props["knowledge"]), graph.aim.kind == .graph,
+                  graph.nodes.allSatisfy({ $0.level >= 0 }) else { return nil }
+            return graph
+        }
+        return DiagramGraph(props["graph"])
     }
 
     public var json: JSONValue { (try? JSONValue.encode(self)) ?? .null }

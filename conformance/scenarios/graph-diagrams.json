@@ -1,0 +1,351 @@
+{
+  "description": "Authored diagrams store only knowledge, ignore an overwritten old calls cache, keep graph metadata, and reject unsafe level conversions.",
+  "steps": [
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "diagram",
+        "props": {
+          "kind": "graph",
+          "title": "Preserved reasoning",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "premise#one",
+                "label": "Premise",
+                "detail": "**Evidence** stays.",
+                "status": "weak",
+                "sources": [
+                  {
+                    "message": "m-1",
+                    "board": "external-board"
+                  }
+                ]
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "taught"
+              }
+            ],
+            "edges": [
+              {
+                "from": "premise#one",
+                "to": "conclusion",
+                "label": "supports"
+              }
+            ]
+          }
+        },
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "w": 760,
+          "h": 480
+        }
+      },
+      "save": "g",
+      "expect": {
+        "response.ok": true,
+        "response.result.object.props.knowledge.aim.kind": "graph",
+        "response.result.object.props.knowledge.nodes.0.level": 0,
+        "response.result.object.props.knowledge.nodes.1.level": 1,
+        "response.result.object.props.knowledge.nodes.0.name": "Premise",
+        "response.result.object.props.knowledge.nodes.0.detail": "**Evidence** stays.",
+        "response.result.object.props.knowledge.nodes.0.status": "weak",
+        "response.result.object.props.knowledge.nodes.0.sources.0.board": "external-board",
+        "response.result.object.props.knowledge.edges.0.label": "supports"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{g.object.id}}",
+        "props": {
+          "graph": {
+            "aim": {
+              "kind": "calls",
+              "direction": "incoming"
+            },
+            "nodes": [],
+            "edges": [],
+            "computedAt": "2026-10-25T00:00:00Z",
+            "error": "old refresh"
+          }
+        }
+      },
+      "expect": {
+        "response.ok": true,
+        "response.result.object.props.knowledge.nodes.0.name": "Premise",
+        "response.result.object.props.graph.error": "old refresh"
+      }
+    },
+    {
+      "call": "object.reload",
+      "params": {
+        "id": "{{g.object.id}}"
+      },
+      "expect": {
+        "response.ok": true,
+        "response.result.loaded": true,
+        "response.result.nodes": 2,
+        "response.result.edges": 1
+      }
+    },
+    {
+      "call": "object.measure",
+      "params": {
+        "board": "{{board}}",
+        "type": "diagram",
+        "props": {
+          "kind": "graph",
+          "title": "Preserved reasoning",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "premise#one",
+                "label": "Premise",
+                "detail": "**Evidence** stays.",
+                "status": "weak",
+                "sources": [
+                  {
+                    "message": "m-1",
+                    "board": "external-board"
+                  }
+                ]
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "taught"
+              }
+            ],
+            "edges": [
+              {
+                "from": "premise#one",
+                "to": "conclusion",
+                "label": "supports"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "response.ok": true,
+        "response.result.w": 748
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "id": "{{g.object.id}}",
+        "props": {
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "premise#one",
+                "label": "Premise",
+                "detail": "**Evidence** stays.",
+                "status": "retained",
+                "sources": [
+                  {
+                    "message": "m-1",
+                    "board": "external-board"
+                  }
+                ]
+              },
+              {
+                "id": "conclusion",
+                "label": "Conclusion",
+                "status": "practiced"
+              }
+            ],
+            "edges": [
+              {
+                "from": "premise#one",
+                "to": "conclusion",
+                "label": "supports"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "response.ok": true,
+        "response.result.object.props.knowledge.nodes.0.status": "retained",
+        "response.result.object.props.knowledge.nodes.0.level": 0,
+        "response.result.object.props.knowledge.nodes.1.level": 1
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "diagram",
+        "props": {
+          "kind": "graph",
+          "graph": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "Old alias"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1e+300
+              }
+            ]
+          }
+        },
+        "board": "{{board}}",
+        "type": "diagram"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1e+300
+              }
+            ]
+          }
+        },
+        "id": "{{g.object.id}}"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": -1e+300
+              }
+            ]
+          }
+        },
+        "board": "{{board}}",
+        "type": "diagram"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": -1e+300
+              }
+            ]
+          }
+        },
+        "id": "{{g.object.id}}"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1.5
+              }
+            ]
+          }
+        },
+        "board": "{{board}}",
+        "type": "diagram"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.update",
+      "params": {
+        "props": {
+          "kind": "graph",
+          "knowledge": {
+            "nodes": [
+              {
+                "id": "a",
+                "label": "A",
+                "level": 1.5
+              }
+            ]
+          }
+        },
+        "id": "{{g.object.id}}"
+      },
+      "expect": {
+        "response.ok": false,
+        "response.error.code": "invalid_params"
+      }
+    },
+    {
+      "call": "object.get",
+      "params": {
+        "id": "{{g.object.id}}"
+      },
+      "expect": {
+        "response.result.object.props.knowledge.nodes.0.status": "retained",
+        "response.result.object.props.knowledge.nodes.0.name": "Premise",
+        "response.result.object.props.knowledge.nodes.0.detail": "**Evidence** stays.",
+        "response.result.object.props.knowledge.nodes.1.level": 1
+      }
+    }
+  ]
+}

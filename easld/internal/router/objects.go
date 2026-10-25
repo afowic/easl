@@ -220,7 +220,7 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 				return nil, invalid("%s", problem)
 			}
 			props = cloneProps(props)
-			props["graph"] = graph
+			props["knowledge"] = graph
 		}
 	}
 	if typ == model.Question {
@@ -306,13 +306,13 @@ func (r *Router) update(p map[string]any) (any, error) {
 		if problem, bad := diagramProblem(merged); bad {
 			return nil, invalid("%s", problem)
 		}
-		if diagramKindOf(merged) == "graph" && (props["graph"] != nil || props["kind"] != nil) {
+		if diagramKindOf(merged) == "graph" && (props["knowledge"] != nil || props["kind"] != nil) {
 			graph, problem := graphOf(merged)
 			if problem != "" {
 				return nil, invalid("%s", problem)
 			}
 			props = cloneProps(props)
-			props["graph"] = graph
+			props["knowledge"] = graph
 			p = cloneProps(p)
 			p["props"] = props
 		}

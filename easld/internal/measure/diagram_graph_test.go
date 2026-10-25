@@ -22,7 +22,7 @@ func TestACallerGraphMeasuresItsLevelsAndDetailRows(t *testing.T) {
 		},
 		"computedAt": "2026-10-24T00:00:00Z",
 	}
-	w, h, err := size(t, model.Diagram, map[string]any{"kind": "graph", "graph": graph}, nil, "")
+	w, h, err := size(t, model.Diagram, map[string]any{"kind": "graph", "knowledge": graph}, nil, "")
 	// Two columns (748 wide); the deeper column (two 50-point nodes, 14 apart) is the taller,
 	// 108 tall against the detail node's 70. The frame adds the 26-point title bar and the
 	// 28-point status strip.

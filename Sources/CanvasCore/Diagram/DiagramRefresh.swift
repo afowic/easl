@@ -11,7 +11,7 @@ public enum DiagramRefresh {
     public static func run(_ id: ObjectID, on board: Board, languages: LanguageService) async throws -> DiagramGraph? {
         guard let object = board.objects[id], object.type == .diagram else { return nil }
         // A graph diagram is the caller's graph: nothing to compute, and nothing may overwrite it.
-        if DiagramSpec(object.props).kind == .graph { return DiagramGraph(object.props["graph"]) }
+        if DiagramSpec(object.props).kind == .graph { return DiagramGraph.stored(in: object.props) }
         let graph = try await compute(object, on: board, languages: languages)
         guard let now = board.objects[id], DiagramSpec(now.props) == DiagramSpec(object.props) else { return nil }
         try board.writeBookkeeping(id, props: .object(["graph": graph.json]))
@@ -21,14 +21,14 @@ public enum DiagramRefresh {
     static func compute(_ diagram: CanvasObject, on board: Board, languages: LanguageService) async throws -> DiagramGraph {
         let spec = DiagramSpec(diagram.props)
         if spec.kind == .graph {
-            return DiagramGraph(diagram.props["graph"]) ?? DiagramGraph(aim: spec.aim, error: "a graph diagram draws the graph its props give")
+            return DiagramGraph.stored(in: diagram.props) ?? DiagramGraph(aim: spec.aim, error: "a graph diagram draws the graph its props give")
         }
-        let previous = DiagramGraph(diagram.props["graph"])
+        let previous = DiagramGraph.stored(in: diagram.props)
         do {
             let scope = try await scope(of: diagram, on: board, languages: languages)
             switch spec.kind {
             case .calls: return try await CallGraphBuilder.build(spec, boardRoot: board.root, scope: scope, previous: previous, languages: languages)
-            case .graph: return DiagramGraph(diagram.props["graph"]) ?? DiagramGraph(aim: spec.aim)
+            case .graph: return DiagramGraph.stored(in: diagram.props) ?? DiagramGraph(aim: spec.aim)
             }
         } catch let error as HostFileError {
             return CallGraphBuilder.failed(spec.aim, previous: previous?.aim == spec.aim ? previous : nil, reason: HostGit.refusal(error))
@@ -37,7 +37,7 @@ public enum DiagramRefresh {
 
     static func scope(of diagram: CanvasObject, on board: Board, languages: LanguageService) async throws -> URL {
         let spec = DiagramSpec(diagram.props)
-        let graph = DiagramGraph(diagram.props["graph"])
+        let graph = DiagramGraph.stored(in: diagram.props)
         let path = spec.path ?? graph?.root.flatMap { graph?.node($0)?.path }
         var agent: ObjectID?
         if case .agent(let tile) = diagram.createdBy, board.objects[tile]?.type == .terminal { agent = tile }
@@ -55,7 +55,7 @@ public enum DiagramRefresh {
     /// its graph shows and of its `path`, in one host process. Nil without a file to watch.
     public static func hostProbe(of diagram: CanvasObject, on board: Board) -> HostGitProbe? {
         guard DiagramSpec(diagram.props).kind != .graph else { return nil }
-        var paths = Set(DiagramGraph(diagram.props["graph"])?.nodes.compactMap(\.path) ?? [])
+        var paths = Set(DiagramGraph.stored(in: diagram.props)?.nodes.compactMap(\.path) ?? [])
         if let path = DiagramSpec(diagram.props).path { paths.insert(path) }
         guard !paths.isEmpty else { return nil }
         let files = paths.map { board.absoluteURL($0).path }.sorted()

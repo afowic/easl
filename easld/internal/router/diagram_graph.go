@@ -1,6 +1,8 @@
 package router
 
 import (
+	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,27 +38,25 @@ func diagramKindOf(props map[string]any) string {
 	return "calls"
 }
 
-// graphOf is DiagramSpec.graph: a graph diagram's props.graph as the API stores it, with
-// reasoning levels computed where omitted, or the rule it breaks.
 func graphOf(props map[string]any) (map[string]any, string) {
-	input, ok := props["graph"].(map[string]any)
+	input, ok := props["knowledge"].(map[string]any)
 	if !ok {
-		return nil, "a graph diagram needs props.graph.nodes and props.graph.edges"
+		return nil, "a graph diagram needs props.knowledge.nodes and props.knowledge.edges"
 	}
 	nodeValues, ok := input["nodes"].([]any)
 	if !ok {
-		return nil, "a graph diagram needs props.graph.nodes"
+		return nil, "a graph diagram needs props.knowledge.nodes"
 	}
 	if len(nodeValues) == 0 {
-		return nil, "props.graph.nodes needs at least one node"
+		return nil, "props.knowledge.nodes needs at least one node"
 	}
 	if len(nodeValues) > diagramGraphMaxNodes {
-		return nil, "props.graph.nodes has " + itoa(len(nodeValues)) + " nodes: at most " + itoa(diagramGraphMaxNodes)
+		return nil, "props.knowledge.nodes has " + itoa(len(nodeValues)) + " nodes: at most " + itoa(diagramGraphMaxNodes)
 	}
 	var nodes []diagramGraphNodeInput
 	ids := map[string]bool{}
 	for i, value := range nodeValues {
-		path := "props.graph.nodes[" + itoa(i) + "]"
+		path := "props.knowledge.nodes[" + itoa(i) + "]"
 		raw, ok := value.(map[string]any)
 		if !ok {
 			return nil, path + " must be an object"
@@ -110,10 +110,11 @@ func graphOf(props map[string]any) (map[string]any, string) {
 		}
 		var level *int
 		if v, present := raw["level"]; present && v != nil {
-			n, ok := diagramInteger(v)
-			if !ok || n < 0 {
+			raw, valid := v.(float64)
+			if !valid || math.IsNaN(raw) || math.IsInf(raw, 0) || raw < 0 || raw != math.Trunc(raw) || raw >= math.Ldexp(1, strconv.IntSize-1) {
 				return nil, path + ".level must be a non-negative integer"
 			}
+			n := int(raw)
 			level = &n
 		}
 		var sources []any
@@ -168,13 +169,13 @@ func graphOf(props map[string]any) (map[string]any, string) {
 	if v, present := input["edges"]; present && v != nil {
 		list, ok := v.([]any)
 		if !ok {
-			return nil, "props.graph.edges must be an array"
+			return nil, "props.knowledge.edges must be an array"
 		}
 		if len(list) > diagramGraphMaxEdges {
-			return nil, "props.graph.edges has " + itoa(len(list)) + " edges: at most " + itoa(diagramGraphMaxEdges)
+			return nil, "props.knowledge.edges has " + itoa(len(list)) + " edges: at most " + itoa(diagramGraphMaxEdges)
 		}
 		for i, value := range list {
-			path := "props.graph.edges[" + itoa(i) + "]"
+			path := "props.knowledge.edges[" + itoa(i) + "]"
 			raw, ok := value.(map[string]any)
 			if !ok {
 				return nil, path + " must be an object"
@@ -294,8 +295,11 @@ func graphOf(props map[string]any) (map[string]any, string) {
 			}
 			deepest := -1
 			for _, from := range predecessors[id] {
-				if level, ok := levels[from]; ok && level+1 > deepest {
-					deepest = level + 1
+				if level, ok := levels[from]; ok {
+					if level == int(^uint(0)>>1) {
+						return nil, "graph reasoning depth exceeds the supported integer range"
+					}
+					deepest = max(deepest, level+1)
 				}
 			}
 			if deepest < 0 {

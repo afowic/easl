@@ -22,8 +22,6 @@ type diagramGraph struct {
 	edges [][2]string
 }
 
-// parseDiagramGraph is DiagramGraph.init?(props.graph): the Codable decode, so a graph with any
-// required field missing or of the wrong type is no graph.
 func parseDiagramGraph(v any) (diagramGraph, bool) {
 	m, ok := v.(map[string]any)
 	if !ok {
