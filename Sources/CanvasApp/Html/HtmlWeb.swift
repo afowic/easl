@@ -566,6 +566,10 @@ final class HtmlWebView: WKWebView {
     override func mouseDown(with event: NSEvent) {
         lastClick = (ProcessInfo.processInfo.systemUptime, event.modifierFlags)
         let hadKeyboard = window?.firstResponder === self
+        let point = convert(event.locationInWindow, from: nil)
+        let zoom = pageZoom * magnification
+        let x = (point.x - bounds.minX) / zoom
+        let y = (isFlipped ? point.y - bounds.minY : bounds.maxY - point.y) / zoom
         cancelKeyboardClick()
         super.mouseDown(with: event)
         guard !hadKeyboard, let window else { return }
@@ -580,9 +584,14 @@ final class HtmlWebView: WKWebView {
         // First mouse can arrive without activating the app. A later focus, key-window or
         // application transition cancels even if the original state is restored.
         PageScript.call("""
-        const el = document.activeElement;
-        return (!!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable === true)) === true;
-        """, [:], in: Self.clickWorld, on: self) { [weak self, weak click] value, error in
+        const el = Object.getOwnPropertyDescriptor(Document.prototype, 'activeElement').get.call(document);
+        if (!(el instanceof HTMLElement)) return false;
+        const tag = Object.getOwnPropertyDescriptor(Element.prototype, 'tagName').get.call(el);
+        const editable = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'isContentEditable').get.call(el);
+        if (!(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable === true)) return false;
+        const hit = Document.prototype.elementFromPoint.call(document, x, y);
+        return hit !== null && Node.prototype.contains.call(el, hit) === true;
+        """, ["x": x, "y": y], in: Self.clickWorld, on: self) { [weak self, weak click] value, error in
             guard let self, let click, case let .pending(latest) = self.keyboardAuthorization, latest === click else { return }
             self.keyboardAuthorization = .denied
             guard error == nil, (value as? Bool) == true,

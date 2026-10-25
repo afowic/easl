@@ -144,6 +144,12 @@ private enum HtmlKeyboard {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
         app.finishLaunching()
+        if CommandLine.arguments.contains("--dom-clicks") || CommandLine.arguments.contains("--clobbered-click") || CommandLine.arguments.contains("--stale-focus-click") {
+            let only = CommandLine.arguments.contains("--clobbered-click") ? "named activeElement form"
+                : CommandLine.arguments.contains("--stale-focus-click") ? "stale focused field" : nil
+            try await exerciseDOMClicks(only: only)
+            return
+        }
         if CommandLine.arguments.contains("--hostile-clicks") {
             try await exerciseHostileClicks()
             try await exerciseStaleClicks()
@@ -166,6 +172,7 @@ private enum HtmlKeyboard {
         try await exerciseWithoutSuppression(root: root.appendingPathComponent("missing-selector", isDirectory: true))
         try await exerciseHostileClicks()
         try await exerciseStaleClicks()
+        try await exerciseDOMClicks()
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
     }
 
@@ -265,6 +272,41 @@ private enum HtmlKeyboard {
             let pageKeys = await js(fixture.web, "window.pageKeys") as? Int
             try require(pageKeys == 0, "\(attack.name): the page must not receive the native target's keys")
             check("\(attack.name) cannot authorize keyboard capture")
+        }
+    }
+
+    private static func exerciseDOMClicks(only: String? = nil) async throws {
+        let attacks: [(name: String, patch: String)] = [
+            ("named activeElement form", """
+            const fake = document.createElement('form');
+            fake.name = 'activeElement';
+            fake.contentEditable = 'true';
+            fake.textContent = 'Not the focused editable';
+            document.body.appendChild(fake);
+            """),
+            ("stale focused field", """
+            document.getElementById('field').focus();
+            document.getElementById('plain').addEventListener('mousedown', event => event.preventDefault());
+            """)
+        ]
+        for attack in attacks where only == nil || only == attack.name {
+            let fixture = try await clickFixture(patch: attack.patch)
+            defer { fixture.window.close() }
+            try await click("#plain", in: fixture.web, window: fixture.window)
+            try await pageTurn(fixture.web)
+            let granted = fixture.window.firstResponder === fixture.web
+            typed("native", in: fixture.window)
+            try await pageTurn(fixture.web)
+            let pageKeys = await js(fixture.web, "window.pageKeys") as? Int
+            check("\(attack.name): native click granted=\(granted), page keys=\(pageKeys ?? -1)")
+            try require(!granted && fixture.window.firstResponder === fixture.native,
+                        "\(attack.name): a click outside the real active editable must not grant the keyboard")
+            try require(fixture.native.string == "native", "\(attack.name): typing must stay with the native target")
+            try require(pageKeys == 0, "\(attack.name): the page must receive no keys")
+            try await click("#field", in: fixture.web, window: fixture.window)
+            try await wait(until: { fixture.window.firstResponder === fixture.web },
+                           "\(attack.name): a new click inside the real editable must still grant")
+            check("\(attack.name) refuses the outside click and accepts a real field click")
         }
     }
 
