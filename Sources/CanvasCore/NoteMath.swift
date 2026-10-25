@@ -41,7 +41,7 @@ enum NoteMath {
                 index += 2
                 continue
             }
-            if character == "&", let semicolon = scalars[index...].firstIndex(of: ";"), semicolon - index <= 32,
+            if character == "&", let semicolon = scalars[index..<min(index + 33, scalars.count)].firstIndex(of: ";"),
                let decoded = entity(scalars[(index + 1)..<semicolon]) {
                 characters.append(contentsOf: decoded)
                 for _ in decoded { source.append(String(scalars[index...semicolon])) }

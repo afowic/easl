@@ -89,4 +89,27 @@ struct NoteMathTests {
         let measured = ObjectMeasure.note(NoteMarkdown.parse(markdown), markdown: markdown, width: 400, excerpts: [:], images: [:])
         #expect(measured.size.height > plain.size.height)
     }
+
+    @Test func ampersandHeavyProsePreservesEveryCharacter() throws {
+        let raw = String(repeating: "&", count: 2_000_000)
+        let text = try #require(NoteMath.text(raw: raw, decoded: raw))
+        #expect(String(text.characters) == raw)
+        #expect(text.source.joined() == raw)
+        #expect(text.escapedDollar.allSatisfy { !$0 })
+    }
+
+    @Test func boundedEntitiesKeepTheirDecodedTextAndMathSource() throws {
+        let raw = #"&amp; &lt; &gt; &quot; &apos; &#36;x&#x24; \$"#
+        let text = try #require(NoteMath.text(raw: raw, decoded: "& < > \" ' $x$ $"))
+        #expect(String(text.characters) == "& < > \" ' $x$ $")
+        #expect(text.source.joined() == raw)
+        let spans = NoteMath.spans(in: text)
+        #expect(spans.map(\.latex) == ["x"])
+        let longest = "&#" + String(repeating: "0", count: 28) + "36;"
+        let boundary = try #require(NoteMath.text(raw: longest, decoded: "$"))
+        #expect(boundary.characters == ["$"])
+        #expect(boundary.source == [longest])
+        let tooLong = "&#" + String(repeating: "0", count: 29) + "36;"
+        #expect(NoteMath.text(raw: tooLong, decoded: "$") == nil)
+    }
 }
