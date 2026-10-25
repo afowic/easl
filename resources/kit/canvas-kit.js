@@ -316,9 +316,9 @@
   customElements.define('canvas-link', CanvasLink);
   customElements.define('canvas-decisions', CanvasDecisions);
 
-  // ---- Mermaid: drawn to SVG by Pele, loaded only when the page has diagrams ----
+  // ---- Mermaid: loaded only when the page has diagrams (it is large) ----
 
-  let peleReady = null;
+  let mermaidReady = null;
   function mermaidBlocks() {
     for (const code of document.querySelectorAll('pre > code.language-mermaid')) {
       const div = document.createElement('div');
@@ -334,51 +334,24 @@
       div.textContent = text.replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
       pre.replaceWith(div);
     }
-    return [...document.querySelectorAll('.mermaid:not([data-rendered])')];
+    return [...document.querySelectorAll('.mermaid:not([data-processed])')];
   }
 
-  let diagramIDs = 0;
   function renderMermaid() {
     const nodes = mermaidBlocks();
     if (!nodes.length) return Promise.resolve();
-    peleReady ||= new Promise((resolve, reject) => {
+    mermaidReady ||= new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = '/kit/vendor/pele.global.js';
-      script.onload = () => resolve(window.pele);
-      script.onerror = () => reject(new Error('Pele failed to load'));
+      script.src = '/kit/vendor/mermaid.min.js';
+      script.onload = () => {
+        const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font') });
+        resolve(window.mermaid);
+      };
+      script.onerror = () => reject(new Error('mermaid failed to load'));
       document.head.append(script);
     });
-    return track(peleReady.then((pele) => {
-      const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--canvas-font');
-      for (const node of nodes) {
-        const source = node.textContent;
-        try {
-          const available = Math.round(node.clientWidth || document.documentElement.clientWidth || 0);
-          // No links and no images: the same strictness Mermaid ran with (no click handlers, no
-          // HTML labels, no URL a diagram could request); Pele escapes all diagram text.
-          const { svg } = pele.render(source, {
-            idPrefix: `pele-${++diagramIDs}`,
-            fontFamily,
-            maxWidth: available || undefined,
-            responsive: true,
-            links: false,
-            images: false,
-          });
-          node.innerHTML = svg;
-          node.dataset.rendered = '';
-        } catch (error) {
-          // Keep the source readable above Pele's explanation of what it could not parse.
-          const pre = document.createElement('pre');
-          pre.textContent = source;
-          const message = document.createElement('p');
-          message.className = 'mermaid-error';
-          message.textContent = `Pele: ${error?.message ?? error}`;
-          node.replaceChildren(pre, message);
-          node.dataset.rendered = 'error';
-          console.error(error);
-        }
-      }
-    }).catch((error) => console.error(error)));
+    return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
   }
 
   // ---- Math: KaTeX loaded only when the page has formulas (it is large) ----
