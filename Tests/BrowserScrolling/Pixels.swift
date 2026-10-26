@@ -38,7 +38,12 @@ let colors: [[Int]] = try samples.points.map { point in
     }
     let x = Int(pixelX)
     let y = Int(pixelY)
-    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+    guard let sample = bitmap.colorAt(x: x, y: y) else {
+        throw PixelError.unreadableSample(x, y)
+    }
+    var components = [sample.redComponent, sample.greenComponent, sample.blueComponent, sample.alphaComponent]
+    guard let color = NSColor(colorSpace: bitmap.colorSpace, components: &components, count: 4)
+        .usingColorSpace(.sRGB) else {
         throw PixelError.unreadableSample(x, y)
     }
     return [color.redComponent, color.greenComponent, color.blueComponent].map {

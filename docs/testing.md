@@ -322,13 +322,14 @@ The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks a
 Plain scrolling over an oversized live local or streamed browser first reveals any browser edge clipped
 in that direction by the canvas window, clear of the toolbar and tray. The pan stops at that
 edge; further wheel steps scroll the page itself. A phased gesture keeps the owner selected by its first movement through
-momentum, so another gesture may be needed after revealing the edge. This leaves the tile's
-frame, page viewport size, and board layout unchanged. Move and ⌘-scroll keep their existing
-pan and zoom behavior.
+momentum, so another gesture may be needed after revealing the edge. A browser resize during
+a gesture does not change that gesture's owner. The tile's frame, page viewport size, and
+board layout stay unchanged. Move and ⌘-scroll keep their existing pan and zoom behavior.
 
 ```sh
 scripts/bundle.sh
 python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app
 ```
 
 The runner launches a real app with a disposable home and a local oversized document. It
@@ -345,10 +346,13 @@ Swift toolchain, and `/Applications/CuaDriver.app` already authorized to capture
 It uses only the Python standard library and compiles its AppKit pixel reader once at startup.
 No Pillow, `uv`, or package download is required. AppKit converts captured colors to sRGB
 before the reader rounds components to 8-bit RGB values for the border assertions.
+The reader preserves the bitmap's declared color space when sampling; AppKit's `colorAt`
+otherwise returns Generic RGB colors even for an sRGB bitmap.
 The shared `Tests/RemoteClosedBoard/native.py` helper captures the exact development-home
 PID and selected window, checks the capture receipt, and ends its Cua session afterward.
 `--out <directory>` retains the initial, reached-edge, and final captures with their receipts,
-capture stderr, and `app.log`. A failed edge check also retains its clipped-window capture.
+capture stderr, `pixels.json` with sample coordinates and colors, and `app.log`.
+A failed edge check also retains its clipped-window capture.
 Without `--out`, only the final capture is taken, and it lives in the disposable home.
 
 This is not part of headless CI. The current CI workflow does not provision an authorized
