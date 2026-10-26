@@ -679,6 +679,8 @@ Plain wheel input over a live browser page larger than the clear canvas viewport
 the viewer's canvas to reveal the clipped edge in that direction. The pan stops at that edge;
 later wheel steps scroll the page. This applies to local browsers, direct streams, and easld
 relays without changing tile frames or page viewport dimensions.
+The primary scroll axis decides whether reveal is needed. Minor sideways drift cannot claim
+a vertical page gesture after its bottom edge is visible.
 
 A phased gesture keeps the owner chosen by its first movement through momentum, including
 during browser resize. A gesture that began outside that browser page stays with the canvas.

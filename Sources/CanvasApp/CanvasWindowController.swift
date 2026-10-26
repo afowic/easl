@@ -1646,6 +1646,7 @@ final class CanvasWindow: NSWindow {
             ? CGSize(width: reveal(dx, min: rect.minX, max: rect.maxX, visibleMin: visible.minX, visibleMax: visible.maxX),
                      height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
             : .zero
+        let revealsDirection = abs(dx) > abs(dy) ? pan.width != 0 : pan.height != 0
         if let step {
             if step == .began { browserScrollStart = (scrollSequence, ObjectIdentifier(tile)) }
             guard browserScrollStart?.sequence == scrollSequence,
@@ -1654,9 +1655,9 @@ final class CanvasWindow: NSWindow {
                 return true
             }
             guard browserScroll.owner(of: step, sequence: scrollSequence, dx: dx, dy: dy,
-                                      tileTakes: pan == .zero) == .canvas else { return false }
+                                      tileTakes: !revealsDirection) == .canvas else { return false }
             if step == .ended || step == .momentumEnded { return false }
-        } else if pan == .zero {
+        } else if !revealsDirection {
             return false
         }
         canvas.pan(by: pan)

@@ -333,6 +333,7 @@ scripts/bundle.sh
 python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
 python3 Tests/BrowserScrolling/resize.py --app .build/easl.app
 python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --arrival
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --drift
 ```
 
 The runner launches a real app with a disposable home and a local oversized document. It
