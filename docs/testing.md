@@ -328,7 +328,7 @@ pan and zoom behavior.
 
 ```sh
 scripts/bundle.sh
-uv run --with pillow Tests/BrowserScrolling/run.py --app .build/easl.app
+python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
 ```
 
 The runner launches a real app with a disposable home and a local oversized document. It
@@ -337,10 +337,24 @@ trackpad replay checks canvas reveal with a viewport-sized document, because dir
 WebKit gestures drop later steps (`DevInput.swift`). START and END must become visible inside
 the window. A final END-marker WindowServer capture checks that native chrome, including
 the toolbar and tray, does not cover its colored border. The runner also checks that the tile frame and WebKit viewport
-stay unchanged. It requires Screen Recording permission for `screencapture`, never builds the
-app, and never touches the installed app's boards. Run on an isolated macOS GUI test machine.
-The fixture hides page scrollbars and waits for native overlay scrollers to fade. Pixel samples
-are converted from the display color profile to sRGB. Add `--out <directory>` to keep the latest capture.
+stay unchanged. The runner never builds the app or touches the installed app's boards.
+The fixture hides page scrollbars and waits for native overlay scrollers to fade.
+
+Run this manual regression on an isolated macOS GUI test machine with Python 3, an installed
+Swift toolchain, and `/Applications/CuaDriver.app` already authorized to capture windows.
+It uses only the Python standard library and compiles its AppKit pixel reader once at startup.
+No Pillow, `uv`, or package download is required. AppKit converts captured colors to sRGB
+before the reader rounds components to 8-bit RGB values for the border assertions.
+The shared `Tests/RemoteClosedBoard/native.py` helper captures the exact development-home
+PID and selected window, checks the capture receipt, and ends its Cua session afterward.
+`--out <directory>` retains the initial, reached-edge, and final captures with their receipts,
+capture stderr, and `app.log`. A failed edge check also retains its clipped-window capture.
+Without `--out`, only the final capture is taken, and it lives in the disposable home.
+
+This is not part of headless CI. The current CI workflow does not provision an authorized
+CuaDriver capture session. Do not replace the native capture with a DOM-only assertion
+or request new capture permissions during an unattended run. Resolve capture authorization
+on the isolated GUI machine before running the regression.
 
 ### HTML tile keyboard
 

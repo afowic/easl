@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
 """Exercise wheel access to all four edges of an oversized browser tile."""
 import argparse
-import io
 import json
 import os
 from pathlib import Path
 import socket
+import sys
 import subprocess
 import tempfile
 import time
-from PIL import Image, ImageCms
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "RemoteClosedBoard"))
+from native import DRIVER, capture, end_session
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path, help="A prebuilt easl.app; this runner never builds the app.")
-    parser.add_argument("--out", type=Path, help="Keep the latest native capture in this directory.")
+    parser.add_argument("--out", type=Path, help="Keep the native capture, capture receipts, and app log in this directory.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     app = args.app.resolve(strict=True)
+    if not Path(DRIVER).is_file():
+        parser.error("This manual GUI regression requires an installed, capture-authorized CuaDriver.app.")
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="easl-browser-scroll-", dir="/tmp") as temporary:
         home = Path(temporary)
+        pixels = home / "pixels"
+        subprocess.run(["xcrun", "swiftc", str(Path(__file__).with_name("Pixels.swift")),
+                        "-framework", "AppKit", "-o", str(pixels)], check=True)
         board_root = home / "board"
         board_root.mkdir()
         page = board_root / "scroll.html"
@@ -59,9 +66,7 @@ border:4px solid #f0f;box-sizing:border-box}
         try:
             dev("start", board_root)
             board = call("board.open", {"root": str(board_root), "select": True})["board"]
-            # A fresh home opens its first-run panel over the canvas.
             dev("input", "mainmenu", "Help/Get Started")
-            # A fresh development home can add a Get Started tile. Keep only this fixture.
             for item in call("board.get", {"board": board})["objects"]:
                 call("object.delete", {"id": item["id"]})
             viewport = call("view.get", {"board": board})["viewport"]
@@ -91,6 +96,9 @@ border:4px solid #f0f;box-sizing:border-box}
             else:
                 raise RuntimeError("The native scroll fixture did not report its selected window")
 
+            if args.out:
+                capture(home, window, args.out / "initial.png")
+
             def geometry(marker):
                 script = f"""(() => {{
 const node = document.getElementById({json.dumps(marker)});
@@ -117,30 +125,22 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                 # WindowServer pixels include live WebKit and native overlays, not its stale preview.
                 time.sleep(1.1)  # Let native overlay scrollers fade before checking content pixels.
                 value = geometry("end")
-                subprocess.run(["screencapture", "-x", "-o", "-l", str(window), str(path)], check=True)
-                with Image.open(path) as capture:
-                    profile = capture.info.get("icc_profile")
-                    image = ImageCms.profileToProfile(
-                        capture.convert("RGB"), ImageCms.ImageCmsProfile(io.BytesIO(profile)),
-                        ImageCms.createProfile("sRGB"), outputMode="RGB"
-                    ) if profile else capture.convert("RGB")
-                sx = image.width / value["windowWidth"]
-                offset_y = image.height - value["windowHeight"] * sx
+                capture(home, window, path)
                 inset = 2 * value["zoom"]
                 left, right = value["left"] + inset, value["right"] - inset
                 top, bottom = value["top"] + inset, value["bottom"] - inset
-                # Sample mid-edges to avoid the native tile's rounded corners.
                 border = [(left + (right - left) * fraction, py)
                           for fraction in (0.25, 0.5, 0.75) for py in (top, bottom)]
                 border += [(px, top + (bottom - top) * fraction)
                            for fraction in (0.25, 0.5, 0.75) for px in (left, right)]
-                # A native toolbar or tray over any marker border must prevent a pass.
-                return all(
-                    red >= 240 and green <= 20 and blue >= 240
-                    for red, green, blue in (
-                        image.getpixel((round(px * sx), round(py * sx + offset_y))) for px, py in border
-                    )
+                samples = subprocess.check_output(
+                    [str(pixels), str(path)],
+                    input=json.dumps({"windowWidth": value["windowWidth"],
+                                      "windowHeight": value["windowHeight"], "points": border}),
+                    text=True,
                 )
+                return all(red >= 240 and green <= 20 and blue >= 240
+                           for red, green, blue in json.loads(samples))
 
             def reach(marker, delta, options, label):
                 previous = None
@@ -156,12 +156,16 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                     if (value["left"] >= -1 and value["top"] >= -1
                             and value["right"] <= value["windowWidth"] + 1
                             and value["bottom"] <= value["windowHeight"] + 1):
+                        if args.out:
+                            capture(home, window, args.out / (label.replace(" ", "-").replace("/", "-") + ".png"))
                         print(f"PASS {label}: {marker} marker inside native window", flush=True)
                         return
                     stalled = stalled + 1 if value == previous else 0
                     if stalled >= 3:
                         break
                     previous = value
+                if args.out:
+                    capture(home, window, args.out / (label.replace(" ", "-").replace("/", "-") + "-clipped.png"))
                 raise AssertionError(f"{label}: {marker} remains clipped after native scrolling: {value}")
 
             for label, amount, options in (
@@ -182,7 +186,6 @@ return true;
             dev("input", "scroll", x, y, -10000, -10000, "--window", window)
             reach("start", 120, ("--repeat", "4", "--gesture"), "phased canvas up/left")
             reach("end", -120, ("--repeat", "4", "--gesture"), "phased canvas down/right")
-            # Finish revealing the clipped edge before checking its pixels.
             dev("input", "scroll", x, y, -120, -120, "--repeat", "4", "--gesture", "--window", window)
             assert call("object.get", {"id": surface})["object"]["frame"] == frame
             assert call("browser.eval", {"surface_id": surface,
@@ -193,7 +196,10 @@ return true;
         finally:
             if args.out and (home / "app.log").exists():
                 (args.out / "app.log").write_text((home / "app.log").read_text())
-            dev("stop")
+            try:
+                end_session()
+            finally:
+                dev("stop")
 
 
 if __name__ == "__main__":
