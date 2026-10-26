@@ -13,7 +13,9 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path)
-    parser.add_argument("--arrival", action="store_true", help="Move a browser under a gesture that began on empty canvas.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--arrival", action="store_true", help="Move a browser under a gesture that began on empty canvas.")
+    mode.add_argument("--drift", action="store_true", help="Keep minor sideways drift from stealing a vertical page gesture.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     app = args.app.resolve(strict=True)
@@ -60,10 +62,27 @@ def main():
             viewport = call("view.get", {"board": board})["viewport"]
             rect, zoom = viewport["rect"], viewport["zoom"]
             frame = {"x": rect["x"] + (350 if args.arrival else 60), "y": rect["y"] + 100, "w": 650, "h": 400}
+            if args.drift:
+                frame.update(w=rect["w"] * 2, h=rect["h"] * 3)
             tile = call("object.create", {"board": board, "type": "browser", "frame": frame,
                                           "props": {"url": page.as_uri()}})["object"]["id"]
             call("view.render", {"board": board, "target": tile, "out": str(home / "loaded.png")})
             log = home / "app.log"
+            if args.drift:
+                dev("input", "scroll", 160 * zoom, 230 * zoom, 0, -10000)
+                before = call("view.get", {"board": board})["viewport"]
+                page_y = call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"]
+                offset = log.stat().st_size
+                dev("input", "scroll", 160 * zoom, 230 * zoom, -1, -12,
+                    "--repeat", 4, "--interval", 100, "--gesture")
+                wait(lambda: "DevInput: burst of 4 scroll" in log.read_text()[offset:],
+                     "The slightly diagonal page gesture did not finish")
+                after = call("view.get", {"board": board})["viewport"]
+                assert after == before, f"Sideways drift stole a vertical page gesture: {before} -> {after}"
+                wait(lambda: call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] > page_y,
+                     "The vertical gesture did not reach the page")
+                print("PASS minor sideways drift does not steal a vertical page gesture", flush=True)
+                return
             offset = log.stat().st_size
             dev("input", "scroll", 160 * zoom, 230 * zoom, 0, -12,
                 "--repeat", 30, "--interval", 100, "--gesture")
