@@ -13,6 +13,7 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path)
+    parser.add_argument("--arrival", action="store_true", help="Move a browser under a gesture that began on empty canvas.")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     app = args.app.resolve(strict=True)
@@ -58,7 +59,7 @@ def main():
                 call("object.delete", {"id": item["id"]})
             viewport = call("view.get", {"board": board})["viewport"]
             rect, zoom = viewport["rect"], viewport["zoom"]
-            frame = {"x": rect["x"] + 60, "y": rect["y"] + 100, "w": 650, "h": 400}
+            frame = {"x": rect["x"] + (350 if args.arrival else 60), "y": rect["y"] + 100, "w": 650, "h": 400}
             tile = call("object.create", {"board": board, "type": "browser", "frame": frame,
                                           "props": {"url": page.as_uri()}})["object"]["id"]
             call("view.render", {"board": board, "target": tile, "out": str(home / "loaded.png")})
@@ -66,15 +67,31 @@ def main():
             offset = log.stat().st_size
             dev("input", "scroll", 160 * zoom, 230 * zoom, 0, -12,
                 "--repeat", 30, "--interval", 100, "--gesture")
-            wait(lambda: call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] > 0,
-                 "The gesture never began scrolling the normal-sized page")
+            if args.arrival:
+                wait(lambda: call("view.get", {"board": board})["viewport"]["rect"]["y"] > rect["y"],
+                     "The gesture never began panning the empty canvas")
+            else:
+                wait(lambda: call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] > 0,
+                     "The gesture never began scrolling the normal-sized page")
+            assert "DevInput: burst of 30 scroll" not in log.read_text()[offset:], "The gesture ended before the geometry change"
             before = call("view.get", {"board": board})["viewport"]
-            call("object.update", {"id": tile, "frame": dict(frame, h=rect["h"] * 3)})
+            if args.arrival:
+                moved = dict(frame, x=before["rect"]["x"] + 60, y=before["rect"]["y"] + 100)
+                call("object.update", {"id": tile, "frame": moved})
+                before = call("view.get", {"board": board})["viewport"]
+            else:
+                call("object.update", {"id": tile, "frame": dict(frame, h=rect["h"] * 3)})
+            assert "DevInput: burst of 30 scroll" not in log.read_text()[offset:], "The gesture ended before the geometry change was applied"
             wait(lambda: "DevInput: burst of 30 scroll" in log.read_text()[offset:],
                  "The phased wheel burst did not finish")
             after = call("view.get", {"board": board})["viewport"]
-            assert after == before, f"Page-owned gesture changed to canvas after resize: {before} -> {after}"
-            print("PASS page-owned gesture stays page-owned after browser enlargement", flush=True)
+            if args.arrival:
+                assert after["rect"]["y"] > before["rect"]["y"], f"Browser swallowed an arriving canvas gesture: {before} -> {after}"
+                assert call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] == 0
+                print("PASS arriving canvas gesture keeps panning over a normal browser", flush=True)
+            else:
+                assert after == before, f"Page-owned gesture changed to canvas after resize: {before} -> {after}"
+                print("PASS page-owned gesture stays page-owned after browser enlargement", flush=True)
         finally:
             dev("stop")
 

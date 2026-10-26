@@ -109,7 +109,6 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                 page_geometry = call("browser.eval", {"surface_id": surface, "script": script}, browser=True)["value"]
                 view = call("view.get", {"board": board})["viewport"]
                 rect, zoom = view["rect"], view["zoom"]
-                # The object frame includes tile title and browser chrome; innerHeight does not.
                 origin_x = frame["x"] - rect["x"]
                 origin_y = frame["y"] - rect["y"] + frame["h"] - page_geometry["height"]
                 return {"left": (origin_x + page_geometry["left"]) * zoom,
@@ -122,8 +121,7 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
 
             def unobscured():
                 path = (args.out if args.out else home) / "visible.png"
-                # WindowServer pixels include live WebKit and native overlays, not its stale preview.
-                time.sleep(1.1)  # Let native overlay scrollers fade before checking content pixels.
+                time.sleep(1.1)
                 value = geometry("end")
                 receipt = capture(home, window, path)
                 inset = 2 * value["zoom"]
@@ -148,7 +146,6 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                 stalled = 0
                 value = geometry(marker)
                 for index in range(150):
-                    # Separate axes avoid WebKit's diagonal trackpad axis lock.
                     horizontal = index % 2 == 0
                     dev("input", "scroll", x, y, delta if horizontal else 0, 0 if horizontal else delta,
                         *options, "--window", window)
@@ -175,8 +172,6 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
             ):
                 reach("end", -amount, options, f"{label} down/right")
                 reach("start", amount, options, f"{label} up/left")
-            # Directly replayed phased WebKit scrolls drop later steps (DevInput.swift).
-            # Isolate gesture ownership and clipped-edge reveal without internal page scrolling.
             call("browser.eval", {"surface_id": surface, "script": """(() => {
 const main = document.querySelector("main");
 main.style.width = innerWidth + "px";
@@ -188,6 +183,9 @@ return true;
             reach("start", 120, ("--repeat", "4", "--gesture"), "phased canvas up/left")
             reach("end", -120, ("--repeat", "4", "--gesture"), "phased canvas down/right")
             dev("input", "scroll", x, y, -120, -120, "--repeat", "4", "--gesture", "--window", window)
+            edge = call("view.get", {"board": board})["viewport"]
+            dev("input", "scroll", x, y, -120, -120, "--repeat", "4", "--gesture", "--window", window)
+            assert call("view.get", {"board": board})["viewport"] == edge, "Scrolling at the revealed edge moved the canvas"
             assert call("object.get", {"id": surface})["object"]["frame"] == frame
             assert call("browser.eval", {"surface_id": surface,
                 "script": "({width:innerWidth,height:innerHeight})"}, browser=True)["value"] == page_viewport
