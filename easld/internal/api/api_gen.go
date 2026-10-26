@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "dfc53d2bf1d20656"
+const SchemaHash = "9a9362fdcab146df"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -741,26 +741,41 @@ type VideoProps struct {
 	Key       *ObjectKey `json:"key,omitempty"`
 }
 
+// DiagramSource: Where a graph node came from: the terminal tile, agent session, message or board that holds the observation or argument it states. A click on the node's source badge focuses the terminal a session or tile names when it is on this board; other fields stay a record and the tile says the source isn't on this board
+type DiagramSource struct {
+	// an agent session id (`props.agent.sessionId`) or session path (`props.agent.sessionPath`) of a terminal on the board
+	Session *string `json:"session,omitempty"`
+	// the message or prompt the claim came from
+	Message *string `json:"message,omitempty"`
+	// the board the tile is on; another board is not resolvable from this one
+	Board *string `json:"board,omitempty"`
+	// the terminal tile it came from
+	Tile *string `json:"tile,omitempty"`
+}
+
 type DiagramPropsGraphNodesExcerpt struct {
 	Line *int    `json:"line,omitempty"`
 	Text *string `json:"text,omitempty"`
 }
 
 type DiagramPropsGraphNodes struct {
-	// `path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
+	// path#Container.name, stable while the symbol exists. What expanded and arrow ends name
+	ID string `json:"id"`
+	// The symbol name
+	Name string `json:"name"`
+	// calls nodes: the enclosing type or module, when the server says
 	Container *string `json:"container,omitempty"`
-	// LSP symbol kind: method, function, constructor, …
-	Kind string `json:"kind"`
-	// board-relative
-	Path string `json:"path"`
-	// 1-based line of its name
-	Line int `json:"line"`
-	// its whole declaration
-	Lines   LineRange                       `json:"lines"`
-	Excerpt []DiagramPropsGraphNodesExcerpt `json:"excerpt"`
-	// columns from the root (0): callers negative, callees positive
+	// calls nodes: LSP symbol kind: method, function, constructor, …
+	Kind *string `json:"kind,omitempty"`
+	// calls nodes: board-relative file
+	Path *string `json:"path,omitempty"`
+	// calls nodes: 1-based line of its name
+	Line *int `json:"line,omitempty"`
+	// calls nodes: its whole declaration
+	Lines *LineRange `json:"lines,omitempty"`
+	// calls nodes: 1-3 lines, a caller's calls toward the root or the signature
+	Excerpt []DiagramPropsGraphNodesExcerpt `json:"excerpt,omitempty"`
+	// Columns from root 0, callers negative
 	Level int `json:"level"`
 	// its symbol is gone from its file: shown as it last was, badged
 	Stale *bool `json:"stale,omitempty"`
@@ -775,12 +790,12 @@ type DiagramPropsGraphEdges struct {
 	From string `json:"from"`
 	// the callee's node id
 	To string `json:"to"`
-	// 1-based lines of the calls, in the caller's file
-	Lines []int `json:"lines"`
+	// calls edges: 1-based lines of the calls, in the caller's file
+	Lines []int `json:"lines,omitempty"`
 	Stale *bool `json:"stale,omitempty"`
 }
 
-// DiagramPropsGraph: written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it)
+// DiagramPropsGraph: Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes
 type DiagramPropsGraph struct {
 	// the kind, path, symbol, line and direction it was computed for
 	Aim map[string]any `json:"aim,omitempty"`
@@ -795,9 +810,44 @@ type DiagramPropsGraph struct {
 	ComputedAt *string `json:"computedAt,omitempty"`
 }
 
-// DiagramProps: A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.
+type DiagramPropsKnowledgeNodes struct {
+	// Non-empty caller id, at most 256 UTF-8 bytes
+	ID string `json:"id"`
+	// Nonblank node label, at most 512 UTF-8 bytes; normalized to name
+	Label *string `json:"label,omitempty"`
+	// Normalized label; accepted when label is absent
+	Name *string `json:"name,omitempty"`
+	// Finite, exactly representable host integer; omitted levels are computed
+	Level *int `json:"level,omitempty"`
+	// Markdown or plain text, at most 8192 UTF-8 bytes
+	Detail  *string         `json:"detail,omitempty"`
+	Sources []DiagramSource `json:"sources,omitempty"`
+	// One of "taught", "practiced", "retained", "weak".
+	Status *string `json:"status,omitempty"`
+}
+
+type DiagramPropsKnowledgeEdges struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	// At most 256 UTF-8 bytes
+	Label *string `json:"label,omitempty"`
+	// Written as an empty array on normalization
+	Lines []int `json:"lines,omitempty"`
+}
+
+// DiagramPropsKnowledge: Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge.
+type DiagramPropsKnowledge struct {
+	// Written on normalization with kind graph and direction incoming
+	Aim   map[string]any               `json:"aim,omitempty"`
+	Nodes []DiagramPropsKnowledgeNodes `json:"nodes"`
+	Edges []DiagramPropsKnowledgeEdges `json:"edges,omitempty"`
+	// Normalization time
+	ComputedAt *string `json:"computedAt,omitempty"`
+}
+
+// DiagramProps: A diagram tile: `kind: calls` (the default) is a call graph computed from the code by the language server and kept live; `kind: graph` is a knowledge or reasoning graph the caller supplies, which nothing computes. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`.
 type DiagramProps struct {
-	// what the diagram is of; more kinds (types, pipelines) will come One of "calls".
+	// calls: a function and its call hierarchy, computed by the language server. graph: a caller-supplied knowledge or reasoning graph: `knowledge.nodes` (id, label, detail, level, sources, status) and `knowledge.edges` (from premise to conclusion, optional label), laid out one column per reasoning depth; never computed from code, and object.reload is a no-op success One of "calls", "graph".
 	Kind *string `json:"kind,omitempty"`
 	// the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration
 	Symbol *string `json:"symbol,omitempty"`
@@ -809,14 +859,16 @@ type DiagramProps struct {
 	Direction *string `json:"direction,omitempty"`
 	// levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded
 	Depth *int `json:"depth,omitempty"`
-	// node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one
+	// kind calls only: node ids from graph.nodes[].id opened one level past depth; a click toggles one
 	Expanded []string `json:"expanded,omitempty"`
-	// default: `Callers of <symbol>` (`Calls from`, `Calls around`)
+	// default: `Callers of <symbol>` (`Calls from`, `Calls around`); `Graph` for kind graph
 	Title *string `json:"title,omitempty"`
-	// written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it)
+	// Calls-only cache written by the app through bookkeeping, without a rev or undo step. Ignored for kind graph, which reads only knowledge. The next calls computation replaces caller writes
 	Graph *DiagramPropsGraph `json:"graph,omitempty"`
-	Zoom  *Zoom              `json:"zoom,omitempty"`
-	Key   *ObjectKey         `json:"key,omitempty"`
+	// Authored data for kind graph. This is the only public input and persisted value for authored graphs; props.graph is an ignored legacy calls cache. Create and update normalize label to name and fill omitted levels with longest-path reasoning depth from premises at 0. A cycle needs an explicit level on every node. Limits count UTF-8 bytes: 500 nodes, 2000 unique directed edges, 256 per id or edge label or source field, 512 per node label, 8192 per detail, and 8 sources per node. Reverse edges are distinct. Reload never computes or writes knowledge.
+	Knowledge *DiagramPropsKnowledge `json:"knowledge,omitempty"`
+	Zoom      *Zoom                  `json:"zoom,omitempty"`
+	Key       *ObjectKey             `json:"key,omitempty"`
 }
 
 type QuestionPropsOptions struct {
@@ -834,23 +886,31 @@ type QuestionPropsAsker struct {
 	Host *string `json:"host,omitempty"`
 }
 
-// QuestionPropsAnswer: with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+// QuestionPropsAnswer: with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered
 type QuestionPropsAnswer struct {
 	// an option id
 	Option *string `json:"option,omitempty"`
 	Note   *string `json:"note,omitempty"`
-	At     *string `json:"at,omitempty"`
+	// how sure the user was, 0–1, on a question asked with `askConfidence`; absent when they answered without setting the slider. Callers may answer with it; without `askConfidence` it is invalid_params
+	Confidence *float64 `json:"confidence,omitempty"`
+	// written by easl on a question with `correct`: true when the picked option is it, false when another is. Absent on a note-only answer; a caller may send only the value easl would stamp
+	Correct *bool   `json:"correct,omitempty"`
+	At      *string `json:"at,omitempty"`
 	// who answered: the user, or an agent's terminal (`caller`)
 	By Actor `json:"by,omitempty"`
 }
 
-// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `recommended` and `answer.option` name an option, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
+// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
 type QuestionProps struct {
 	Question string `json:"question"`
 	// what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note
 	Options []QuestionPropsOptions `json:"options"`
 	// the id of the option the asker recommends; the tile marks it
 	Recommended *string `json:"recommended,omitempty"`
+	// the id of the option that is right: easl stamps `answer.correct` (true for it, false for another) when the question is answered, and the closed tile marks it and shows its why. The tile never marks it while the question is open
+	Correct *string `json:"correct,omitempty"`
+	// true adds a confidence slider to the open tile: the user sets 0–100% before answering (optional: skipping it leaves `answer.confidence` out), and the answer line the asker gets says how sure the user was
+	AskConfidence *bool `json:"askConfidence,omitempty"`
 	// what to look at before answering; each a link on the tile that opens beside it
 	Context []map[string]any `json:"context,omitempty"`
 	// who asks: a terminal on the board (`tile`; the answer is handed to it), or a name (an agent elsewhere, a script) on an optional host; at least one of tile and name. Default: the calling terminal (`caller`); a create without either is invalid_params
@@ -859,7 +919,7 @@ type QuestionProps struct {
 	Status *string `json:"status,omitempty"`
 	// when an open question stops waiting (RFC 3339); none by default
 	ExpiresAt *string `json:"expiresAt,omitempty"`
-	// with status answered only: the picked option and/or a note (at least one); `at` and `by` are written by easl when the question becomes answered
+	// with status answered only: the picked option and/or a note (at least one); `at`, `by` and, on a question with `correct`, `correct` are written by easl when the question becomes answered
 	Answer *QuestionPropsAnswer `json:"answer,omitempty"`
 	// true hides a closed question's tile (archive is not a status: `status` keeps how it ended, `answer` stays); an open question can't be archived. The host also sets it when a closed question's archive delay elapses
 	Archived *bool `json:"archived,omitempty"`

@@ -162,7 +162,7 @@ func (g Geometry) DrawnRouting(rows map[string]CodeRows) *Result {
 
 // diagramBodyRect is DiagramTile.rect(ofNode:): the node's box in the tile body's own points.
 func diagramBodyRect(id string, frame model.Frame, props map[string]any) (Rect, bool) {
-	g, ok := parseDiagramGraph(props["graph"])
+	g, ok := parseDiagramGraph(model.DiagramGraphValue(props))
 	if !ok {
 		return Rect{}, false
 	}

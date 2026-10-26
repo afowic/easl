@@ -53,6 +53,11 @@ func (b *Board) QuestionUpdate(id string, patch any, has bool, frame *model.Fram
 	if answer, ok := merged["answer"].(map[string]any); ok && status == question.Answered {
 		answer["at"] = question.Stamp(now)
 		answer["by"] = model.ActorFor(caller).JSON()
+		if correct, ok := merged["correct"].(string); ok {
+			if option, ok := answer["option"].(string); ok {
+				answer["correct"] = option == correct
+			}
+		}
 		fields, _ = model.Merge(fields, map[string]any{"answer": answer}).(map[string]any)
 		merged, _ = model.Merge(before.Props, fields).(map[string]any)
 	}

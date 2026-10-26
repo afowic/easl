@@ -151,6 +151,73 @@ final class QuestionTests {
         #expect(QuestionSpec(try board.object(open.id).props).archived)
     }
 
+    @Test func answeringStampsWhetherThePickIsTheCorrectOption() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let right = try await question(["asker": .null, "correct": "now"], caller: asker)
+        try board.answerQuestion(right.id, option: "now", note: nil)
+        #expect(QuestionSpec(try board.object(right.id).props).answer?.correct == true)
+        let wrong = try await question(["asker": .null, "correct": "now"], caller: asker)
+        try board.answerQuestion(wrong.id, option: "later", note: nil)
+        #expect(QuestionSpec(try board.object(wrong.id).props).answer?.correct == false)
+    }
+
+    @Test func anAnswerRecordsHowSureTheUserWasWhenTheQuestionAsks() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let asked = try await question(["asker": .null, "askConfidence": .bool(true)], caller: asker)
+        try board.answerQuestion(asked.id, option: "now", note: nil, confidence: 0.8)
+        #expect(QuestionSpec(try board.object(asked.id).props).answer?.confidence == 0.8)
+        // Skipped: no confidence at all.
+        let skipped = try await question(["asker": .null, "askConfidence": .bool(true)], caller: asker)
+        try board.answerQuestion(skipped.id, option: "now", note: nil)
+        #expect(QuestionSpec(try board.object(skipped.id).props).answer?.confidence == nil)
+        // Below 0 or above 1 is no fraction, and only a question that asks takes one.
+        let again = try await question(["asker": .null, "askConfidence": .bool(true)], caller: asker)
+        #expect(message(try await update(again.id, .object(["status": "answered", "answer": .object(["option": "now", "confidence": .number(1.5)])])))
+            == "answer.confidence must be a number from 0 to 1")
+        let plain = try await question(["asker": .null], caller: asker)
+        #expect(message(try await update(plain.id, .object(["status": "answered", "answer": .object(["option": "now", "confidence": .number(0.5)])])))
+            == "answer.confidence goes with a question asked with askConfidence")
+    }
+
+    @Test func gradingPropsAreValidatedByTheirOwnRulesAndSizeTheTile() async throws {
+        let base: [String: JSONValue] = ["question": "Q?", "options": Self.options, "asker": .object(["name": "cos"])]
+        func refused(_ change: [String: JSONValue]) async throws -> String? {
+            var props = base
+            for (key, value) in change { props[key] = value }
+            return message(try await create(.object(props)))
+        }
+        #expect(try await refused(["correct": "soon"]) == "correct \"soon\" is not an option id (now, later)")
+        #expect(try await refused(["correct": .number(1)]) == "correct must be an option id (now, later)")
+        #expect(try await refused(["askConfidence": "yes"]) == "askConfidence must be true or false")
+        var graded = base
+        graded["correct"] = .string("now")
+        graded["askConfidence"] = .bool(true)
+        let sized = try #require(try await create(.object(graded))["result"]?["object"])
+        #expect(sized["frame"]?["h"] == .number(QuestionSpec.openBase + 2 * QuestionSpec.optionRow + QuestionSpec.confidenceRow),
+                "the confidence slider gets its own row")
+    }
+
+    @Test func theAnswersMentionSaysWhetherThePickWasRightAndHowSureTheUserWas() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let asked = try await question(["asker": .null, "correct": "now", "askConfidence": .bool(true)], caller: asker)
+        try board.answerQuestion(asked.id, option: "later", note: "after the perf PR", confidence: 0.8)
+        let drained = await board.drain(peek: true, caller: asker)
+        #expect(drained.context.contains("    answer: [later] After #28 · incorrect · confidence: 80% · note: \"after the perf PR\" · by the user at "),
+                "\(drained.context)")
+        #expect(drained.context.contains("[now] Ship now (recommended): the fix is small\n"), "the options line does not mark the right one")
+    }
+
+    @Test func aCallerCannotStampTheAnswerAsCorrect() async throws {
+        let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
+        let asked = try await question(["asker": .null, "correct": "now"], caller: asker)
+        #expect(message(try await update(asked.id, .object(["status": "answered", "answer": .object(["option": "later", "correct": .bool(true)])])))
+            == "answer.correct is written by easl: it says whether the picked option is correct")
+        #expect(QuestionSpec(try board.object(asked.id).props).status == .open, "nothing was written")
+        #expect(try await update(asked.id, .object(["status": "answered", "answer": .object(["option": "later", "correct": .bool(false)])]))["ok"] == .bool(true),
+                "the value easl would stamp is no forgery")
+        #expect(QuestionSpec(try board.object(asked.id).props).answer?.correct == false)
+    }
+
     @Test func cancellingClosesWithoutAnAnswer() async throws {
         let open = try await question()
         #expect(message(try await update(open.id, .object(["status": "cancelled", "answer": .object(["note": "x"])]))) == "answer goes with status answered")

@@ -14,6 +14,7 @@ type diagramNode struct {
 	id       string
 	level    int
 	excerpts int
+	detail   bool
 }
 
 type diagramGraph struct {
@@ -21,15 +22,14 @@ type diagramGraph struct {
 	edges [][2]string
 }
 
-// parseDiagramGraph is DiagramGraph.init?(props.graph): the Codable decode, so a graph with any
-// required field missing or of the wrong type is no graph.
 func parseDiagramGraph(v any) (diagramGraph, bool) {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return diagramGraph{}, false
 	}
 	aim, ok := m["aim"].(map[string]any)
-	if !ok || aim["kind"] != "calls" || !optString(aim["path"]) || !optString(aim["symbol"]) || !optInt(aim["line"]) {
+	kind, kindOK := aim["kind"].(string)
+	if !ok || !kindOK || (kind != "calls" && kind != "graph") || !optString(aim["path"]) || !optString(aim["symbol"]) || !optInt(aim["line"]) {
 		return diagramGraph{}, false
 	}
 	switch aim["direction"] {
@@ -56,14 +56,24 @@ func parseDiagramGraph(v any) (diagramGraph, bool) {
 		}
 		id, ok1 := n["id"].(string)
 		_, ok2 := n["name"].(string)
-		_, ok3 := n["kind"].(string)
-		_, ok4 := n["path"].(string)
-		_, ok5 := model.Int(n["line"])
-		level, ok6 := model.Int(n["level"])
+		level, ok3 := model.Int(n["level"])
+		if !(ok1 && ok2 && ok3) || !optString(n["container"]) || !optBool(n["stale"]) || !optBool(n["expandable"]) || !optBool(n["expanded"]) {
+			return diagramGraph{}, false
+		}
+		if kind == "graph" {
+			if !optString(n["detail"]) {
+				return diagramGraph{}, false
+			}
+			detail, _ := n["detail"].(string)
+			g.nodes = append(g.nodes, diagramNode{id: id, level: level, detail: detail != ""})
+			continue
+		}
+		_, ok4 := n["kind"].(string)
+		_, ok5 := n["path"].(string)
+		_, ok6 := model.Int(n["line"])
 		_, ok7 := model.LineRangeFromJSON(n["lines"])
 		excerpt, ok8 := n["excerpt"].([]any)
-		if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8) || !optString(n["container"]) ||
-			!optBool(n["stale"]) || !optBool(n["expandable"]) || !optBool(n["expanded"]) {
+		if !(ok4 && ok5 && ok6 && ok7 && ok8) {
 			return diagramGraph{}, false
 		}
 		for _, line := range excerpt {
@@ -87,8 +97,12 @@ func parseDiagramGraph(v any) (diagramGraph, bool) {
 		from, ok1 := e["from"].(string)
 		to, ok2 := e["to"].(string)
 		lines, ok3 := e["lines"].([]any)
-		if !(ok1 && ok2 && ok3) || !optBool(e["stale"]) {
-			return diagramGraph{}, false
+		if !(ok1 && ok2 && ok3) || !optBool(e["stale"]) || !optString(e["label"]) {
+			if !(ok1 && ok2) || !optBool(e["stale"]) || !optString(e["label"]) || kind != "graph" || e["lines"] != nil {
+				return diagramGraph{}, false
+			}
+			g.edges = append(g.edges, [2]string{from, to})
+			continue
 		}
 		for _, l := range lines {
 			if _, ok := model.Int(l); !ok {
@@ -139,6 +153,9 @@ const (
 )
 
 func diagramNodeHeight(n diagramNode) float64 {
+	if n.detail {
+		return 2*diagramPadding + diagramNameHeight + 2*diagramExcerptLineHeight + 4
+	}
 	h := 2*diagramPadding + diagramNameHeight + diagramPlaceHeight + float64(n.excerpts)*diagramExcerptLineHeight
 	if n.excerpts > 0 {
 		h += 4

@@ -1,7 +1,7 @@
 {
   "scenario": "questions",
-  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, tile shrunk, the answer handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
-  "recordedOn": "Mac dev 6aa77fbf8c4e566825022c42fdd48e2915dcf1e9, isolated easl-ask-cleanup-1",
+  "description": "Question objects: create (asker defaulting to the calling terminal, sized by its options, size fit; a graded one with correct and askConfidence), each validation rule's invalid_params, object.find by type and status, answering through object.update (answer stamped, answer.correct for a graded question, tile shrunk, the answer and its confidence and correctness handed to the asking terminal's next drain), a closed question taking only archived, cancel, and expiry (a question created or updated past its expiresAt expires right after, announced as object.updated).",
+  "recordedOn": "Mac dev 5024e586 + question grading, isolated question-grading",
   "steps": [
     {
       "step": "board.open",
@@ -2105,6 +2105,625 @@
       ]
     },
     {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 3000,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "correct": "z",
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "correct \"z\" is not an option id (a)"
+        },
+        "id": "r37",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 200,
+          "w": 460,
+          "x": 3000,
+          "y": 0
+        },
+        "props": {
+          "askConfidence": "yes",
+          "asker": {
+            "name": "cos"
+          },
+          "options": [
+            {
+              "id": "a",
+              "label": "A"
+            }
+          ],
+          "question": "Q?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "askConfidence must be true or false"
+        },
+        "id": "r38",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "props": {
+          "askConfidence": true,
+          "correct": "swift",
+          "options": [
+            {
+              "id": "swift",
+              "label": "Swift core",
+              "why": "the frame math lives there"
+            },
+            {
+              "id": "go",
+              "label": "Go daemon"
+            }
+          ],
+          "question": "Which stack is the regression on?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r39",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 324,
+              "w": 460,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:7>",
+            "props": {
+              "askConfidence": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "correct": "swift",
+              "options": [
+                {
+                  "id": "swift",
+                  "label": "Swift core",
+                  "why": "the frame math lives there"
+                },
+                {
+                  "id": "go",
+                  "label": "Go daemon"
+                }
+              ],
+              "question": "Which stack is the regression on?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 324,
+              "w": 460,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:7>",
+            "props": {
+              "askConfidence": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "correct": "swift",
+              "options": [
+                {
+                  "id": "swift",
+                  "label": "Swift core",
+                  "why": "the frame math lives there"
+                },
+                {
+                  "id": "go",
+                  "label": "Go daemon"
+                }
+              ],
+              "question": "Which stack is the regression on?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 7
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:7>",
+        "props": {
+          "answer": {
+            "confidence": 0.8,
+            "correct": false,
+            "option": "swift"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "answer.correct is written by easl: it says whether the picked option is correct"
+        },
+        "id": "r40",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:7>",
+        "props": {
+          "answer": {
+            "confidence": 1.5,
+            "option": "swift"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "answer.confidence must be a number from 0 to 1"
+        },
+        "id": "r41",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:7>",
+        "props": {
+          "answer": {
+            "confidence": 0.8,
+            "option": "swift"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "id": "r42",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:7>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "confidence": 0.8,
+                "correct": true,
+                "option": "swift"
+              },
+              "askConfidence": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "correct": "swift",
+              "options": [
+                {
+                  "id": "swift",
+                  "label": "Swift core",
+                  "why": "the frame math lives there"
+                },
+                {
+                  "id": "go",
+                  "label": "Go daemon"
+                }
+              ],
+              "question": "Which stack is the regression on?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:1>"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 50624,
+              "y": 50000
+            },
+            "id": "<obj:7>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "confidence": 0.8,
+                "correct": true,
+                "option": "swift"
+              },
+              "askConfidence": true,
+              "asker": {
+                "tile": "<obj:1>"
+              },
+              "correct": "swift",
+              "options": [
+                {
+                  "id": "swift",
+                  "label": "Swift core",
+                  "why": "the frame math lives there"
+                },
+                {
+                  "id": "go",
+                  "label": "Go daemon"
+                }
+              ],
+              "question": "Which stack is the regression on?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 7
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "tray.drain",
+      "method": "tray.drain",
+      "request": {
+        "board": "<board>",
+        "caller": "<obj:1>",
+        "peek": true
+      },
+      "response": {
+        "id": "r43",
+        "ok": true,
+        "result": {
+          "context": "<canvas-mentions board=\"<board>\" root=\"<root>\">\nYour question <obj:2> was answered (easl ask):\n[1] question <obj:2> \"Ship the question tile before the perf lane?\"\n    question: Ship the question tile before the perf lane?\n    asked by terminal <obj:1> · answered · archived\n    [now] Ship now (recommended): it is done and green\n    [later] After #28\n    context: Sources/CanvasCore/Question.swift:1-20, https://github.com/twaldin/easl/pull/28\n    answer: [later] After #28 · note: \"after the perf lane lands\" · by the user at <time:iso>\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>\n<canvas-mentions board=\"<board>\" root=\"<root>\">\nYour question <obj:7> was answered (easl ask):\n[2] question <obj:7> \"Which stack is the regression on?\"\n    question: Which stack is the regression on?\n    asked by terminal <obj:1> · answered\n    [swift] Swift core: the frame math lives there\n    [go] Go daemon\n    answer: [swift] Swift core · correct · confidence: 80% · by the user at <time:iso>\nRead more with the easl SDK or CLI: easl get <id> --as graph; look with easl render <id>\n</canvas-mentions>",
+          "mentions": [
+            {
+              "id": "<men:1>",
+              "label": "question Ship the question tile befo…",
+              "ref": "canvas:<men:1>@rev3",
+              "summary": "[1] question <obj:2> \"Ship the question tile before the perf lane?\"\n    question: Ship the question tile before the perf lane?\n    asked by terminal <obj:1> · answered · archived\n    [now] Ship now (recommended): it is done and green\n    [later] After #28\n    context: Sources/CanvasCore/Question.swift:1-20, https://github.com/twaldin/easl/pull/28\n    answer: [later] After #28 · note: \"after the perf lane lands\" · by the user at <time:iso>"
+            },
+            {
+              "id": "<men:2>",
+              "label": "question Which stack is the regressi…",
+              "ref": "canvas:<men:2>@rev2",
+              "summary": "[2] question <obj:7> \"Which stack is the regression on?\"\n    question: Which stack is the regression on?\n    asked by terminal <obj:1> · answered\n    [swift] Swift core: the frame math lives there\n    [go] Go daemon\n    answer: [swift] Swift core · correct · confidence: 80% · by the user at <time:iso>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "frame": {
+          "h": 294,
+          "w": 460,
+          "x": 3600,
+          "y": 0
+        },
+        "props": {
+          "asker": {
+            "name": "cos"
+          },
+          "correct": "a",
+          "options": [
+            {
+              "id": "a",
+              "label": "A",
+              "why": "because"
+            },
+            {
+              "id": "b",
+              "label": "B"
+            }
+          ],
+          "question": "Right pick?"
+        },
+        "type": "question"
+      },
+      "response": {
+        "id": "r44",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 294,
+              "w": 460,
+              "x": 3600,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "correct": "a",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "A",
+                  "why": "because"
+                },
+                {
+                  "id": "b",
+                  "label": "B"
+                }
+              ],
+              "question": "Right pick?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 294,
+              "w": 460,
+              "x": 3600,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "asker": {
+                "name": "cos"
+              },
+              "correct": "a",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "A",
+                  "why": "because"
+                },
+                {
+                  "id": "b",
+                  "label": "B"
+                }
+              ],
+              "question": "Right pick?",
+              "status": "open"
+            },
+            "rev": "<rev:1>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "z": 8
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:8>",
+        "props": {
+          "answer": {
+            "option": "b"
+          },
+          "status": "answered"
+        }
+      },
+      "response": {
+        "id": "r45",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 3600,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "correct": false,
+                "option": "b"
+              },
+              "asker": {
+                "name": "cos"
+              },
+              "correct": "a",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "A",
+                  "why": "because"
+                },
+                {
+                  "id": "b",
+                  "label": "B"
+                }
+              ],
+              "question": "Right pick?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 148,
+              "w": 460,
+              "x": 3600,
+              "y": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "answer": {
+                "at": "<time:iso>",
+                "by": {
+                  "kind": "user"
+                },
+                "correct": false,
+                "option": "b"
+              },
+              "asker": {
+                "name": "cos"
+              },
+              "correct": "a",
+              "options": [
+                {
+                  "id": "a",
+                  "label": "A",
+                  "why": "because"
+                },
+                {
+                  "id": "b",
+                  "label": "B"
+                }
+              ],
+              "question": "Right pick?",
+              "status": "answered"
+            },
+            "rev": "<rev:2>",
+            "type": "question",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 8
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
       "step": "object.find",
       "method": "object.find",
       "request": {
@@ -2112,7 +2731,7 @@
         "type": "question"
       },
       "response": {
-        "id": "r37",
+        "id": "r46",
         "ok": true,
         "result": {
           "objects": [
@@ -2322,6 +2941,103 @@
                 "kind": "user"
               },
               "z": 6
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:1>"
+              },
+              "frame": {
+                "h": 148,
+                "w": 460,
+                "x": 50624,
+                "y": 50000
+              },
+              "id": "<obj:7>",
+              "props": {
+                "answer": {
+                  "at": "<time:iso>",
+                  "by": {
+                    "kind": "user"
+                  },
+                  "confidence": 0.8,
+                  "correct": true,
+                  "option": "swift"
+                },
+                "askConfidence": true,
+                "asker": {
+                  "tile": "<obj:1>"
+                },
+                "correct": "swift",
+                "options": [
+                  {
+                    "id": "swift",
+                    "label": "Swift core",
+                    "why": "the frame math lives there"
+                  },
+                  {
+                    "id": "go",
+                    "label": "Go daemon"
+                  }
+                ],
+                "question": "Which stack is the regression on?",
+                "status": "answered"
+              },
+              "rev": "<rev:2>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 7
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 148,
+                "w": 460,
+                "x": 3600,
+                "y": 0
+              },
+              "id": "<obj:8>",
+              "props": {
+                "answer": {
+                  "at": "<time:iso>",
+                  "by": {
+                    "kind": "user"
+                  },
+                  "correct": false,
+                  "option": "b"
+                },
+                "asker": {
+                  "name": "cos"
+                },
+                "correct": "a",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "A",
+                    "why": "because"
+                  },
+                  {
+                    "id": "b",
+                    "label": "B"
+                  }
+                ],
+                "question": "Right pick?",
+                "status": "answered"
+              },
+              "rev": "<rev:2>",
+              "type": "question",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 8
             }
           ]
         }

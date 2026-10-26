@@ -68,7 +68,7 @@ enum AppPaths {
     static let updates = support.appendingPathComponent("updates", isDirectory: true)
 
     /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by
-    /// scripts/bundle.sh), e.g. `asset("kit/mermaid.min.js")`.
+    /// scripts/bundle.sh), e.g. `asset("kit/vendor/katex/katex.min.js")`.
     static func asset(_ relativePath: String) -> URL? {
         resources?.appendingPathComponent("resources").appendingPathComponent(relativePath)
     }

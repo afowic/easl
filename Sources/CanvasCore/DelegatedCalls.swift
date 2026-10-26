@@ -334,7 +334,7 @@ final class DelegatedCalls {
     /// One `text.measure` item (docs/design/next.md "Text measurement").
     @MainActor
     private enum TextItem {
-        case note(Document, width: CGFloat?, root: String?)
+        case note(Document, source: String, width: CGFloat?, root: String?)
         case text(String, textSize: CGFloat, width: CGFloat?)
         case label(String, width: CGFloat?)
         case arrowLabel(String)
@@ -350,7 +350,7 @@ final class DelegatedCalls {
             guard let text = item["text"]?.string else { throw ApiRouter.Failure("invalid_params", "items[\(index)] needs its text") }
             let width = item["width"]?.number.map { CGFloat($0) }
             switch item["kind"]?.string {
-            case "note": self = .note(NoteMarkdown.parse(text), width: width, root: item["root"]?.string)
+            case "note": self = .note(NoteMarkdown.parse(text), source: text, width: width, root: item["root"]?.string)
             case "text": self = .text(text, textSize: CGFloat(item["textSize"]?.number ?? 1), width: width)
             case "label": self = .label(text, width: width)
             case "arrowLabel": self = .arrowLabel(text)
@@ -359,12 +359,12 @@ final class DelegatedCalls {
             }
         }
 
-        var size: JSONValue {
+        func size() -> JSONValue {
             let size: CGSize
             switch self {
-            case .note(let document, let width, _):
+            case .note(let document, let source, let width, _):
                 // No excerpts and no images: `measure` let through only notes without them.
-                let note = ObjectMeasure.note(document, width: width, excerpts: [:], images: [:])
+                let note = ObjectMeasure.note(document, markdown: source, width: width, excerpts: [:], images: [:])
                 return .object(["w": .number(note.size.width), "h": .number(note.size.height), "tableShortfall": .number(note.tableShortfall)])
             case .text(let text, let textSize, let width): size = ObjectMeasure.shapeTextBounds(text, textSize: textSize, width: width)
             case .label(let text, let width): size = ObjectMeasure.labelBounds(text, width: width)
@@ -382,9 +382,9 @@ final class DelegatedCalls {
     private func measure(_ p: JSONValue) throws -> JSONValue {
         guard let list = p["items"]?.array else { throw ApiRouter.Failure("invalid_params", "items must be a list of {kind, text, width?, textSize?, root?}") }
         let items = try list.enumerated().map { try TextItem($1, at: $0) }
-        for case .note(let document, _, let root) in items where !NoteMarkdown.anchoredFences(in: document).isEmpty || !NoteImages.sources(in: document).isEmpty {
+        for case .note(let document, _, _, let root) in items where !NoteMarkdown.anchoredFences(in: document).isEmpty || !NoteImages.sources(in: document).isEmpty {
             throw ApiRouter.Failure("unavailable", "a note's fences and images are read on the board's host\(root.map { " (under \($0))" } ?? ""), which this Mac doesn't have")
         }
-        return .object(["sizes": .array(items.map { $0.size })])
+        return .object(["sizes": .array(items.map { $0.size() })])
     }
 }

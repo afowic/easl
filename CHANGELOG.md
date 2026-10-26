@@ -2,14 +2,56 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.2
 
+easl 0.3.2 adds teaching features contributed by @afowic: math in notes and HTML, knowledge and reasoning graph diagrams, graded questions with confidence, and HTML tiles you can type into. It also adds remote-tab listing, fixes cancelled middle-click pans, and makes relayed browser streaming steadier.
+
+### easld and the app
+
+These changes need easld 0.3.2 for their full effect on remote boards:
+
+- Grading answers and stamping `answer.correct` on the host, with confidence validation and grading in the answer mention.
+- Creating, validating, and normalizing authored graphs, including reasoning levels and the 500-node and 2,000-edge limits.
+- Normalizing stored question answers, discarding invalid confidence values and recomputing derived correctness.
+
+A 0.3.2 app on easld 0.3.1 renders math, existing graph statuses and sources, and answered questions with grading and confidence. The older host preserves existing new props, but refuses new graph diagrams and graph prop updates with `invalid_params` (`diagram kind must be one of calls`). Frame-only graph moves still work. The older host does not gain the new grading or question normalization rules.
+
+A 0.3.1 app on easld 0.3.2 can still view and edit boards, but shows math as literal TeX source and, in the RC fixture, a knowledge graph as a blank titled diagram. An answered question shows the selected option but omits confidence and the grading explanation. The release-candidate checks exercised both mixed-version directions through edits, saves, restarts, and reopening; all new-object props were kept byte for byte.
+
+Math rendering, HTML keyboard ownership, remote-tab listing, and the middle-click pan fix are app-side changes. The browser-stream retirement fix runs on the Mac encoding the stream; it does not need a new easld.
+
+### Board format
+
+The board format is unchanged, still format 3. New graph data lives in `props.knowledge`, which older apps leave alone even when they refresh the legacy `props.graph` cache.
+
+### Known limits
+
+- Native Mermaid in notes is not in this release. A `mermaid` fence in a note shows as code; HTML tiles still draw Mermaid.
+- `canvasKit.send` is not in this release.
+- Math falls back to its source beyond its size and depth limits.
+- Pan and zoom on boards of 500 or more objects are not smoother yet.
+
+### Changes
+
+- Rapid browser-stream churn drains old compression sessions before creating another encoder. Encoder destruction stays asynchronous; creating a new encoder can wait for retirement.
+- Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
+- Diagram measurement respects the diagram kind and reports invalid authored graph input as `invalid_params`, consistent with easld.
+- Display math in blockquotes excludes the quote markers from the formula.
+- Question tiles can be graded and ask how sure the user is: `correct` marks the right option once answered (✓ or ✗, the right option's why on a wrong pick, and `answer.correct` stamped by easl, never the caller), `askConfidence` adds an optional confidence slider whose value the answer carries, both reach the asker's mention, and `easl ask` takes `--correct` and `--confidence`.
+- HTML tiles take the keyboard for their text fields: Return on a selected tile, or a click in an input, textarea, select or contenteditable, gives the page the keyboard (typing, IME, copy/paste and Tab work), Esc or a click on the board hands it back, and a page that focuses a field on its own still cannot take it from the terminal.
+- HTML field clicks use an isolated script world and expire after 300 ms. Moving focus, another native click, or a window activation change cancels pending keyboard permission.
+- HTML keyboard clicks read the real DOM prototype getters and must land inside the active editable. Named forms and stale DOM focus cannot grant the keyboard for an outside click.
+- HTML navigation commits, HTML or asset reloads, and web-content crashes revoke pending and granted keyboard permission. Rewriting a tile's page cannot carry its old keyboard grant into the replacement document.
 - Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.
 - Host-file helpers require Bun 1.4.3 or later. Older Bun can discard successful subprocess output; CI pins the qualified runtime.
 - Development: restore parallel Core CI with at most four active outer test cases per logical CPU. Cap synchronous codec work and isolate contention-sensitive fixtures. Keep linear large-line reads, the retained-runner zmx fixture, and unchanged assertions and deadlines.
 - The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
+- Notes typeset LaTeX: `$…$` inline and `$$…$$` on its own centered line with SwiftMath (currency, `\$`, code and unparsable formulas stay as written), and HTML tiles load KaTeX only when a page has math; note measurement, `size: "fit"` and `layout.check` account for it.
+- Note math preprocessing bounds each entity search to 32 characters, so ampersand-heavy prose does not repeatedly scan the remaining note.
+- Native note math separates nesting depth from formula size and typesetting work, so ordinary wide formulas such as matrices need not fall back. Over-limit and malformed formulas keep their monospace source in display and size-to-fit measurement. Native `\textcolor` uses SwiftMath's non-indexing color path.
+- Diagram tiles draw caller-supplied knowledge and reasoning graphs (`kind: "graph"`): nodes with click-to-expand markdown detail, provenance that focuses the terminal it came from, and practice status (`taught`, `practiced`, `retained`, `weak`), up to 500 nodes laid out one column per reasoning depth. Nothing in them is computed from code. Authored input and storage use only `props.knowledge`; old apps can refresh `props.graph` without replacing authored data. Unsafe graph levels return `invalid_params` before integer conversion.
 
 ## 0.3.1
 

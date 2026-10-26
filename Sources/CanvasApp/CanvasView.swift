@@ -550,6 +550,9 @@ final class CanvasView: NSScrollView {
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
         (content as? DiagramTile)?.onOpenedCode = showCode
+        // A graph node's source badge: the terminal it came from, or why it can't be shown here.
+        (content as? DiagramTile)?.onFocusTile = { [weak self] tile in self?.go(to: tile) }
+        (content as? DiagramTile)?.onSourceNotice = { [weak self] text in self?.showNotice(text) }
         (content as? QuestionTile)?.onOpenedCode = showCode
         (content as? QuestionTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         (content as? QuestionTile)?.onGoTo = { [weak self] target in self?.goToShown(target) }
@@ -1239,8 +1242,8 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Tiles Return hands the keyboard to (an HTML tile's page never takes it: `HtmlWebView`).
-    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser, .question]
+    /// Tiles Return hands the keyboard to.
+    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser, .html, .question]
 
     /// Return with one tile selected and the canvas holding the keyboard: the tile
     /// takes it (`TileContent.enterKeyboard`), revealed first with the least pan (an agent's

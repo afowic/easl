@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/twaldin/easl/easld/internal/model"
+	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
@@ -360,6 +361,9 @@ func DecodeSnapshot(data []byte) (*Snapshot, error) {
 		o, err := decodeObject(v)
 		if err != nil {
 			return nil, decodeError("objects[%d]: %v", i, err)
+		}
+		if o.Type == model.Question {
+			o.Props = question.Normalize(o.Props)
 		}
 		s.Objects = append(s.Objects, o)
 	}

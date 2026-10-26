@@ -354,6 +354,111 @@
     return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
   }
 
+  // ---- Math: KaTeX loaded only when the page has formulas (it is large) ----
+
+  let katexReady = null;
+  function loadKatex() {
+    katexReady ||= new Promise((resolve, reject) => {
+      const style = document.createElement('link');
+      style.rel = 'stylesheet';
+      style.href = '/kit/vendor/katex/katex.min.css';
+      document.head.append(style);
+      const script = document.createElement('script');
+      script.src = '/kit/vendor/katex/katex.min.js';
+      script.onload = () => resolve(window.katex);
+      script.onerror = () => reject(new Error('katex failed to load'));
+      document.head.append(script);
+    });
+    return katexReady;
+  }
+
+  // The formulas in one text node, in order: `$…$` and `$$…$$` (Pandoc's rule keeps `$5 and $10`
+  // prose), plus `\(…\)` and `\[…\]`. `\$` is a literal dollar.
+  function mathSpans(text) {
+    const spans = [];
+    let i = 0;
+    while (i < text.length) {
+      if (text[i] === '\\') {
+        const opener = text[i + 1];
+        if (opener === '(' || opener === '[') {
+          const close = opener === '(' ? '\\)' : '\\]';
+          const end = text.indexOf(close, i + 2);
+          if (end > i + 2) {
+            spans.push({ start: i, end: end + 2, latex: text.slice(i + 2, end), display: opener === '[' });
+            i = end + 2;
+            continue;
+          }
+        }
+        i += 2;
+        continue;
+      }
+      if (text[i] !== '$') { i++; continue; }
+      if (text[i + 1] === '$') {
+        const end = text.indexOf('$$', i + 2);
+        const latex = end > i + 2 ? text.slice(i + 2, end).trim() : '';
+        if (latex) {
+          spans.push({ start: i, end: end + 2, latex, display: true });
+          i = end + 2;
+          continue;
+        }
+        i += 2;
+        continue;
+      }
+      if (i + 1 >= text.length || /\s/.test(text[i + 1])) { i++; continue; }
+      let close = -1;
+      for (let j = i + 1; j < text.length; j++) {
+        if (text[j] === '\\') { j++; continue; }
+        if (text[j] === '$') {
+          // A `$` that can't close here can't be inside math either: the formula would have
+          // swallowed currency (`$5 and $10 … $x$`), so this candidate is prose.
+          if (!/\s/.test(text[j - 1]) && !/[0-9]/.test(text[j + 1] ?? '')) close = j;
+          break;
+        }
+      }
+      if (close < 0) { i++; continue; }
+      spans.push({ start: i, end: close + 1, latex: text.slice(i + 1, close), display: false });
+      i = close + 1;
+    }
+    return spans;
+  }
+
+  function mathNode(node, spans, katex) {
+    const value = node.nodeValue;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const span of spans) {
+      if (span.start > cursor) fragment.append(value.slice(cursor, span.start));
+      const holder = document.createElement('span');
+      holder.className = span.display ? 'canvas-math-display' : 'canvas-math';
+      holder.innerHTML = katex.renderToString(span.latex, { displayMode: span.display, throwOnError: false });
+      fragment.append(holder);
+      cursor = span.end;
+    }
+    if (cursor < value.length) fragment.append(value.slice(cursor));
+    node.replaceWith(fragment);
+  }
+
+  function renderMath() {
+    if (!document.body) return Promise.resolve();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const value = node.nodeValue;
+        if (!value.includes('$') && !value.includes('\\(') && !value.includes('\\[')) return NodeFilter.FILTER_REJECT;
+        if (node.parentElement?.closest('pre, code, script, style, textarea, canvas-code, .mermaid, .katex, .canvas-math')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const jobs = [];
+    while (walker.nextNode()) {
+      const spans = mathSpans(walker.currentNode.nodeValue);
+      if (spans.length) jobs.push([walker.currentNode, spans]);
+    }
+    if (!jobs.length) return Promise.resolve();
+    return track(loadKatex().then((katex) => {
+      for (const [node, spans] of jobs) mathNode(node, spans, katex);
+    }).catch((error) => console.error(error)));
+  }
+
   const start = () => {
     const images = [...document.images].map((image) => new Promise((resolve) => {
       const done = () => {
@@ -369,6 +474,7 @@
     }));
     track(Promise.all(images));
     renderMermaid();
+    renderMath();
     settle();
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });

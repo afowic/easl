@@ -195,7 +195,8 @@ An anchored fence shows its code as it is on disk now and follows it as lines mo
 
 - Excerpt, rendered from disk: ```` ```ts file=src/store.ts#L41-60 ```` or ```` ```ts file=src/store.ts symbol=restore ```` (`symbol=Class.method` finds methods deep in long classes: prefer it for whole functions).
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence. An applied one shows "✓ applied"; no need to delete it.
-- Plain fences are free-written snippets; `file:line` references anywhere in a note become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir).
+- Plain fences are free-written snippets; `file:line` references anywhere in a note become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir); `$…$` and a `$$…$$` paragraph typeset as math (LaTeX; `\$` is a literal dollar and code spans/fences stay as written).
+- A `mermaid` fence is ordinary free-written code, including any math delimiters. Use an HTML tile to render a Mermaid diagram.
 
 Whether an excerpt still finds its code: `easl get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`; `relocated`: the code moved and the fence followed it; `stale`: the code it quoted is gone), not a render searched for badges.
 Table cells wrap to the note's width, so keep evidence timelines as `| time | event | evidence |` tables; `layout.check` `truncated` `{what: "table", x}` means too many columns: widen the note by `x` or split the table.
@@ -235,11 +236,13 @@ For "show me who calls X" (or what X calls), create a live call graph from the l
 - Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows into free space when a node opens (never over other objects; what doesn't fit is drawn smaller: resize it or zoom); `size: "fit"` on create waits for the first graph (up to 60 s, as `object.reload`) and fits the tile to it; the result's `diagram` is `object.reload`'s summary.
 - Bind an arrow to a node with `{"object": "<diagram>", "node": "<node id>"}` (e.g. from a note explaining that caller).
 - `error` says why a graph is empty or old (no server for the language, the symbol isn't declared there, an unindexed project); the last good graph stays.
+- For a knowledge or reasoning graph you author (a lesson's propositions, a chain of argument), pass `kind: "graph"`: you supply `knowledge.nodes` `[{"id", "label", "detail"?, "level"?, "sources"?, "status"?}]` and `knowledge.edges` `[{"from", "to", "label"?}]`, each edge running from premise to conclusion. Omitting `level` is normal: it is computed as the longest path from a premise (premises 0), so conclusions sit deeper; give every node a `level` to draw a cycle. Up to 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and a cycle with a level missing are `invalid_params` naming the rule. Store and update the graph only in `props.knowledge`; `props.graph` is an ignored old calls cache. Limits are 2,000 unique directed edges, 256 UTF-8 bytes per ID or edge label or source field, 512 per node label, 8,192 per detail, and eight sources per node.
+- A graph node shows its `label` and the first two rows of its `detail` (markdown, rendered as a note); clicking it expands the whole detail in the tile, and a source badge focuses the terminal its `session` or `tile` names on this board; `message` and `board` remain provenance records. `status` (`taught`, `practiced`, `retained`, `weak`) draws a coloured badge: report what practice showed with `object.update` sending the graph back with that node's new status. Nothing here is computed from code: `object.reload` is a no-op success, and `size: "fit"` sizes the tile to its levels.
 
 ### HTML explainers
 
 `object.create --type html` with `{"html": "…", "title": "…"}` and `"size": "fit"` (with `frame` `{x, y, w}`, default width 640).
-Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, Mermaid, and grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
+Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, draw Mermaid diagrams with the vendored Mermaid.js build (offline, strict security, light or dark theme), and provide grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
 Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting code.
 Read `references/html-explainers.md` before building an explainer: components, playbooks for plans, walkthroughs, comparisons and decisions, and Mermaid pitfalls.
 
@@ -328,11 +331,13 @@ It carries discrete options and your recommendation, shows up in the user's ⌘J
 
 ```sh
 easl ask "Ship the migration before the freeze?" --option now="Ship now:needs the 9am deploy window" --option later="After the freeze" --recommend now --context src/migrate.ts:40-72 --expires 4h
-easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, at, by} prints as JSON, exit 0
+easl ask "Which cache is right?" --option a=L1 --option b=L2 --correct a --confidence   # graded: the closed tile shows ✓ or ✗
+easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, confidence, correct, at, by} prints as JSON, exit 0
 easl ask cancel obj_…                                              # the question is moot
 ```
 
 - `--option id=label[:why]` repeats; `--recommend <id>` names your pick; `--context` points at what it is about (an `obj_…`, a URL, or `path:10-20`). Without options the answer is a note.
+- `--correct <id>` makes the question graded: while it is open nothing marks the right option; once answered the tile shows ✓ or ✗, a wrong pick highlights the right option and its `why`, and the answer line tells you whether the pick was right. `--confidence` asks how sure the user is: the tile gets a slider (optional; skipping it leaves `confidence` out), and the answer line says e.g. `confidence: 80%`. `--json` takes both as `correct` and `askConfidence`.
 - Without `--wait` the command returns at once: carry on, and the answer reaches you as an object mention. Use `--wait` only when nothing else can proceed; a question cancelled, expired (`--expires 30m`, `2h`, `1d`) or deleted ends it with the reason on stderr and exit 2.
 - Ask only what you can't decide yourself, one question per decision. Cancel one the moment it is moot (you found the answer, the plan changed): an open question keeps counting as something the user must do.
 - Keep `<canvas-decisions>` for an explanatory page with many choices recorded in its state, and chat for anything conversational.
@@ -417,7 +422,7 @@ Use a remote row's host `board` id for `view.get` through this app's socket to i
 ## When the user asks how to use easl
 
 Help › easl Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from easl's source.
-⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
+⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page; in an HTML tile the page's own Esc wins, else it gives the keyboard back: ⌘Esc leaves any tile).
 ⌘J goes to the next thing that needs the user, on this board and then on their other open boards; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways, a middle-button drag pans from anywhere; don't tell a user without a trackpad that zooming needs a pinch.

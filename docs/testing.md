@@ -65,6 +65,8 @@ The retained real-page tests check initial settling and autonomous caret transit
 
 `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceVideoTests` covers visible encoded changes, continuing sharp prediction, keyframe recovery after cancellation and resize, malformed-packet rejection, and declared and odd dimensions.
 
+`rapidEncoderRetirementAppliesBackpressureWithoutBlockingDestruction` holds a real compression retirement, verifies that destruction returns while the next creation waits, and opens and retires 42 encoders in total. It checks that sequential churn has at most one live or retiring session and drains its own retirements before returning. Encoder creation waits for previously queued compression retirements in the product; the shared test actor alone cannot bound asynchronous retirement.
+
 The process relay fixture retains its reply pipe with `exec 3>&1` before redirecting `cat` into the captured-input file. Otherwise the redirect signals stdout EOF, and the client correctly retires that still-running relay after two seconds. Large-reply checks must keep the duplex link open while verifying its captured output.
 
 `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceVideoQuality` runs `SurfaceVideoQualityTests.realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions`. It checks initial settling and autonomous caret transitions, not input-triggered motion return. It requires the manifest and captured image pairs in `Tests/CanvasCoreTests/Fixtures/browser-quality`. Missing fixtures fail rather than skip. The manifest records source URLs, renderer and caret provenance, image hashes, and the required 1800×1324 raster for a 900×662 tile at scale 2.
@@ -339,6 +341,19 @@ stay unchanged. It requires Screen Recording permission for `screencapture`, nev
 app, and never touches the installed app's boards. Run on an isolated macOS GUI test machine.
 The fixture hides page scrollbars and waits for native overlay scrollers to fade. Pixel samples
 are converted from the display color profile to sRGB. Add `--out <directory>` to keep the latest capture.
+
+### HTML tile keyboard
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The runner links the prebuilt `CanvasApp`, opens a board in a disposable home, and drives an HTML tile with a `<textarea>` that mirrors its value into `canvasKit.setState`. It checks that Return on the selected tile, and a click in the text field, give the page the keyboard; that Tab moves within the page and typed literal text reaches `props.state`; that Delete with no field focused never acts on the board; that Esc and a click on the board give the keyboard back so a canvas key (Delete) acts on the selection; and that a page focusing a field on its own never captures keys. It repeats on a remote board through `RemoteSource`. Clicks go straight to the page's view (`mouseDown`) and keys to the window's responder chain (`sendEvent`), because the runner never activates a window on the machine it runs on. It never rebuilds the app and is not WindowServer proof: for a visual check, type in a field in an isolated development instance and read the tile's state back with `object.get`.
+
+The runner also exercises hostile click handlers, including delayed script evaluation and stale native interactions. Its `--missing-selector` mode makes `_setShouldSuppressFirstResponderChanges:` unavailable and requires the native keyboard gate to keep page-initiated focus from taking the keyboard. Both `--hostile-clicks` and `--missing-selector` run in the default suite. For a focused run, pass either flag directly to the linked `HtmlKeyboard` executable with the disposable environment that `run.py` sets. `run.py` does not forward mode flags.
+
+`--clobbered-click` rejects a `<form name="activeElement" contenteditable>` shadowing `document.activeElement`, and `--stale-focus-click` rejects a plain-page click while a field retains DOM focus. Both require a later real field click to work. `--document-grants` grants keys, rewrites the tile's HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click to grant again. These cases also run in the default suite. The document case awaits the expected key-event count: a JavaScript timer turn alone is not a barrier for WebKit's native input IPC.
 
 ### Move tool input isolation
 

@@ -46,12 +46,26 @@ final class DiagramTile: NSView, TileContent {
     private var dirty = false
     /// The first graph arrives into a tile of the default size: grow it to show the graph.
     private var fitOnArrival: Bool
+    /// A graph node whose full detail is expanded below the diagram.
+    private var expandedNode: String? {
+        didSet {
+            cancelDetail()
+            detailScrollOffset = 0
+        }
+    }
+    private var detailLayout: DetailLayout?
+    private var detailScrollOffset: CGFloat = 0
+
+    /// Set by the canvas: focus the terminal tile a graph node's source names.
+    var onFocusTile: ((ObjectID) -> Void)?
+    /// Set by the canvas: a graph node's source can't be resolved on this board.
+    var onSourceNotice: ((String) -> Void)?
 
     init(object: CanvasObject, board: Board, remote: RemoteSource? = nil) {
         self.object = object
         self.board = board
         self.remote = remote
-        let graph = DiagramGraph(object.props["graph"])
+        let graph = DiagramGraph.stored(in: object.props)
         self.graph = graph
         layout = graph.map(DiagramLayout.init) ?? DiagramLayout(DiagramGraph(aim: DiagramSpec(object.props).aim))
         let size = Board.defaultSize(.diagram)
@@ -59,9 +73,9 @@ final class DiagramTile: NSView, TileContent {
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
-        if graph?.aim != DiagramSpec(object.props).aim {
+        if graph?.aim != DiagramSpec(object.props).aim, DiagramSpec(object.props).kind != .graph {
             refresh()
-        } else {
+        } else if DiagramSpec(object.props).kind != .graph {
             // Computed in an earlier session: checked against the code once the tile shows.
             dirty = true
         }
@@ -75,10 +89,18 @@ final class DiagramTile: NSView, TileContent {
 
     // MARK: Computing
 
+    private var isGraph: Bool { spec.kind == .graph }
+
     private func refresh() {
         computation.task?.cancel()
         pendingRefresh?.cancel()
         dirty = false
+        // A graph diagram's nodes and edges are the caller's: there is nothing to compute.
+        guard !isGraph else {
+            computation = .idle
+            needsDisplay = true
+            return
+        }
         computeGeneration += 1
         let generation = computeGeneration
         if let remote {
@@ -126,13 +148,17 @@ final class DiagramTile: NSView, TileContent {
     }
 
     func reload() async -> JSONValue {
+        if isGraph {
+            let graph = DiagramGraph.stored(in: board.objects[object.id]?.props)
+            return DiagramRefresh.summary(object.id, graph: graph, computed: graph != nil)
+        }
         refresh()
         if case .local(_, let task) = computation { await task.value }
-        return DiagramRefresh.summary(object.id, graph: DiagramGraph(board.objects[object.id]?.props["graph"]), computed: !computing)
+        return DiagramRefresh.summary(object.id, graph: DiagramGraph.stored(in: board.objects[object.id]?.props), computed: !computing)
     }
 
     private func watch() {
-        guard live, window != nil, let graph else { return stopWatching() }
+        guard live, window != nil, let graph, graph.aim.kind != .graph else { return stopWatching() }
         if let remote {
             guard let probe = DiagramRefresh.hostProbe(of: object, on: board) else { return stopWatching() }
             guard probe != hostProbe else { return }
@@ -142,7 +168,7 @@ final class DiagramTile: NSView, TileContent {
             hostWatch = HostFileWatch(baseline: nil, probe: { await git.stamp(probe) }) { [weak self] _ in self?.scheduleRefresh() }
             return
         }
-        var files = Set(graph.nodes.map { FileEvents.canonical(board.absoluteURL($0.path).path) })
+        var files = Set(graph.nodes.compactMap(\.path).map { FileEvents.canonical(board.absoluteURL($0).path) })
         if let path = spec.path { files.insert(FileEvents.canonical(board.absoluteURL(path).path)) }
         let directories = Array(Set(files.map { FileEvents.watchableDirectory(for: $0) })).sorted()
         watched = files
@@ -177,6 +203,7 @@ final class DiagramTile: NSView, TileContent {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
+            cancelDetail()
             stopWatching()
             pendingRefresh?.cancel()
             if remote != nil { dirty = true }
@@ -190,7 +217,13 @@ final class DiagramTile: NSView, TileContent {
 
     /// `id`'s box in this view's coordinates, as drawn.
     func rect(ofNode id: String) -> CGRect? {
-        layout.rect(of: id, in: bounds.size)
+        layout.rect(of: id, in: graphBodySize)
+    }
+
+    /// The body the graph draws in: below nothing, above the expanded detail panel when there is one.
+    private var graphBodySize: CGSize {
+        let panel = detailPanel(in: CGRect(origin: .zero, size: bounds.size))
+        return CGSize(width: bounds.size.width, height: max(1, bounds.size.height - (panel?.height ?? 0)))
     }
 
     private func node(at point: NSPoint) -> (node: DiagramNode, rect: CGRect)? {
@@ -201,46 +234,93 @@ final class DiagramTile: NSView, TileContent {
         return nil
     }
 
-    /// What of a node is at `point`: its place line (`path:line`, a link) or one excerpt row.
-    private enum Part { case name, place, excerpt(Int) }
+    /// What of a node is at `point`: a graph node's source badge, its status badge or the rest
+    /// of its box (a click expands its detail); a code node's place line (`path:line`, a link),
+    /// one excerpt row, or its name.
+    private enum Part { case name, place, excerpt(Int), source, status }
 
     private func part(of node: DiagramNode, in rect: CGRect, at point: NSPoint) -> Part {
-        let scale = layout.placement(in: bounds.size).scale
+        let scale = max(0.0001, layout.placement(in: graphBodySize).scale)
         let natural = CGRect(origin: .zero, size: CGSize(width: rect.width / scale, height: rect.height / scale))
-        let y = (point.y - rect.minY) / scale
+        let local = CGPoint(x: (point.x - rect.minX) / scale, y: (point.y - rect.minY) / scale)
+        if isGraph || node.detail != nil {
+            if sourceBadgeRect(node, in: natural)?.contains(local) == true { return .source }
+            if statusBadgeRect(node, in: natural)?.contains(local) == true { return .status }
+            return .name
+        }
+        let y = local.y
         if let index = DiagramLayout.excerptIndex(of: node, atY: y, in: natural) { return .excerpt(index) }
         let placeTop = DiagramLayout.padding + DiagramLayout.nameHeight
         return y >= placeTop && y < placeTop + DiagramLayout.placeHeight ? .place : .name
     }
 
+    private func statusBadgeRect(_ node: DiagramNode, in rect: CGRect) -> CGRect? {
+        guard let status = node.status else { return nil }
+        let width = ceil(textWidth(status.rawValue, font: Self.badgeFont)) + 14
+        return CGRect(x: rect.maxX - width - 8, y: rect.minY + 5, width: width, height: 18)
+    }
+
+    private func sourceBadgeRect(_ node: DiagramNode, in rect: CGRect) -> CGRect? {
+        guard let count = node.sources?.count, count > 0 else { return nil }
+        let label = count > 1 ? "\(count) ↗" : "↗"
+        let width = ceil(textWidth(label, font: Self.badgeFont)) + 12
+        let right = statusBadgeRect(node, in: rect).map { $0.minX - 4 } ?? rect.maxX - 8
+        return CGRect(x: right - width, y: rect.minY + 5, width: width, height: 18)
+    }
+
+    private func textWidth(_ text: String, font: NSFont) -> CGFloat {
+        NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+
+    private static let badgeFont = NSFont.boldSystemFont(ofSize: 9.5)
+    private static let detailFont = NSFont.systemFont(ofSize: 10.5)
+
     // MARK: Drawing
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        cancelDetail()
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         paint(in: bounds)
     }
 
     private func paint(in bounds: CGRect) {
+        let panel = detailPanel(in: bounds)
+        paint(in: bounds, graph: graph, layout: layout, panel: panel, scrollOffset: detailScrollOffset)
+    }
+
+    private func paint(in bounds: CGRect, graph: DiagramGraph?, layout: DiagramLayout, panel: DetailPanel?, scrollOffset: CGFloat) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
-        drawHeader(in: bounds)
+        drawHeader(in: bounds, graph: graph)
         guard let graph, let context = NSGraphicsContext.current?.cgContext, !graph.nodes.isEmpty else { return }
-        let (scale, origin) = layout.placement(in: bounds.size)
+        let body = CGSize(width: bounds.width, height: max(1, bounds.height - (panel?.height ?? 0)))
+        let (scale, origin) = layout.placement(in: body)
         context.saveGState()
         context.translateBy(x: origin.x, y: origin.y)
         context.scaleBy(x: scale, y: scale)
         let levels = Dictionary(graph.nodes.map { ($0.id, $0.level) }, uniquingKeysWith: { first, _ in first })
         for edge in graph.edges {
             guard let from = layout.rects[edge.from], let to = layout.rects[edge.to] else { continue }
-            drawEdge(from: from, to: to, step: (levels[edge.to] ?? 0) - (levels[edge.from] ?? 0), stale: edge.stale == true, in: context)
+            drawEdge(from: from, to: to, step: (levels[edge.to] ?? 0) - (levels[edge.from] ?? 0), stale: edge.stale == true,
+                     label: graph.aim.kind == .graph ? edge.label : nil, in: context)
         }
         for node in graph.nodes {
             guard let rect = layout.rects[node.id] else { continue }
-            drawNode(node, in: rect, isRoot: node.id == graph.root)
+            if graph.aim.kind == .graph {
+                drawGraphNode(node, in: rect)
+            } else {
+                drawNode(node, in: rect, isRoot: node.id == graph.root)
+            }
         }
         context.restoreGState()
+        if let panel { drawDetailPanel(panel, in: bounds, scrollOffset: scrollOffset) }
     }
 
-    private func drawHeader(in bounds: CGRect) {
+    private func drawHeader(in bounds: CGRect, graph: DiagramGraph?) {
         let text: String
         var color = NSColor.secondaryLabelColor
         let error = hostFailure ?? graph?.error
@@ -256,6 +336,13 @@ final class DiagramTile: NSView, TileContent {
             color = .systemOrange
         } else if computing {
             text = graph == nil ? "Asking the language server… (a first answer in a project can take a while)" : "Asking the language server again…"
+        } else if let graph, graph.aim.kind == .graph {
+            let levels = Set(graph.nodes.map(\.level)).count
+            var parts = ["\(graph.nodes.count) nodes", "\(graph.edges.count) links", "\(levels) levels"]
+            let weak = graph.nodes.filter { $0.status == .weak }.count
+            if weak > 0 { parts.append("\(weak) weak") }
+            parts.append("click a node for its detail")
+            text = parts.joined(separator: " · ")
         } else if let graph {
             let others = graph.nodes.count - 1
             let noun: String
@@ -283,7 +370,7 @@ final class DiagramTile: NSView, TileContent {
     /// right edge to the callee's left; a call within one column (a caller of the root that also
     /// calls another caller) loops out left of the column, clear of the boxes; a leftward one
     /// (recursion through a cycle) runs from the caller's left edge to the callee's right.
-    private func drawEdge(from: CGRect, to: CGRect, step: Int, stale: Bool, in context: CGContext) {
+    private func drawEdge(from: CGRect, to: CGRect, step: Int, stale: Bool, label: String?, in context: CGContext) {
         let path = NSBezierPath()
         let start: CGPoint, end: CGPoint, c1: CGPoint, c2: CGPoint
         if step > 0 {
@@ -321,6 +408,14 @@ final class DiagramTile: NSView, TileContent {
         head.close()
         color.setFill()
         head.fill()
+        guard let label, !label.isEmpty else { return }
+        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.secondaryLabelColor])
+        let size = text.size()
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let box = CGRect(x: mid.x - size.width / 2 - 4, y: mid.y - size.height / 2 - 1, width: size.width + 8, height: size.height + 2)
+        NSColor.textBackgroundColor.withAlphaComponent(0.88).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
+        text.draw(at: CGPoint(x: box.minX + 4, y: box.minY + 1))
     }
 
     private func drawNode(_ node: DiagramNode, in rect: CGRect, isRoot: Bool) {
@@ -342,7 +437,7 @@ final class DiagramTile: NSView, TileContent {
         NSAttributedString(string: node.name, attributes: [.font: NSFont.boldSystemFont(ofSize: 12.5), .foregroundColor: NSColor.labelColor.withAlphaComponent(fade), .paragraphStyle: clip])
             .draw(with: CGRect(x: inner.minX, y: y, width: inner.width - badgeWidth, height: DiagramLayout.nameHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         y += DiagramLayout.nameHeight
-        let place = [node.container, "\(PathLabel.short(node.path)):\(node.line)"].compactMap { $0 }.joined(separator: " · ")
+        let place = [node.container, node.path.flatMap { path in node.line.map { "\(PathLabel.short(path)):\($0)" } }].compactMap { $0 }.joined(separator: " · ")
         NSAttributedString(string: place, attributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.linkColor.withAlphaComponent(fade), .paragraphStyle: clip])
             .draw(with: CGRect(x: inner.minX, y: y, width: inner.width, height: DiagramLayout.placeHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         y += DiagramLayout.placeHeight + 4
@@ -350,7 +445,7 @@ final class DiagramTile: NSView, TileContent {
         tail.lineBreakMode = .byTruncatingTail
         let code = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         let numberWidth: CGFloat = 34
-        for row in node.excerpt {
+        for row in node.excerpt ?? [] {
             NSAttributedString(string: "\(row.line)", attributes: [.font: code, .foregroundColor: NSColor.tertiaryLabelColor.withAlphaComponent(fade)])
                 .draw(with: CGRect(x: inner.minX, y: y, width: numberWidth, height: DiagramLayout.excerptLineHeight), options: [.usesLineFragmentOrigin])
             NSAttributedString(string: row.text, attributes: [.font: code, .foregroundColor: NSColor.labelColor.withAlphaComponent(0.85 * fade), .paragraphStyle: tail])
@@ -375,6 +470,179 @@ final class DiagramTile: NSView, TileContent {
         }
     }
 
+    /// A graph node: its label, two rows of detail (a click expands the rest) and badges for
+    /// practice status and where it came from.
+    private func drawGraphNode(_ node: DiagramNode, in rect: CGRect) {
+        let statusColor = node.status.map(Self.statusColor)
+        let box = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        NSColor.controlBackgroundColor.setFill()
+        box.fill()
+        box.lineWidth = statusColor == nil ? 1 : 1.4
+        (statusColor ?? NSColor.separatorColor).setStroke()
+        box.stroke()
+
+        let status = statusBadgeRect(node, in: rect)
+        let source = sourceBadgeRect(node, in: rect)
+        let reserved = [status, source].compactMap { $0 }.map { rect.maxX - $0.minX }.max() ?? 0
+        let inner = rect.insetBy(dx: DiagramLayout.padding + 2, dy: 0)
+        let clip = NSMutableParagraphStyle()
+        clip.lineBreakMode = .byTruncatingMiddle
+        // A node with only a label sits it in the middle of its box; one with detail starts at the top.
+        let nameY = node.detail == nil ? rect.midY - DiagramLayout.nameHeight / 2 : rect.minY + DiagramLayout.padding
+        NSAttributedString(string: node.name, attributes: [.font: NSFont.boldSystemFont(ofSize: 12.5), .foregroundColor: NSColor.labelColor, .paragraphStyle: clip])
+            .draw(with: CGRect(x: inner.minX, y: nameY, width: inner.width - reserved - 4, height: DiagramLayout.nameHeight),
+                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if let detail = node.detail {
+            let tail = NSMutableParagraphStyle()
+            tail.lineBreakMode = .byTruncatingTail
+            NSAttributedString(string: Self.detailPreview(detail), attributes: [.font: Self.detailFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail])
+                .draw(with: CGRect(x: inner.minX, y: rect.minY + DiagramLayout.padding + DiagramLayout.nameHeight + 4,
+                                   width: inner.width, height: CGFloat(DiagramLayout.detailLines) * DiagramLayout.excerptLineHeight),
+                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        }
+
+        if let status, let statusValue = node.status {
+            statusColor?.setFill()
+            NSBezierPath(roundedRect: status, xRadius: 9, yRadius: 9).fill()
+            let label = NSAttributedString(string: statusValue.rawValue, attributes: [.font: Self.badgeFont, .foregroundColor: NSColor.white])
+            let size = label.size()
+            label.draw(at: CGPoint(x: status.midX - size.width / 2, y: status.midY - size.height / 2))
+        }
+        if let source {
+            NSColor.secondaryLabelColor.withAlphaComponent(0.24).setFill()
+            NSBezierPath(roundedRect: source, xRadius: 9, yRadius: 9).fill()
+            NSColor.separatorColor.setStroke()
+            let outline = NSBezierPath(roundedRect: source, xRadius: 9, yRadius: 9)
+            outline.lineWidth = 1
+            outline.stroke()
+            let count = node.sources?.count ?? 0
+            let labelText = count > 1 ? "\(count) ↗" : "↗"
+            let label = NSAttributedString(string: labelText, attributes: [.font: Self.badgeFont, .foregroundColor: NSColor.labelColor.withAlphaComponent(0.85)])
+            let size = label.size()
+            label.draw(at: CGPoint(x: source.midX - size.width / 2, y: source.midY - size.height / 2))
+        }
+    }
+
+    private static func statusColor(_ status: DiagramNodeStatus) -> NSColor {
+        switch status {
+        case .taught: .systemPurple
+        case .practiced: .systemBlue
+        case .retained: .systemGreen
+        case .weak: .systemOrange
+        }
+    }
+
+    /// The first words of `detail` as one plain line: a collapsed node shows its argument, not
+    /// its markdown (headings, fences and list markers are the expanded panel's).
+    static func detailPreview(_ detail: String) -> String {
+        for raw in detail.split(separator: "\n") {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#"), !line.hasPrefix("```") else { continue }
+            for marker in ["**", "__", "`"] { line = line.replacingOccurrences(of: marker, with: "") }
+            for prefix in ["> ", "- ", "* ", "+ "] where line.hasPrefix(prefix) { line.removeFirst(prefix.count) }
+            line = line.trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty { return line }
+        }
+        return ""
+    }
+
+    // MARK: Expanded detail
+
+    private struct DetailPanel {
+        var node: DiagramNode
+        var text: NSAttributedString
+        var textHeight: CGFloat
+        var height: CGFloat
+        var width: CGFloat
+
+        init(node: DiagramNode, text: NSAttributedString, textHeight: CGFloat, in bounds: CGRect) {
+            self.node = node
+            self.text = text
+            self.textHeight = textHeight
+            height = min(textHeight + 46, min(320, max(0, bounds.height * 0.4)))
+            width = max(1, bounds.width - 24)
+        }
+    }
+
+    private struct DetailLayout {
+        var id: String
+        var detail: String
+        var width: CGFloat
+        var zoom: Double
+        var appearance: NSAppearance.Name
+        var text: NSAttributedString
+        var textHeight: CGFloat
+    }
+
+    private func cancelDetail() {
+        detailLayout = nil
+    }
+
+    private func detailPanel(in bounds: CGRect) -> DetailPanel? {
+        guard isGraph, let id = expandedNode, let node = graph?.node(id), let detail = node.detail, !detail.isEmpty else {
+            cancelDetail()
+            detailScrollOffset = 0
+            return nil
+        }
+        let width = max(1, bounds.width - 24)
+        let appearance = effectiveAppearance.name
+        if detailLayout?.id != id || detailLayout?.detail != detail || detailLayout?.width != width
+            || detailLayout?.zoom != object.zoom || detailLayout?.appearance != appearance {
+            cancelDetail()
+            let renderer = NoteRenderer(excerpts: [:], source: detail, width: width)
+            let document = NoteMarkdown.parse(detail)
+            let text = renderer.render(document, placeholder: "")
+            let measured = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+            detailLayout = DetailLayout(id: id, detail: detail, width: width, zoom: object.zoom,
+                                        appearance: appearance, text: text, textHeight: ceil(measured))
+            detailScrollOffset = 0
+        }
+        guard let cached = detailLayout else { return nil }
+        let panel = DetailPanel(node: node, text: cached.text, textHeight: cached.textHeight, in: bounds)
+        detailScrollOffset = min(detailScrollOffset, max(0, cached.textHeight - max(0, panel.height - 36)))
+        return panel
+    }
+
+    private func drawDetailPanel(_ panel: DetailPanel, in bounds: CGRect, scrollOffset: CGFloat) {
+        let rect = CGRect(x: 0, y: bounds.maxY - panel.height, width: bounds.width, height: panel.height)
+        NSColor.controlBackgroundColor.setFill()
+        rect.fill()
+        NSColor.separatorColor.setStroke()
+        let line = NSBezierPath()
+        line.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        line.line(to: CGPoint(x: rect.maxX, y: rect.minY))
+        line.lineWidth = 1
+        line.stroke()
+        var heading = panel.node.name
+        if let status = panel.node.status { heading += " · \(status.rawValue)" }
+        if panel.textHeight > max(0, panel.height - 36) { heading += " · scroll for detail" }
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        NSAttributedString(string: heading, attributes: [.font: NSFont.boldSystemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
+            .draw(with: CGRect(x: 12, y: rect.minY + 8, width: panel.width, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        let viewport = CGRect(x: 12, y: rect.minY + 28, width: panel.width, height: max(0, panel.height - 36))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current?.cgContext.clip(to: viewport)
+        panel.text.draw(with: CGRect(x: viewport.minX, y: viewport.minY - scrollOffset,
+                                     width: panel.width, height: panel.textHeight),
+                        options: [.usesLineFragmentOrigin, .usesFontLeading])
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard !event.modifierFlags.contains(.command), let panel = detailPanel(in: bounds),
+              point.y >= bounds.maxY - panel.height, bounds.contains(point) else {
+            return super.scrollWheel(with: event)
+        }
+        let maximum = max(0, panel.textHeight - max(0, panel.height - 36))
+        guard maximum > 0 else { return super.scrollWheel(with: event) }
+        let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 16)
+        detailScrollOffset = min(maximum, max(0, detailScrollOffset - delta))
+        needsDisplay = true
+    }
+
     // MARK: Mouse
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -382,8 +650,28 @@ final class DiagramTile: NSView, TileContent {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard event.clickCount == 1, let (node, rect) = node(at: point) else { return super.mouseDown(with: event) }
-        if case .place = part(of: node, in: rect, at: point) {
-            let opened = board.openForNavigation(CodeAim(path: node.path, range: LineRange(start: node.line, end: node.line), symbol: node.qualifiedName), from: object.id)
+        if isGraph {
+            switch part(of: node, in: rect, at: point) {
+            case .source:
+                let sources = node.sources ?? []
+                if let tile = sources.lazy.compactMap({ self.resolvedTile(for: $0) }).first {
+                    onFocusTile?(tile)
+                } else if let source = sources.first {
+                    onSourceNotice?(Self.sourceProblem(source, on: board))
+                }
+            case .status:
+                return
+            case .name, .place, .excerpt:
+                guard let detail = node.detail, !detail.isEmpty else { return }
+                expandedNode = expandedNode == node.id ? nil : node.id
+                needsDisplay = true
+                laidOut()
+                if expandedNode != nil, remote == nil { fit(growingOnly: true) }
+            }
+            return
+        }
+        if case .place = part(of: node, in: rect, at: point), let path = node.path, let line = node.line {
+            let opened = board.openForNavigation(CodeAim(path: path, range: LineRange(start: line, end: line), symbol: node.qualifiedName), from: object.id)
             onOpenedCode?(opened.id, opened.existing)
             return
         }
@@ -399,6 +687,32 @@ final class DiagramTile: NSView, TileContent {
         _ = try? board.update(object.id, props: .object(["expanded": .array(expanded.map(JSONValue.string))]))
     }
 
+    /// The terminal tile a graph node's source names, when this board can show it.
+    func resolvedTile(for source: DiagramSource) -> ObjectID? {
+        if let boardID = source.board, boardID != board.id { return nil }
+        if let tile = source.tile {
+            guard let object = board.objects[tile] else { return nil }
+            return object.type == .terminal ? tile : nil
+        }
+        guard let session = source.session else { return nil }
+        for object in board.objects.values where object.type == .terminal {
+            let agent = object.props["agent"]
+            if agent?["sessionId"]?.string == session || agent?["sessionPath"]?.string == session { return object.id }
+        }
+        return nil
+    }
+
+    /// Why a graph node's source can't be shown here (the badge stays a record of where it came from).
+    static func sourceProblem(_ source: DiagramSource, on board: Board) -> String {
+        if let boardID = source.board, boardID != board.id { return "Source is on board \(boardID), not this one" }
+        if let tile = source.tile {
+            return board.objects[tile].map { "\(tile) is a \($0.type.rawValue) tile, not a terminal" } ?? "Source tile \(tile) isn't on this board"
+        }
+        if let session = source.session { return "No terminal on this board is session \(session)" }
+        if let message = source.message { return "Source message \(message) isn't a tile on this board" }
+        return "Source isn't on this board"
+    }
+
     /// Set by the canvas: a code tile opened (or found showing the lines) from a node.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
     /// Set by the canvas: the user opened a node and the graph that came back grew. easl
@@ -412,7 +726,11 @@ final class DiagramTile: NSView, TileContent {
         guard let graph else { return }
         for node in graph.nodes {
             guard let rect = rect(ofNode: node.id) else { continue }
-            let scale = layout.placement(in: bounds.size).scale
+            if isGraph || node.detail != nil {
+                addCursorRect(rect, cursor: .pointingHand)
+                continue
+            }
+            let scale = layout.placement(in: graphBodySize).scale
             let placeTop = rect.minY + scale * (DiagramLayout.padding + DiagramLayout.nameHeight)
             addCursorRect(CGRect(x: rect.minX, y: placeTop, width: rect.width, height: scale * DiagramLayout.placeHeight), cursor: .pointingHand)
             if node.expandable == true || node.expanded == true {
@@ -422,7 +740,10 @@ final class DiagramTile: NSView, TileContent {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != bounds.width
         super.setFrameSize(newSize)
+        if widthChanged { cancelDetail() }
+        needsDisplay = true
         laidOut()
     }
 
@@ -437,10 +758,12 @@ final class DiagramTile: NSView, TileContent {
         guard live != self.live else { return }
         self.live = live
         if live {
+            cancelDetail()
             watch()
             if dirty { refresh() }
         } else {
             stopWatching()
+            cancelDetail()
             if remote != nil {
                 pendingRefresh?.cancel()
                 pendingRefresh = nil
@@ -451,25 +774,52 @@ final class DiagramTile: NSView, TileContent {
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         if graph == nil, case .local(_, let task) = computation { await task.value }
-        let size = request.full ? CGSize(width: max(request.size.width, layout.bodySize.width), height: max(request.size.height, layout.bodySize.height)) : request.size
-        guard let image = request.image(size: size, { bounds in paint(in: bounds) }) else {
+        guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
+        let graph = graph, layout = layout, expandedNode = expandedNode
+        let scrollOffset = detailScrollOffset
+        var content = layout.bodySize
+        let width = request.full ? max(request.size.width, content.width) : request.size.width
+        var panel: DetailPanel?
+        if graph?.aim.kind == .graph, let id = expandedNode, let node = graph?.node(id),
+           let detail = node.detail, !detail.isEmpty {
+            let textWidth = max(1, width - 24)
+            let renderer = NoteRenderer(excerpts: [:], source: detail, width: textWidth)
+            let text = renderer.render(NoteMarkdown.parse(detail), placeholder: "")
+            let measured = text.boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+            panel = DetailPanel(node: node, text: text, textHeight: ceil(measured),
+                                in: CGRect(origin: .zero, size: CGSize(width: width, height: content.height)))
+        }
+        content.height += panel?.height ?? 0
+        let size = request.full ? CGSize(width: max(request.size.width, content.width), height: max(request.size.height, content.height)) : request.size
+        if let prepared = panel {
+            panel = DetailPanel(node: prepared.node, text: prepared.text, textHeight: prepared.textHeight,
+                                in: CGRect(origin: .zero, size: size))
+        }
+        let offset = min(scrollOffset, max(0, (panel?.textHeight ?? 0) - max(0, (panel?.height ?? 0) - 36)))
+        guard let image = request.image(size: size, { bounds in
+            paint(in: bounds, graph: graph, layout: layout, panel: panel, scrollOffset: offset)
+        }) else {
             return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "bitmap allocation failed")
         }
-        return TileRender(image: image, contentSize: layout.bodySize, state: .rendered)
+        return TileRender(image: image, contentSize: content, state: .rendered)
     }
 
-    /// A node's symbol (its declaration) or the excerpt line under the pointer; else the tile.
+    /// A code node's symbol or excerpt line under the pointer; a graph node is its tile (its
+    /// detail expands in place, it opens no code).
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
-        guard let (node, rect) = node(at: point) else { return .object(object.id) }
-        if case .excerpt(let index) = part(of: node, in: rect, at: point) { return node.mention(in: object.id, excerptLine: node.excerpt[index].line) }
+        guard !isGraph, let (node, rect) = node(at: point) else { return .object(object.id) }
+        if case .excerpt(let index) = part(of: node, in: rect, at: point), let line = node.excerpt?[index].line {
+            return node.mention(in: object.id, excerptLine: line)
+        }
         return node.mention(in: object.id)
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
         guard case .code(_, let path, let lines, _, let symbol, _, _) = target, let graph,
               let node = graph.nodes.first(where: { $0.path == path && $0.qualifiedName == symbol }), let rect = rect(ofNode: node.id) else { return bounds }
-        guard lines.start == lines.end, lines != node.lines, let index = node.excerpt.firstIndex(where: { $0.line == lines.start }) else { return rect }
-        let scale = layout.placement(in: bounds.size).scale
+        guard lines.start == lines.end, lines != node.lines, let index = node.excerpt?.firstIndex(where: { $0.line == lines.start }) else { return rect }
+        let scale = layout.placement(in: graphBodySize).scale
         let top = rect.minY + scale * (DiagramLayout.padding + DiagramLayout.nameHeight + DiagramLayout.placeHeight + 4 + CGFloat(index) * DiagramLayout.excerptLineHeight)
         return CGRect(x: rect.minX, y: top, width: rect.width, height: scale * DiagramLayout.excerptLineHeight)
     }
@@ -479,12 +829,15 @@ final class DiagramTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let previous = self.object
         self.object = object
+        if previous.zoom != object.zoom { cancelDetail() }
         if DiagramSpec(previous.props) != DiagramSpec(object.props) {
             refresh()
         } else if remote != nil, computing, object.rev != previous.rev {
             scheduleRefresh()
         }
-        guard previous.props["graph"] != object.props["graph"] else { return }
+        let graphKey = isGraph ? "knowledge" : "graph"
+        guard previous.props["kind"] != object.props["kind"] || previous.props[graphKey] != object.props[graphKey] else { return }
+        cancelDetail()
         hostFailure = nil
         switch computation {
         case .asking, .hostComputing: computation = .idle
@@ -492,8 +845,9 @@ final class DiagramTile: NSView, TileContent {
         }
         // An error before any node (a server still loading) isn't the first graph yet.
         let before = graph?.nodes.count ?? 0
-        graph = DiagramGraph(object.props["graph"])
+        graph = DiagramGraph.stored(in: object.props)
         layout = graph.map(DiagramLayout.init) ?? DiagramLayout(DiagramGraph(aim: spec.aim))
+        if let expandedNode, graph?.node(expandedNode) == nil { self.expandedNode = nil }
         let after = graph?.nodes.count ?? 0
         if before == 0, fitOnArrival, after > 0 {
             fitOnArrival = false
@@ -528,7 +882,9 @@ final class DiagramTile: NSView, TileContent {
     private func fit(growingOnly: Bool) {
         guard remote == nil else { return }
         let zoom = CGFloat(object.zoom)
-        let body = layout.bodySize, current = RenderMath.body(of: object)
+        let panelHeight = detailPanel(in: CGRect(origin: .zero, size: CGSize(width: layout.bodySize.width, height: layout.bodySize.height)))?.height ?? 0
+        let body = CGSize(width: layout.bodySize.width, height: layout.bodySize.height + panelHeight)
+        let current = RenderMath.body(of: object)
         var w = min(body.width, Self.maxFitBody.width), h = min(body.height, Self.maxFitBody.height)
         if growingOnly {
             w = max(w, current.width)

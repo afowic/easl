@@ -310,6 +310,12 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 		}
 
 		r := rerooter{oldRoot: Standardized(snap.Root), top: p.top, live: true, anchor: anchor, destinationRoot: Standardized(target.Root)}
+		r.knowledgeDiagrams = map[string]bool{}
+		for _, o := range snap.Objects {
+			if o.Type == model.Diagram && o.Props["kind"] == "graph" {
+				r.knowledgeDiagrams[o.ID] = true
+			}
+		}
 		objects := make([]model.Object, len(snap.Objects))
 		for i, o := range snap.Objects {
 			objects[i] = o.Clone()
@@ -664,8 +670,9 @@ type rerooter struct {
 	live         bool
 	anchor       string
 	// destinationRoot is the board that will build the diagram next, not this worktree's top.
-	destinationRoot string
-	unanchored      []string
+	destinationRoot   string
+	unanchored        []string
+	knowledgeDiagrams map[string]bool
 }
 
 // absolute is `path` as written on the old board, absolute.
@@ -805,6 +812,9 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 			}
 		}
 	case model.Diagram:
+		if props["kind"] == "graph" {
+			break
+		}
 		// Its file, the graph as last computed (node paths and ids, its aim) and the nodes it
 		// expanded, as the repository board's next build writes them (moved), so that build
 		// finds them again: nothing anchors a diagram by branch.
@@ -856,6 +866,9 @@ func (r *rerooter) reroot(o model.Object) model.Object {
 		// An end bound to a diagram's node names it by id.
 		for _, end := range []string{"from", "to"} {
 			if binding, ok := props[end].(map[string]any); ok {
+				if target, _ := binding["object"].(string); r.knowledgeDiagrams[target] {
+					continue
+				}
 				if node, ok := binding["node"].(string); ok {
 					binding["node"] = r.nodeID(node)
 				}

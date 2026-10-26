@@ -354,6 +354,7 @@ public final class Board {
         revision = snapshot.revision
         // `props.scale` became a tile's content `zoom` (frame kept) and a text shape's `textSize`.
         for var object in snapshot.objects.map(ObjectZoom.migrated) {
+            object = QuestionSpec.normalized(object)
             // Groups were labelled by `name` before they became titled regions.
             if object.type == .group, var props = object.props.object, let name = props.removeValue(forKey: "name") {
                 if props["title"] == nil { props["title"] = name }
@@ -1193,6 +1194,7 @@ public final class Board {
     /// The host's version of an object (`BoardMirror`): stored as the host has it, `rev`
     /// included, and announced like any change; never an undo step, a log entry or a write sent back.
     func applyHost(_ object: CanvasObject) {
+        let object = QuestionSpec.normalized(object)
         let previous = objects[object.id]
         guard previous != object else { return }
         retainTerminalSessionIdentity(for: object)
