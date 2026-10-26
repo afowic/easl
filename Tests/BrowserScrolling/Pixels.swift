@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 struct Samples: Decodable {
-    let windowWidth: Double
-    let windowHeight: Double
+    let contentTop: Double
+    let scale: Double
     let points: [[Double]]
 }
 
@@ -22,12 +22,12 @@ let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
 guard let bitmap = NSBitmapImageRep(data: data), bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else {
     throw PixelError.invalidImage
 }
-guard samples.windowWidth.isFinite, samples.windowWidth > 0,
-      samples.windowHeight.isFinite, samples.windowHeight > 0 else {
+guard samples.contentTop.isFinite, samples.contentTop >= 0,
+      samples.scale.isFinite, samples.scale > 0 else {
     throw PixelError.invalidGeometry
 }
-let scale = Double(bitmap.pixelsWide) / samples.windowWidth
-let offsetY = Double(bitmap.pixelsHigh) - samples.windowHeight * scale
+let scale = samples.scale
+let offsetY = samples.contentTop * scale
 let colors: [[Int]] = try samples.points.map { point in
     guard point.count == 2 else { throw PixelError.invalidGeometry }
     let pixelX = (point[0] * scale).rounded(.toNearestOrEven)

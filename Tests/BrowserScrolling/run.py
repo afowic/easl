@@ -89,8 +89,8 @@ border:4px solid #f0f;box-sizing:border-box}
                              if "DevInput.state " in line and line.endswith("\n")), None)
                 if line is not None:
                     states = json.loads(line.split("DevInput.state ", 1)[1])
-                    window = int(next(state["window"] for state in states
-                                      if state["board"] == board and state["selected"]))
+                    selected = next(state for state in states if state["board"] == board and state["selected"])
+                    window = int(selected["window"])
                     break
                 time.sleep(0.05)
             else:
@@ -125,7 +125,7 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                 # WindowServer pixels include live WebKit and native overlays, not its stale preview.
                 time.sleep(1.1)  # Let native overlay scrollers fade before checking content pixels.
                 value = geometry("end")
-                capture(home, window, path)
+                receipt = capture(home, window, path)
                 inset = 2 * value["zoom"]
                 left, right = value["left"] + inset, value["right"] - inset
                 top, bottom = value["top"] + inset, value["bottom"] - inset
@@ -133,14 +133,15 @@ return {{left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,
                           for fraction in (0.25, 0.5, 0.75) for py in (top, bottom)]
                 border += [(px, top + (bottom - top) * fraction)
                            for fraction in (0.25, 0.5, 0.75) for px in (left, right)]
-                samples = subprocess.check_output(
-                    [str(pixels), str(path)],
-                    input=json.dumps({"windowWidth": value["windowWidth"],
-                                      "windowHeight": value["windowHeight"], "points": border}),
-                    text=True,
-                )
-                return all(red >= 240 and green <= 20 and blue >= 240
-                           for red, green, blue in json.loads(samples))
+                request = {"contentTop": selected["contentTop"],
+                           "scale": receipt["screenshot_scale"], "points": border}
+                samples = json.loads(subprocess.check_output(
+                    [str(pixels), str(path)], input=json.dumps(request), text=True,
+                ))
+                if args.out:
+                    (args.out / "pixels.json").write_text(json.dumps(
+                        {"geometry": value, "request": request, "colors": samples}, indent=2))
+                return all(red >= 240 and green <= 20 and blue >= 240 for red, green, blue in samples)
 
             def reach(marker, delta, options, label):
                 previous = None
