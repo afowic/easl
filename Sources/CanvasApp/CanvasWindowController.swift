@@ -1541,14 +1541,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
 /// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
-/// is on it, over a tile too; plain scrolling stays with the tile under the pointer. A middle-button
-/// drag pans it from anywhere on it the same way.
+/// is on it, over a tile too. Plain scrolling over an oversized browser first reveals its clipped
+/// edge, then scrolls the page. A middle-button drag pans the canvas from anywhere on it.
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
     private var discardingMiddleSequence = false
     private(set) var scrollSequence: UInt64 = 0
     private var browserScroll = ScrollGesture()
+    private var browserScrollStart: (sequence: UInt64, tile: ObjectIdentifier)?
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
@@ -1598,7 +1599,6 @@ final class CanvasWindow: NSWindow {
         cancelMiddlePan()
     }
 
-    /// The canvas and hit view, when `point` (window coordinates) is on it, over a tile too.
     private func canvas(at point: NSPoint) -> (view: CanvasView, hit: NSView)? {
         guard let canvas = (windowController as? CanvasWindowController)?.canvas, let content = contentView,
               let hit = content.hitTest(content.superview?.convert(point, from: nil) ?? point),
@@ -1618,9 +1618,6 @@ final class CanvasWindow: NSWindow {
         return revealBrowser(event, at: point, from: hit, on: canvas, step: step)
     }
 
-    /// A browser larger than the visible canvas otherwise stops at its page's scroll limit
-    /// while its bottom or right edge is still offscreen. Reveal that edge before scrolling
-    /// inside the page, without resizing its viewport or changing the board's layout.
     private func revealBrowser(_ event: NSEvent, at point: NSPoint, from hitView: NSView, on canvas: CanvasView, step: ScrollGesture.Step?) -> Bool {
         guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
               let document = canvas.documentView else { return false }
@@ -1650,9 +1647,14 @@ final class CanvasWindow: NSWindow {
                      height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
             : .zero
         if let step {
+            if step == .began { browserScrollStart = (scrollSequence, ObjectIdentifier(tile)) }
+            guard browserScrollStart?.sequence == scrollSequence,
+                  browserScrollStart?.tile == ObjectIdentifier(tile) else {
+                canvas.scrollWheel(with: event)
+                return true
+            }
             guard browserScroll.owner(of: step, sequence: scrollSequence, dx: dx, dy: dy,
                                       tileTakes: pan == .zero) == .canvas else { return false }
-            // WebKit sees the zero-motion begin and end even when the canvas takes the movement.
             if step == .ended || step == .momentumEnded { return false }
         } else if pan == .zero {
             return false

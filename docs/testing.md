@@ -323,13 +323,16 @@ Plain scrolling over an oversized live local or streamed browser first reveals a
 in that direction by the canvas window, clear of the toolbar and tray. The pan stops at that
 edge; further wheel steps scroll the page itself. A phased gesture keeps the owner selected by its first movement through
 momentum, so another gesture may be needed after revealing the edge. A browser resize during
-a gesture does not change that gesture's owner. The tile's frame, page viewport size, and
-board layout stay unchanged. Move and ⌘-scroll keep their existing pan and zoom behavior.
+a gesture does not change that gesture's owner. A gesture that began outside the browser page
+continues panning the canvas when that browser arrives under the pointer. The tile's frame,
+page viewport size, and board layout stay unchanged. Move and ⌘-scroll keep their existing
+pan and zoom behavior.
 
 ```sh
 scripts/bundle.sh
 python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
 python3 Tests/BrowserScrolling/resize.py --app .build/easl.app
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --arrival
 ```
 
 The runner launches a real app with a disposable home and a local oversized document. It
