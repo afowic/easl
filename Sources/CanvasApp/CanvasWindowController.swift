@@ -1634,7 +1634,7 @@ final class CanvasWindow: NSWindow {
         guard page.contains(browser.convert(point, from: nil)) else { return false }
         let rect = browser.convert(page, to: document)
         let visible = canvas.clearVisibleRect(of: document)
-        guard rect.width > visible.width || rect.height > visible.height else { return false }
+        let oversized = rect.width > visible.width || rect.height > visible.height
         var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         if case .pan(let x, let y) = CanvasWheel.action(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas,
                                                       command: false, shift: event.modifierFlags.contains(.shift)) {
@@ -1645,8 +1645,10 @@ final class CanvasWindow: NSWindow {
             delta < 0 ? max(delta, -max(0, upper - end) * canvas.magnification)
                 : min(delta, max(0, start - lower) * canvas.magnification)
         }
-        let pan = CGSize(width: reveal(dx, min: rect.minX, max: rect.maxX, visibleMin: visible.minX, visibleMax: visible.maxX),
-                         height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
+        let pan = oversized
+            ? CGSize(width: reveal(dx, min: rect.minX, max: rect.maxX, visibleMin: visible.minX, visibleMax: visible.maxX),
+                     height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
+            : .zero
         if let step {
             guard browserScroll.owner(of: step, sequence: scrollSequence, dx: dx, dy: dy,
                                       tileTakes: pan == .zero) == .canvas else { return false }
